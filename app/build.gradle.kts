@@ -4,12 +4,12 @@ plugins {
 
 android {
     namespace = "com.noircipher.shade"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.noircipher.shade"
         minSdk = 23
-        targetSdk = 35
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
     }
@@ -38,7 +38,6 @@ android {
     }
 }
 
-// AGP 9 built-in Kotlin configuration
 kotlin {
     jvmToolchain(17)
     compilerOptions {
