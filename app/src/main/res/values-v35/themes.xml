@@ -1,0 +1,8 @@
+<resources>
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.DarkActionBar">
+        <item name="colorPrimary">#3B6FD4</item>
+        <item name="colorPrimaryDark">#2A55A8</item>
+        <item name="colorAccent">#3B6FD4</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>
