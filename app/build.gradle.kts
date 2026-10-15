@@ -17,19 +17,38 @@ android {
 
     buildTypes {
         release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+        debug {
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+
+    buildFeatures {
+        buildConfig = true
+    }
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")
+    // core-ktx APIs merged into core as of 1.19.0
+    implementation("androidx.core:core:1.19.1")
+
+    // AppCompat kept at 1.7.0 to preserve minSdk 21 (1.8.0 forces minSdk 23)
     implementation("androidx.appcompat:appcompat:1.7.0")
+
     implementation("androidx.preference:preference-ktx:1.2.1")
+
+    // Async view inflation to eliminate first-show jank
+    implementation("androidx.asynclayoutinflater:asynclayoutinflater:1.1.0")
 }
