@@ -9,7 +9,8 @@ android {
 
     defaultConfig {
         applicationId = "com.noircipher.shade"
-        minSdk = 21
+        // AppCompat 1.8.0 requires minSdk 23
+        minSdk = 23
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
@@ -44,11 +45,9 @@ dependencies {
     // core-ktx APIs merged into core as of 1.19.0
     implementation("androidx.core:core:1.19.1")
 
-    // AppCompat kept at 1.7.0 to preserve minSdk 21 (1.8.0 forces minSdk 23)
-    implementation("androidx.appcompat:appcompat:1.7.0")
+    // Upgraded AppCompat — requires minSdk 23
+    implementation("androidx.appcompat:appcompat:1.8.0")
 
     implementation("androidx.preference:preference-ktx:1.2.1")
-
-    // Async view inflation to eliminate first-show jank
     implementation("androidx.asynclayoutinflater:asynclayoutinflater:1.1.0")
 }
