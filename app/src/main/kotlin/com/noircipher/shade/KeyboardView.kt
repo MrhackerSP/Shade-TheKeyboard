@@ -7,7 +7,6 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
@@ -20,6 +19,7 @@ import android.view.View
 import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.core.graphics.ColorUtils
+import java.util.ArrayDeque
 import kotlin.math.abs
 import kotlin.math.min
 
@@ -63,18 +63,26 @@ class KeyboardView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+
+    // --- Pre-allocated hot-path objects (zero allocation in onDraw/onTouchEvent) ---
     private val rect = RectF()
     private val dst = RectF()
     private val path = Path()
-
-    // Reused per-frame to avoid allocations in onDraw.
-    private val pressedKeys = HashSet<Key>(16)
     private val clipBounds = Rect()
+    private val pressedKeys = HashSet<Key>(16)
+    private val cancelIds = IntArray(20)   // grows if needed, but reused
+    private var cancelCount = 0
+
+    // --- Pointer pool to avoid Pointer allocations on every touch-down ---
+    private val pointerPool = ArrayDeque<Pointer>(8)
 
     private var rowHeight = 0f
 
-    private class Pointer(var key: Key?, val downX: Float, val downY: Float) {
-        var lastX = downX
+    private class Pointer {
+        var key: Key? = null
+        var downX = 0f
+        var downY = 0f
+        var lastX = 0f
         var longRunnable: Runnable? = null
         var repeatRunnable: Runnable? = null
         var consumed = false
@@ -84,9 +92,30 @@ class KeyboardView(context: Context) : View(context) {
         var altItems: List<String> = emptyList()
         var altOrigin = 0f
         var altCell = 0f
+
+        fun reset(k: Key?, x: Float, y: Float) {
+            key = k; downX = x; downY = y; lastX = x
+            longRunnable = null; repeatRunnable = null
+            consumed = false; swiping = false; altShown = false
+            altSel = 0; altItems = emptyList(); altOrigin = 0f; altCell = 0f
+        }
     }
 
     private val pointers = SparseArray<Pointer>()
+
+    private fun obtainPointer(k: Key?, x: Float, y: Float): Pointer {
+        val p = pointerPool.pollFirst() ?: Pointer()
+        p.reset(k, x, y)
+        return p
+    }
+
+    private fun recyclePointer(p: Pointer) {
+        p.key = null
+        p.longRunnable = null
+        p.repeatRunnable = null
+        p.altItems = emptyList()
+        if (pointerPool.size < 8) pointerPool.offerLast(p)
+    }
 
     private fun dp(v: Float) = v * resources.displayMetrics.density
 
@@ -138,6 +167,8 @@ class KeyboardView(context: Context) : View(context) {
                 k.right = x + k.weight * unit
                 k.top = padTop + r * rowHeight
                 k.bottom = k.top + rowHeight
+                // Cache the invalidate rect on the key itself (no allocation later)
+                k.updateInvalidateRect(dp(3f).toInt())
                 x = k.right
                 cum += k.weight
             }
@@ -186,11 +217,12 @@ class KeyboardView(context: Context) : View(context) {
             c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
         }
 
-        // Reuse the same set; clear() keeps capacity.
+        // Reuse the same set; clear() keeps capacity
         pressedKeys.clear()
-        for (i in 0 until pointers.size()) pointers.valueAt(i).key?.let { pressedKeys.add(it) }
+        val n = pointers.size()
+        for (i in 0 until n) pointers.valueAt(i).key?.let { pressedKeys.add(it) }
 
-        // Dirty-region culling: only draw keys that intersect the invalidated area.
+        // Dirty-region culling
         c.getClipBounds(clipBounds)
         val clipL = clipBounds.left.toFloat()
         val clipT = clipBounds.top.toFloat()
@@ -339,23 +371,41 @@ class KeyboardView(context: Context) : View(context) {
                 val i = e.actionIndex
                 down(e.getPointerId(i), e.getX(i), e.getY(i))
             }
-            MotionEvent.ACTION_MOVE -> for (i in 0 until e.pointerCount) {
-                move(e.getPointerId(i), e.getX(i), e.getY(i))
+            MotionEvent.ACTION_MOVE -> {
+                val n = e.pointerCount
+                for (i in 0 until n) move(e.getPointerId(i), e.getX(i), e.getY(i))
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 up(e.getPointerId(e.actionIndex), false)
             }
             MotionEvent.ACTION_CANCEL -> {
-                val ids = (0 until pointers.size()).map { pointers.keyAt(it) }
-                ids.forEach { up(it, true) }
+                // Zero-allocation cancel: collect IDs into the pre-allocated array
+                cancelCount = 0
+                val n = pointers.size()
+                if (cancelIds.size < n) {
+                    // Rare path — only grows once if you ever have >20 fingers
+                    return cancelAllSlow()
+                }
+                for (i in 0 until n) {
+                    cancelIds[cancelCount++] = pointers.keyAt(i)
+                }
+                for (i in 0 until cancelCount) up(cancelIds[i], true)
             }
         }
         return true
     }
 
+    private fun cancelAllSlow(): Boolean {
+        val n = pointers.size()
+        val ids = IntArray(n)
+        for (i in 0 until n) ids[i] = pointers.keyAt(i)
+        for (id in ids) up(id, true)
+        return true
+    }
+
     private fun down(id: Int, x: Float, y: Float) {
         val k = hit(x, y) ?: return
-        val p = Pointer(k, x, y)
+        val p = obtainPointer(k, x, y)
         pointers.put(id, p)
         feedback(k)
         pressKey(p)
@@ -440,18 +490,13 @@ class KeyboardView(context: Context) : View(context) {
             fire(k)
         }
         if (k != null) invalidate(k)
+        recyclePointer(p)
     }
 
-    /** Invalidate only the bounds of a single key (plus a small margin for shadows). */
+    /** Invalidate only the bounds of a single key using its cached rect. */
     private fun invalidate(k: Key) {
-        if (k.right <= k.left) { invalidate(); return }
-        val pad = dp(3f)
-        invalidate(
-            (k.left - pad).toInt(),
-            (k.top - pad).toInt(),
-            (k.right + pad).toInt(),
-            (k.bottom + pad).toInt()
-        )
+        val r = k.invalidateRect
+        if (r != null) invalidate(r.left, r.top, r.right, r.bottom) else invalidate()
     }
 
     private fun cancelLong(p: Pointer) {
@@ -513,6 +558,7 @@ class KeyboardView(context: Context) : View(context) {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
     }
     private var previewWindow: PopupWindow? = null
+    private val loc = IntArray(2)   // reused for popup positioning
 
     private inner class AltView(ctx: Context) : View(ctx) {
         var items: List<String> = emptyList()
@@ -543,15 +589,11 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun showPreviewFor(k: Key) {
         if (!showPreview) return
-        previewText.background = GradientDrawable().apply {
-            cornerRadius = dp(10f)
-            setColor(kbTheme.popupBg)
-        }
+        previewText.background = GradientDrawableCache.forKey(kbTheme.popupBg, dp(10f))
         previewText.setTextColor(kbTheme.text)
         previewText.text = display(k.label)
         val pw = (k.right - k.left + dp(18f)).toInt()
         val ph = dp(58f).toInt()
-        val loc = IntArray(2)
         getLocationOnScreen(loc)
         val screenW = resources.displayMetrics.widthPixels
         val x = (loc[0] + k.centerX - pw / 2f).toInt().coerceIn(0, maxOf(0, screenW - pw))
@@ -596,7 +638,6 @@ class KeyboardView(context: Context) : View(context) {
         altView.items = p.altItems
         altView.sel = p.altSel
         altView.cell = cell
-        val loc = IntArray(2)
         getLocationOnScreen(loc)
         val px = loc[0] + origin.toInt()
         val py = (loc[1] + k.top - ph - dp(6f)).toInt()
@@ -630,13 +671,27 @@ class KeyboardView(context: Context) : View(context) {
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        for (i in 0 until pointers.size()) {
+        val n = pointers.size()
+        for (i in 0 until n) {
             val p = pointers.valueAt(i)
             cancelLong(p)
             p.repeatRunnable?.let { handler.removeCallbacks(it) }
+            recyclePointer(p)
         }
         pointers.clear()
         hidePreview()
         dismissAlt()
+    }
+
+    /** Null out heavy references so the view can be GC'd promptly after detach. */
+    fun release() {
+        listener = null
+        bgBitmap = null
+        pointers.clear()
+        pointerPool.clear()
+        previewWindow?.let { try { it.dismiss() } catch (_: Exception) {} }
+        altWindow?.let { try { it.dismiss() } catch (_: Exception) {} }
+        previewWindow = null
+        altWindow = null
     }
 }
