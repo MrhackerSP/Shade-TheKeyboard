@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
@@ -38,11 +39,11 @@ class KeyboardView(context: Context) : View(context) {
     var rows: List<List<Key>> = emptyList()
         private set
     var contentHeightPx = 0
-    var oneHanded = 0              // 0 = off, 1 = left, 2 = right
+    var oneHanded = 0
     var haptic = true
     var sound = false
     var showPreview = true
-    var shiftState = 0             // 0 off, 1 shift once, 2 caps lock
+    var shiftState = 0
         set(v) { field = v; invalidate() }
     var enterLabel = ""
         set(v) { field = v; invalidate() }
@@ -65,6 +66,11 @@ class KeyboardView(context: Context) : View(context) {
     private val rect = RectF()
     private val dst = RectF()
     private val path = Path()
+
+    // Reused per-frame to avoid allocations in onDraw.
+    private val pressedKeys = HashSet<Key>(16)
+    private val clipBounds = Rect()
+
     private var rowHeight = 0f
 
     private class Pointer(var key: Key?, val downX: Float, val downY: Float) {
@@ -179,14 +185,25 @@ class KeyboardView(context: Context) : View(context) {
             fill.color = ColorUtils.setAlphaComponent(kbTheme.bg, 0x55)
             c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
         }
+
+        // Reuse the same set; clear() keeps capacity.
+        pressedKeys.clear()
+        for (i in 0 until pointers.size()) pointers.valueAt(i).key?.let { pressedKeys.add(it) }
+
+        // Dirty-region culling: only draw keys that intersect the invalidated area.
+        c.getClipBounds(clipBounds)
+        val clipL = clipBounds.left.toFloat()
+        val clipT = clipBounds.top.toFloat()
+        val clipR = clipBounds.right.toFloat()
+        val clipB = clipBounds.bottom.toFloat()
+
         val gx = dp(2.5f)
         val gy = dp(3f)
         val radius = dp(7f)
-        val pressedKeys = HashSet<Key>()
-        for (i in 0 until pointers.size()) pointers.valueAt(i).key?.let { pressedKeys.add(it) }
 
         for (row in rows) for (k in row) {
             if (k.kind == KeyKind.SPACER) continue
+            if (k.right < clipL || k.left > clipR || k.bottom < clipT || k.top > clipB) continue
             rect.set(k.left + gx, k.top + gy, k.right - gx, k.bottom - gy)
             val isPressed = k in pressedKeys
             val special = k.kind == KeyKind.ENTER || (k.code == Codes.SHIFT && shiftState == 2)
@@ -342,7 +359,7 @@ class KeyboardView(context: Context) : View(context) {
         pointers.put(id, p)
         feedback(k)
         pressKey(p)
-        invalidate()
+        invalidate(k)
     }
 
     private fun pressKey(p: Pointer) {
@@ -397,11 +414,13 @@ class KeyboardView(context: Context) : View(context) {
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) return
         val nk = hit(x, y)
         if (nk != null && nk !== k && !(nk.kind == KeyKind.FUNC && nk.code == Codes.DELETE)) {
+            val old = k
             cancelLong(p)
             hidePreview()
             p.key = nk
             pressKey(p)
-            invalidate()
+            invalidate(old)
+            invalidate(nk)
         }
     }
 
@@ -420,7 +439,19 @@ class KeyboardView(context: Context) : View(context) {
         } else if (!cancel && k != null && !p.consumed && !p.swiping) {
             fire(k)
         }
-        invalidate()
+        if (k != null) invalidate(k)
+    }
+
+    /** Invalidate only the bounds of a single key (plus a small margin for shadows). */
+    private fun invalidate(k: Key) {
+        if (k.right <= k.left) { invalidate(); return }
+        val pad = dp(3f)
+        invalidate(
+            (k.left - pad).toInt(),
+            (k.top - pad).toInt(),
+            (k.right + pad).toInt(),
+            (k.bottom + pad).toInt()
+        )
     }
 
     private fun cancelLong(p: Pointer) {
