@@ -21,6 +21,7 @@ import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.asynclayoutinflater.view.AsyncLayoutInflater
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.preference.PreferenceManager
@@ -58,7 +59,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var kbTheme: KbTheme = Themes.LIGHT
     private var mode = Mode.LETTERS
     private var panel = Panel.NONE
-    private var shiftState = 0            // 0 off, 1 once, 2 caps lock
+    private var shiftState = 0
     private var autoShifted = false
     private var lastShiftTime = 0L
     private var lastSpaceTime = 0L
@@ -105,6 +106,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onEvaluateFullscreenMode(): Boolean = false
 
     override fun onCreateInputView(): View {
+        // The whole keyboard is inflated here; keep it lean so the first frame is fast.
+        return buildInputView()
+    }
+
+    private fun buildInputView(): View {
         kb = KeyboardView(this).also { it.listener = this }
 
         toggle = TextView(this).apply {
@@ -291,9 +297,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.longPressMs = prefs.getInt("longpress_delay", 380).toLong()
         kb.bgBitmap = bgBmp
         kb.spaceLabel = if (layoutName == "custom") "Custom" else layoutName.uppercase()
-        kb.layoutParams = (kb.layoutParams as LinearLayout.LayoutParams).apply { height = contentH }
-        emoji.layoutParams = (emoji.layoutParams as LinearLayout.LayoutParams).apply { height = contentH }
-        clipPanel.layoutParams = (clipPanel.layoutParams as LinearLayout.LayoutParams).apply { height = contentH }
+
+        (kb.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
+        (emoji.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
+        (clipPanel.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
+
         emoji.setTheme(kbTheme)
         clipPanel.setTheme(kbTheme)
 
@@ -453,9 +461,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             justAutoSpaced = false
         } else {
             val isPunct = text.length == 1 && text[0] in ".,!?;:"
-            if (justAutoSpaced && composing.isEmpty() && isPunct) ic.deleteSurroundingText(1, 0)
-            endWord(if (isPunct) text else null)
-            ic.commitText(text, 1)
+            ic.beginBatchEdit()
+            try {
+                if (justAutoSpaced && composing.isEmpty() && isPunct) ic.deleteSurroundingText(1, 0)
+                endWord(if (isPunct) text else null)
+                ic.commitText(text, 1)
+            } finally {
+                ic.endBatchEdit()
+            }
             justAutoSpaced = false
         }
         lastSpaceTime = 0L
@@ -493,12 +506,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection ?: return
         val r = revert
         if (r != null) {
-            // Undo the last autocorrection and keep the original word editable.
             revert = null
-            ic.deleteSurroundingText(r.corrected.length + r.sep.length, 0)
-            composing.clear()
-            composing.append(r.original)
-            ic.setComposingText(r.original, 1)
+            ic.beginBatchEdit()
+            try {
+                ic.deleteSurroundingText(r.corrected.length + r.sep.length, 0)
+                composing.clear()
+                composing.append(r.original)
+                ic.setComposingText(r.original, 1)
+            } finally {
+                ic.endBatchEdit()
+            }
             ignored.add(r.original.lowercase())
             if (learnOn && !incognito) dict.learn(r.original)
         } else if (composing.isNotEmpty()) {
@@ -521,8 +538,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (corrected == null && doubleSpace && now - lastSpaceTime < 500) {
             val before = ic.getTextBeforeCursor(2, 0)
             if (before != null && before.length == 2 && before[1] == ' ' && before[0].isLetterOrDigit()) {
-                ic.deleteSurroundingText(1, 0)
-                ic.commitText(". ", 1)
+                ic.beginBatchEdit()
+                try {
+                    ic.deleteSurroundingText(1, 0)
+                    ic.commitText(". ", 1)
+                } finally {
+                    ic.endBatchEdit()
+                }
                 lastSpaceTime = 0L
                 done = true
             }
@@ -551,11 +573,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         afterText()
     }
 
-    /**
-     * Finish the word being composed. If [sep] (the separator about to be typed) is given and
-     * autocorrect is on, an unknown word is replaced by its best single-edit correction.
-     * Returns the correction that was applied, if any.
-     */
     private fun endWord(sep: String? = null): String? {
         revert = null
         val ic = currentInputConnection
@@ -568,7 +585,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 corrected = dict.correction(w)
             }
             if (corrected != null) {
-                ic?.commitText(corrected, 1)          // replaces the composing region
+                ic?.commitText(corrected, 1)
                 revert = Revert(w, corrected, sep!!)
             } else {
                 if (learnOn && !incognito && canCompose) dict.learn(w)
@@ -648,13 +665,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection ?: return
         revert = null
         composing.clear()
-        ic.commitText(w, 1)          // replaces the composing region
+        ic.beginBatchEdit()
+        try {
+            ic.commitText(w, 1)
+            if (w[0].isLetter()) {
+                ic.commitText(" ", 1)
+            }
+        } finally {
+            ic.endBatchEdit()
+        }
         if (w[0].isLetter()) {
-            ic.commitText(" ", 1)
             if (learnOn && !incognito && canCompose) dict.learn(w)
             justAutoSpaced = true
         } else {
-            justAutoSpaced = false   // emoji: no trailing space
+            justAutoSpaced = false
         }
         lastSpaceTime = 0L
         afterText()
