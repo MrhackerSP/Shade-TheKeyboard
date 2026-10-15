@@ -52,4 +52,8 @@ dependencies {
     implementation("androidx.asynclayoutinflater:asynclayoutinflater:1.1.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // SymSpellKt: Kotlin Multiplatform SymSpell port
+    implementation("com.darkrockstudios:symspellkt:3.4.0")
+    // No Fdic dependency — loading plain text directly
 }
