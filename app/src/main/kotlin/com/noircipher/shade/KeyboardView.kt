@@ -57,7 +57,10 @@ class KeyboardView(context: Context) : View(context) {
 
     private val handler = Handler(Looper.getMainLooper())
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        isSubpixelText = true
+    }
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -70,7 +73,7 @@ class KeyboardView(context: Context) : View(context) {
     private val path = Path()
     private val clipBounds = Rect()
     private val pressedKeys = HashSet<Key>(16)
-    private val cancelIds = IntArray(20)   // grows if needed, but reused
+    private val cancelIds = IntArray(20)
     private var cancelCount = 0
 
     // --- Pointer pool to avoid Pointer allocations on every touch-down ---
@@ -167,7 +170,6 @@ class KeyboardView(context: Context) : View(context) {
                 k.right = x + k.weight * unit
                 k.top = padTop + r * rowHeight
                 k.bottom = k.top + rowHeight
-                // Cache the invalidate rect on the key itself (no allocation later)
                 k.updateInvalidateRect(dp(3f).toInt())
                 x = k.right
                 cum += k.weight
@@ -217,12 +219,10 @@ class KeyboardView(context: Context) : View(context) {
             c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
         }
 
-        // Reuse the same set; clear() keeps capacity
         pressedKeys.clear()
         val n = pointers.size()
         for (i in 0 until n) pointers.valueAt(i).key?.let { pressedKeys.add(it) }
 
-        // Dirty-region culling
         c.getClipBounds(clipBounds)
         val clipL = clipBounds.left.toFloat()
         val clipT = clipBounds.top.toFloat()
@@ -379,16 +379,10 @@ class KeyboardView(context: Context) : View(context) {
                 up(e.getPointerId(e.actionIndex), false)
             }
             MotionEvent.ACTION_CANCEL -> {
-                // Zero-allocation cancel: collect IDs into the pre-allocated array
                 cancelCount = 0
                 val n = pointers.size()
-                if (cancelIds.size < n) {
-                    // Rare path — only grows once if you ever have >20 fingers
-                    return cancelAllSlow()
-                }
-                for (i in 0 until n) {
-                    cancelIds[cancelCount++] = pointers.keyAt(i)
-                }
+                if (cancelIds.size < n) return cancelAllSlow()
+                for (i in 0 until n) cancelIds[cancelCount++] = pointers.keyAt(i)
                 for (i in 0 until cancelCount) up(cancelIds[i], true)
             }
         }
@@ -496,7 +490,7 @@ class KeyboardView(context: Context) : View(context) {
     /** Invalidate only the bounds of a single key using its cached rect. */
     private fun invalidate(k: Key) {
         val r = k.invalidateRect
-        if (r != null) invalidate(r.left, r.top, r.right, r.bottom) else invalidate()
+        if (r != null) invalidate(r) else invalidate()
     }
 
     private fun cancelLong(p: Pointer) {
@@ -558,7 +552,7 @@ class KeyboardView(context: Context) : View(context) {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
     }
     private var previewWindow: PopupWindow? = null
-    private val loc = IntArray(2)   // reused for popup positioning
+    private val loc = IntArray(2)
 
     private inner class AltView(ctx: Context) : View(ctx) {
         var items: List<String> = emptyList()
@@ -683,7 +677,6 @@ class KeyboardView(context: Context) : View(context) {
         dismissAlt()
     }
 
-    /** Null out heavy references so the view can be GC'd promptly after detach. */
     fun release() {
         listener = null
         bgBitmap = null
