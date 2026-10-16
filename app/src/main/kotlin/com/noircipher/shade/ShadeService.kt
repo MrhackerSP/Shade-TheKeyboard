@@ -86,6 +86,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var justAutoSpaced = false
     private val composing = StringBuilder()
     private var canCompose = true
+    private var suggestionsAllowed = true
     private var suggestionsOn = true
     private var learnOn = true
     private var autoCaps = true
@@ -301,14 +302,23 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val type = editorInfo.inputType
         val cls = type and InputType.TYPE_MASK_CLASS
         val variation = type and InputType.TYPE_MASK_VARIATION
-        val noSuggest = (type and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS) != 0
-        val blocked = variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+
+        val passwordField = variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
             variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
             variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
             variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
-            variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS ||
-            variation == InputType.TYPE_TEXT_VARIATION_URI
-        canCompose = (cls == InputType.TYPE_CLASS_TEXT) && (noSuggest == false) && (blocked == false)
+            variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
+
+        val searchField = variation == InputType.TYPE_TEXT_VARIATION_URI ||
+            variation == InputType.TYPE_TEXT_VARIATION_FILTER ||
+            (type and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS) != 0
+
+        val isTextField = cls == InputType.TYPE_CLASS_TEXT
+
+        // Autocorrect + smart correction only when the app allows it.
+        canCompose = isTextField && (passwordField == false) && (searchField == false)
+        // Suggestions are shown for any text field except passwords.
+        suggestionsAllowed = isTextField && (passwordField == false)
 
         applyPrefs()
         val m = when (cls) {
@@ -517,7 +527,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun refreshStrip() {
         if (this::strip.isInitialized == false) return
-        val suggestionsActive = suggestionsOn && canCompose
+        val suggestionsActive = suggestionsOn && suggestionsAllowed
         val showTools = toolbarOpen || (suggestionsActive == false)
         val targetSlotAlpha = if (showTools) 0f else 1f
         val targetToolAlpha = if (showTools) 1f else 0f
@@ -733,6 +743,45 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (s.isEmpty()) return null
         val idx = s.lastIndexOfAny(charArrayOf(' ', '\n', '\t'))
         return if (idx < 0) s else s.substring(idx + 1).takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * For search fields, the composing region is disabled (canCompose is false),
+     * so we cannot rely on [composing] to know what the user is currently typing.
+     * Read the current word directly from the InputConnection instead.
+     */
+    private fun currentTypedWordFromField(): String {
+        val before = currentInputConnection?.getTextBeforeCursor(32, 0)?.toString() ?: return ""
+        // Take the trailing run of letters/apostrophes
+        var i = before.length - 1
+        while (i >= 0) {
+            val c = before[i]
+            if (c.isLetter() || c == '\'') {
+                i -= 1
+            } else {
+                break
+            }
+        }
+        return before.substring(i + 1)
+    }
+
+    /**
+     * In a search field, the previous word is what comes before the trailing
+     * separator. Used for next-word / sentence suggestions after a space.
+     */
+    private fun previousWordFromField(): String? {
+        val before = currentInputConnection?.getTextBeforeCursor(48, 0)?.toString() ?: return null
+        var end = before.length
+        // Skip trailing spaces
+        while (end > 0 && before[end - 1].isWhitespace()) end -= 1
+        if (end == 0) return null
+        var start = end
+        while (start > 0) {
+            val c = before[start - 1]
+            if (c.isLetter() || c == '\'') start -= 1 else break
+        }
+        if (start >= end) return null
+        return before.substring(start, end).takeIf { it.isNotEmpty() }
     }
 
     // ------------------------------------------------------------------ KeyboardView.Listener
@@ -1063,13 +1112,32 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun updateSuggestions() {
         if (this::slots.isInitialized == false) return
         suggestJob?.cancel()
-        if (suggestionsOn == false || canCompose == false) {
+        if (suggestionsOn == false || suggestionsAllowed == false) {
             setCandidates(emptyList())
             return
         }
-        val prefix = composing.toString()
-        if (prefix.isEmpty()) {
-            val prev1 = lastWord()
+
+        // Determine the current typed word. In composing fields it's `composing`.
+        // In search fields (no composing), read it from the connection.
+        val typedWord: String
+        val composingActive = composing.isNotEmpty()
+        if (composingActive) {
+            typedWord = composing.toString()
+        } else if (canCompose == false && suggestionsAllowed) {
+            typedWord = currentTypedWordFromField()
+        } else {
+            typedWord = ""
+        }
+
+        if (typedWord.isEmpty()) {
+            // Nothing being typed. Try next-word prediction from the previous word.
+            val prev1: String? = if (composingActive) {
+                lastWord()
+            } else if (canCompose == false && suggestionsAllowed) {
+                previousWordFromField()
+            } else {
+                lastWord()
+            }
             val next: List<String>
             if (prev1 != null) {
                 next = dict.predictNext(null, prev1, 3)
@@ -1087,7 +1155,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             setCandidates(list)
             return
         }
-        val emoji = if (emojiSuggest) EmojiKeywords.map[prefix.lowercase()] else null
+
+        // Word completions for the current typed word
+        val emoji = if (emojiSuggest && composingActive) {
+            EmojiKeywords.map[typedWord.lowercase()]
+        } else {
+            null
+        }
+        val prefix = typedWord
         suggestJob = scope.launch {
             val list = LinkedHashSet<String>()
             if (dict.contains(prefix) == false) list.add(prefix)
@@ -1139,20 +1214,31 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun pickSuggestion(i: Int) {
         val w = candidates.getOrNull(i) ?: return
         val ic = currentInputConnection ?: return
-        composing.clear()
         clearUndo()
         ic.beginBatchEdit()
         try {
-            ic.commitText(w, 1)
+            if (composing.isNotEmpty()) {
+                // Replace the composing region with the picked word
+                composing.clear()
+                ic.commitText(w, 1)
+            } else {
+                // In a search field: delete the current typed word from the field
+                // then commit the completion, so "the" doesn't become "thehello".
+                val typed = currentTypedWordFromField()
+                if (typed.isNotEmpty()) {
+                    ic.deleteSurroundingText(typed.length, 0)
+                }
+                ic.commitText(w, 1)
+            }
             appendTail(w)
-            if (w[0].isLetter()) {
+            if (w.isNotEmpty() && w[0].isLetter()) {
                 ic.commitText(" ", 1)
                 appendTail(" ")
             }
         } finally {
             ic.endBatchEdit()
         }
-        if (w[0].isLetter()) {
+        if (w.isNotEmpty() && w[0].isLetter()) {
             if (learnOn && incognito == false && canCompose) {
                 dict.learn(w, prev2 = null, prev1 = lastWord())
             }
