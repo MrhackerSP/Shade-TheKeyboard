@@ -916,7 +916,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection ?: return
         ic.beginBatchEdit()
         try {
-            val originalLen = composing.length            val corrected = endWord(" ")
+            val originalLen = composing.length
+            val corrected = endWord(" ")
             if (corrected != null) {
                 popTail(originalLen)
                 appendTail(corrected)
