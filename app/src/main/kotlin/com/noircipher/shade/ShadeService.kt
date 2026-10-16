@@ -248,6 +248,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         registerInsetAnimationCallback()
 
         applyPrefs()
+
+        // Ensure the keyboard has rows on first display. applyMode() may
+        // early-return because `mode` already matches its default value,
+        // which would leave the KeyboardView empty.
+        if (kb.rows.isEmpty()) {
+            kb.setRows(
+                Layouts.letters(
+                    layoutName, numberRow,
+                    prefs.getString("custom_layout", "") ?: ""
+                )
+            )
+            kb.relayout()
+        }
+
         return root
     }
 
@@ -331,8 +345,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         val inputTypeChanged = type != lastAppliedInputType
         lastAppliedInputType = type
-        if (inputTypeChanged || mode != m) {
-            applyMode(m)
+        if (inputTypeChanged || mode != m || kb.rows.isEmpty()) {
+            applyMode(m, force = kb.rows.isEmpty())
         }
 
         transitionToPanel(Panel.NONE, animate = false)
@@ -417,7 +431,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         layoutName = prefs.getString("layout", "qwerty") ?: "qwerty"
         kb.trackpadEnabled = prefs.getBoolean("trackpad_mode", true)
         kb.typingBurstEnabled = prefs.getBoolean("typing_burst", false)
-        // Gboard uses 300ms for long-press, 350ms for repeat start.
         kb.longPressMs = 300L
         kb.repeatDelayMs = 350L
         kb.repeatIntervalMs = 40L
@@ -461,7 +474,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         for (tv in slots) tv.setTextColor(kbTheme.text)
         rebuildToolbar()
         refreshStrip()
-        applyMode(mode)
+
+        // Rebuild rows so layout/theme changes take effect immediately.
+        applyMode(mode, force = true)
     }
 
     private fun loadBackground() {
@@ -570,8 +585,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         applyMode(m)
     }
 
-    private fun applyMode(m: Mode) {
-        if (m == mode) return
+    /**
+     * Load rows for [m] into the KeyboardView.
+     *
+     * The [force] flag bypasses the early-return guard that normally skips
+     * redundant work when the mode is unchanged. It is needed on first
+     * display, because [mode] is already [Mode.LETTERS] while the
+     * KeyboardView still has no rows loaded.
+     */
+    private fun applyMode(m: Mode, force: Boolean = false) {
+        if (m == mode && !force && kb.rows.isNotEmpty()) return
         mode = m
 
         val rows = when (m) {
@@ -823,22 +846,15 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onDeleteWords(count: Int) {
         val ic = currentInputConnection ?: return
         if (count <= 0) return
-        // SwiftKey-style: delete `count` words plus the surrounding whitespace.
-        // We read backwards from the cursor, walking word boundaries.
         val before = ic.getTextBeforeCursor(400, 0)?.toString() ?: return
         if (before.isEmpty()) return
 
         var deleted = 0
         var i = before.length
-        // Skip trailing whitespace first
         while (i > 0 && before[i - 1].isWhitespace()) i -= 1
-        // Then walk back over `count` words
         while (i > 0 && deleted < count) {
-            // Skip non-word chars (already stripped punctuation boundaries)
-            // Walk back to the start of the current word
             while (i > 0 && !before[i - 1].isWhitespace()) i -= 1
             deleted += 1
-            // Skip whitespace before the word
             while (i > 0 && before[i - 1].isWhitespace()) i -= 1
         }
         val charsToDelete = before.length - i
@@ -850,7 +866,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         } finally {
             ic.endBatchEdit()
         }
-        // Invalidate the tail cache since we removed text
         tail.setLength(0)
         tailValid = false
         composing.clear()
@@ -867,8 +882,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             (text[0].isLetter() || (text[0] == '\'' && composing.isNotEmpty()))
 
         if (isWordChar) {
-            // Shift-once auto-release: flip state before commit so the key
-            // visual updates in the same frame as the letter appears.
             if (shiftState == 1) {
                 shiftState = 0
                 autoShifted = false
@@ -958,7 +971,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onTrackpadEnter() {
-        // Two-stage cue: tick on entry, heavier haptic when the cursor moves.
         kb.haptic = prefs.getBoolean("haptic", true)
     }
 
