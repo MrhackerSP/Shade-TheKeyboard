@@ -634,6 +634,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.relayout()
     }
 
+    /**
+     * Approximate width of one character on the keyboard, in pixels.
+     * Used to translate a drag distance into a character count when
+     * deciding how many whole words the user has swept back.
+     *
+     * Ten keys fit a standard row, so key width ≈ view width / 10.
+     */
+    private fun approximateKeyWidth(): Float {
+        return if (this::kb.isInitialized && kb.width > 0) kb.width / 10f else dp(24f)
+    }
+
     // ------------------------------------------------------------------ panel transitions
 
     private fun runPanelTransition(tag: String, apply: () -> Unit) {
@@ -870,6 +881,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
      * [wordCount] words would cover. Shared by the preview path
      * ([onDeletePreview]) and the commit path ([onDeleteCommit]) so the
      * highlighted selection always matches what gets deleted.
+     *
+     * The range always ends exactly at a word boundary — whitespace is
+     * consumed, but the count never stops mid-word.
      */
     private fun wordDeleteRange(wordCount: Int): Int {
         if (wordCount <= 0) return 0
@@ -892,23 +906,57 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     /**
-     * Live preview during drag-from-backspace. Extends the system selection
-     * backward to cover [wordCount] words. No text is deleted yet — the
-     * user sees the highlight and can still cancel by lifting without
-     * crossing a word boundary.
+     * Live preview during drag-from-backspace.
+     *
+     * [travelPx] is how far the finger has moved left since the drag began.
+     * We convert that to a character count using an approximate key width,
+     * then walk whole word boundaries backwards until we've consumed at
+     * least that many characters. The selection therefore always ends on a
+     * word edge — never mid-word — and the user sees exactly what will be
+     * deleted if they release.
+     *
+     * Returns the current word count so the view can draw the badge.
      */
-    override fun onDeletePreview(wordCount: Int) {
-        val ic = currentInputConnection ?: return
-        if (cursorPos < 0) return
-        pendingDeleteWords = wordCount
-        deletePreviewActive = true
-        val chars = wordDeleteRange(wordCount)
-        if (chars <= 0) {
-            // Nothing to select — collapse just in case.
+    override fun onDeletePreview(travelPx: Float): Int {
+        val ic = currentInputConnection ?: return 0
+        if (cursorPos < 0) return 0
+
+        val before = ic.getTextBeforeCursor(500, 0)?.toString() ?: return 0
+        if (before.isEmpty()) {
+            deletePreviewActive = true
+            pendingDeleteWords = 0
             ic.setSelection(cursorPos, cursorPos)
-            return
+            return 0
         }
-        ic.setSelection(cursorPos - chars, cursorPos)
+
+        // Approximate how many characters the finger has swept over.
+        val pxPerChar = approximateKeyWidth()
+        val targetChars = (travelPx / pxPerChar).toInt().coerceAtLeast(0)
+
+        // Walk word boundaries backwards, snapping to whole words.
+        var i = before.length
+        var wordCount = 0
+        var consumed = 0
+        while (i > 0) {
+            // Skip trailing whitespace at the current position.
+            while (i > 0 && before[i - 1].isWhitespace()) i -= 1
+            if (i == 0) break
+            // Walk to the start of the current word.
+            while (i > 0 && !before[i - 1].isWhitespace()) i -= 1
+            wordCount += 1
+            consumed = before.length - i
+            if (consumed >= targetChars) break
+        }
+
+        deletePreviewActive = true
+        pendingDeleteWords = wordCount
+
+        if (consumed <= 0) {
+            ic.setSelection(cursorPos, cursorPos)
+            return 0
+        }
+        ic.setSelection(cursorPos - consumed, cursorPos)
+        return wordCount
     }
 
     /** Commit the previewed range as a delete. */
