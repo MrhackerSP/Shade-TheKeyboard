@@ -187,6 +187,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun buildInputView(): View {
         kb = KeyboardView(this).also { it.listener = this }
+        // Cache the static keyboard as a GPU layer. Only pressed keys get
+        // re-rasterized each frame. Real 120fps win on high-refresh panels.
         kb.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         toggle = TextView(this).apply {
@@ -199,6 +201,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
         }
 
+        // Two layers per slot: the "old" layer holds the previous word and
+        // fades out; the "new" layer holds the incoming word and fades in.
+        // Only slots whose text changed animate.
         slots = List(3) { i ->
             TextView(this).apply {
                 gravity = Gravity.CENTER
@@ -443,6 +448,21 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         tailValid = false
         pendingDeleteWords = 0
         deletePreviewActive = false
+
+        // Flush the bigram model so the auto-export sees current counts.
+        if (this::dict.isInitialized) {
+            dict.bigramModel?.save()
+        }
+        // Auto-export training data if the user has opted in and at least
+        // 24h have passed since the last export. Runs off the UI thread so
+        // keyboard dismissal is never blocked.
+        scope.launch(Dispatchers.IO) {
+            try {
+                TrainingExport.autoExport(applicationContext)
+            } catch (_: Exception) {
+                // Silent. Auto-export is best-effort.
+            }
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -615,6 +635,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             .start()
     }
 
+    /**
+     * Swap which pane (suggestions vs toolbar) is active.
+     *
+     * Uses GONE rather than alpha-0 so the hidden pane is removed from touch
+     * dispatch entirely. Previously it stayed VISIBLE with alpha 0, letting
+     * the hidden toolbar keys silently intercept taps intended for the
+     * suggestion strip underneath.
+     */
     private fun refreshStrip() {
         if (this::strip.isInitialized == false) return
         val suggestionsActive = suggestionsOn && suggestionsAllowed
@@ -629,7 +657,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         target.animate()
             .alpha(1f)
             .setDuration(140L)
-            .setInterpolator(DecelerateInterpolator())
+            .setDecelerate()
             .start()
 
         toggle.text = if (showTools) "‹" else "›"
@@ -693,6 +721,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     // ------------------------------------------------------------------ panel transitions
 
+    /**
+     * Gboard-style panel transition. The outgoing panel slides left and
+     * fades out while the incoming panel slides in from the right, using
+     * a non-bouncy spring for a settled, physical feel.
+     */
     private fun transitionToPanel(p: Panel, animate: Boolean = true) {
         if (this::emoji.isInitialized == false) return
         if (p != Panel.NONE) endWord()
@@ -1097,8 +1130,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     /**
      * Snapshot the last few touches into `lastWordTouches` before clearing
      * the trace. Called when a word ends (space, enter, punctuation).
-     * These are the points the spatial tiebreak will use for the NEXT
-     * word's candidates.
      */
     private fun snapshotWordTouches() {
         lastWordTouches = touchTrace.last(touchTrace.size())
@@ -1300,6 +1331,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
      * thread — the un-corrected word is committed optimistically, then
      * replaced in place if SymSpell finds a correction. The UI thread
      * never blocks.
+     *
+     * Returns null; corrections are applied asynchronously.
      */
     private fun endWord(sep: String? = null): String? {
         val ic = currentInputConnection
@@ -1477,9 +1510,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             } else stage1.toList()
 
             // Stage 3: spatial tiebreak, only if two candidates look tied.
-            // "Tied" here means: same length, edit distance 1 from typed,
-            // and both survive prefix filtering. In practice we just check
-            // whether the top 2 candidates both start with the same letters.
             val stage3 = if (stage2.size >= 2 && layout != null && touches.isNotEmpty()) {
                 val a = stage2[0]
                 val b = stage2[1]
@@ -1494,6 +1524,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    /**
+     * Per-slot crossfade. Slots whose text is unchanged do not animate.
+     * The primary (index 0) slot gets a subtle scale-fade to match Gboard.
+     */
     private fun setCandidates(list: List<String>) {
         if (list == candidates) return
         val old = candidates
