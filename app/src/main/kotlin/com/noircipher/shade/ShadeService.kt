@@ -28,6 +28,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
@@ -104,10 +105,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var bgStamp = -1L
     private var lastAppliedInputType = -1
 
-    // --- Delete-slide preview state ----------------------------------------
-    // `pendingDeleteWords` is the number of words the current slide would
-    // delete. `deletePreviewActive` tells onUpdateSelection() to ignore
-    // selection changes that we caused ourselves via setSelection().
     private var pendingDeleteWords = 0
     private var deletePreviewActive = false
 
@@ -258,9 +255,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         applyPrefs()
 
-        // Ensure the keyboard has rows on first display. applyMode() may
-        // early-return because `mode` already matches its default value,
-        // which would leave the KeyboardView empty.
         if (kb.rows.isEmpty()) {
             kb.setRows(
                 Layouts.letters(
@@ -407,6 +401,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         deletePreviewActive = false
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        root.post { applyOneHandedToStrip() }
+    }
+
     override fun onUpdateSelection(
         oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int,
         candidatesStart: Int, candidatesEnd: Int
@@ -415,13 +414,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             oldSelStart, oldSelEnd, newSelStart, newSelEnd,
             candidatesStart, candidatesEnd
         )
-
-        // While a delete-slide preview is active, the selection we see is
-        // the one we created ourselves via setSelection(). Do not treat it
-        // as the user moving the cursor — keep cursorPos anchored where it
-        // was when the slide began.
         if (deletePreviewActive) return
-
         if (newSelStart != cursorPos || newSelEnd != selectionEnd) {
             cursorPos = newSelStart
             selectionEnd = newSelEnd
@@ -473,9 +466,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         kb.kbTheme = kbTheme
         kb.contentHeightPx = contentH
-        kb.oneHanded = when (prefs.getString("one_handed", "off")) {
-            "left" -> 1; "right" -> 2; else -> 0
-        }
         kb.setSplitAnimated(split)
         kb.keyBorders = prefs.getBoolean("key_borders", true)
         kb.showHints = prefs.getBoolean("show_hints", true)
@@ -483,6 +473,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.sound = prefs.getBoolean("sound", false)
         kb.showPreview = prefs.getBoolean("popup_preview", true)
         kb.bgBitmap = bgBmp
+
+        val side = when (prefs.getString("one_handed", "off")) {
+            "left" -> 1; "right" -> 2; else -> 0
+        }
+        kb.setOneHandedAnimated(side)
 
         (kb.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
         (emoji.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
@@ -496,8 +491,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         for (tv in slots) tv.setTextColor(kbTheme.text)
         rebuildToolbar()
         refreshStrip()
+        root.post { applyOneHandedToStrip() }
 
-        // Rebuild rows so layout/theme changes take effect immediately.
         applyMode(mode, force = true)
     }
 
@@ -575,29 +570,65 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             .start()
     }
 
+    /**
+     * Swap which pane (suggestions vs toolbar) is active.
+     *
+     * Uses GONE rather than alpha-0 so the hidden pane is removed from touch
+     * dispatch entirely. Previously it stayed VISIBLE with alpha 0, letting
+     * the hidden toolbar keys silently intercept taps intended for the
+     * suggestion strip underneath.
+     */
     private fun refreshStrip() {
         if (this::strip.isInitialized == false) return
         val suggestionsActive = suggestionsOn && suggestionsAllowed
         val showTools = toolbarOpen || (suggestionsActive == false)
-        val targetSlotAlpha = if (showTools) 0f else 1f
-        val targetToolAlpha = if (showTools) 1f else 0f
-        animateAlpha(slotRow, slotRow.alpha, targetSlotAlpha)
-        animateAlpha(toolScroll, toolScroll.alpha, targetToolAlpha)
-        slotRow.visibility = View.VISIBLE
-        toolScroll.visibility = View.VISIBLE
+
+        slotRow.visibility = if (showTools) View.GONE else View.VISIBLE
+        toolScroll.visibility = if (showTools) View.VISIBLE else View.GONE
+
+        // Fade the freshly-shown pane in. The hidden pane is GONE, so it
+        // cannot receive touches.
+        slotRow.alpha = if (showTools) 0f else 0f
+        toolScroll.alpha = if (showTools) 0f else 0f
+        val target = if (showTools) toolScroll else slotRow
+        target.animate()
+            .alpha(1f)
+            .setDuration(140L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+
         toggle.text = if (showTools) "‹" else "›"
         toggle.visibility = if (suggestionsActive) View.VISIBLE else View.GONE
         strip.visibility = if (panel == Panel.NONE) View.VISIBLE else View.GONE
     }
 
-    private fun animateAlpha(v: View, from: Float, to: Float) {
-        if (from == to) { v.alpha = to; return }
-        ValueAnimator.ofFloat(from, to).apply {
-            duration = 140L
-            interpolator = DecelerateInterpolator()
-            addUpdateListener { v.alpha = it.animatedValue as Float }
-            start()
+    /**
+     * Shrink and align the suggestion strip to match the keyboard's
+     * one-handed position. Called whenever `kb.oneHanded` changes or on
+     * layout / rotation.
+     */
+    private fun applyOneHandedToStrip() {
+        if (this::strip.isInitialized == false) return
+        val w = root.width.toFloat()
+        if (w <= 0f) return
+        val availW = w * 0.75f
+        val lp = strip.layoutParams as? LinearLayout.LayoutParams ?: return
+        when (kb.oneHanded) {
+            1 -> {
+                lp.width = availW.toInt()
+                lp.gravity = Gravity.START
+            }
+            2 -> {
+                lp.width = availW.toInt()
+                lp.gravity = Gravity.END
+            }
+            else -> {
+                lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+                lp.gravity = Gravity.START
+            }
         }
+        strip.layoutParams = lp
+        strip.requestLayout()
     }
 
     // ------------------------------------------------------------------ mode switching
@@ -607,14 +638,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         applyMode(m)
     }
 
-    /**
-     * Load rows for [m] into the KeyboardView.
-     *
-     * The [force] flag bypasses the early-return guard that normally skips
-     * redundant work when the mode is unchanged. It is needed on first
-     * display, because [mode] is already [Mode.LETTERS] while the
-     * KeyboardView still has no rows loaded.
-     */
     private fun applyMode(m: Mode, force: Boolean = false) {
         if (m == mode && !force && kb.rows.isNotEmpty()) return
         mode = m
@@ -634,13 +657,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.relayout()
     }
 
-    /**
-     * Approximate width of one character on the keyboard, in pixels.
-     * Used to translate a drag distance into a character count when
-     * deciding how many whole words the user has swept back.
-     *
-     * Ten keys fit a standard row, so key width ≈ view width / 10.
-     */
     private fun approximateKeyWidth(): Float {
         return if (this::kb.isInitialized && kb.width > 0) kb.width / 10f else dp(24f)
     }
@@ -755,14 +771,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 prefs.edit().putBoolean("incognito", incognito).apply()
                 rebuildToolbar()
             }
-            "onehand" -> {
-                val next = when (prefs.getString("one_handed", "off")) {
-                    "off" -> "left"; "left" -> "right"; else -> "off"
-                }
-                prefs.edit().putString("one_handed", next).apply()
-                kb.oneHanded = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
-                kb.relayout()
-            }
+            "onehand" -> cycleOneHanded()
             "settings" -> startActivity(
                 Intent(this, SettingsActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -770,6 +779,46 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
         updateShiftFromCaps()
         updateSuggestions()
+    }
+
+    /**
+     * Cycle the one-handed side: off → left → right → off.
+     * The keyboard slides and shrinks over 200ms; the strip follows.
+     */
+    private fun cycleOneHanded() {
+        val next = when (prefs.getString("one_handed", "off")) {
+            "off" -> "left"
+            "left" -> "right"
+            else -> "off"
+        }
+        prefs.edit().putString("one_handed", next).apply()
+        val side = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
+        kb.setOneHandedAnimated(side)
+        applyOneHandedToStrip()
+    }
+
+    /**
+     * Gboard-style one-handed menu, triggered by long-pressing Enter.
+     * Lets the user pick Left / Right / Off directly instead of cycling.
+     */
+    private fun showOneHandedMenu() {
+        val popup = PopupMenu(this, toggle)
+        popup.menu.add(0, 1, 0, "One-handed: Left")
+        popup.menu.add(0, 2, 1, "One-handed: Right")
+        popup.menu.add(0, 3, 2, "One-handed: Off")
+        popup.setOnMenuItemClickListener { item ->
+            val next = when (item.itemId) {
+                1 -> "left"
+                2 -> "right"
+                else -> "off"
+            }
+            prefs.edit().putString("one_handed", next).apply()
+            val side = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
+            kb.setOneHandedAnimated(side)
+            applyOneHandedToStrip()
+            true
+        }
+        popup.show()
     }
 
     private fun captureClip() {
@@ -876,15 +925,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    /**
-     * Compute how many characters back from the cursor a word-delete of
-     * [wordCount] words would cover. Shared by the preview path
-     * ([onDeletePreview]) and the commit path ([onDeleteCommit]) so the
-     * highlighted selection always matches what gets deleted.
-     *
-     * The range always ends exactly at a word boundary — whitespace is
-     * consumed, but the count never stops mid-word.
-     */
+    override fun onEnterLongPress() {
+        showOneHandedMenu()
+    }
+
     private fun wordDeleteRange(wordCount: Int): Int {
         if (wordCount <= 0) return 0
         val ic = currentInputConnection ?: return 0
@@ -893,10 +937,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         var i = before.length
         var deleted = 0
-        // Skip trailing whitespace first.
         while (i > 0 && before[i - 1].isWhitespace()) i -= 1
-        // Then walk back over `wordCount` words, consuming the whitespace
-        // that separates them.
         while (i > 0 && deleted < wordCount) {
             while (i > 0 && !before[i - 1].isWhitespace()) i -= 1
             deleted += 1
@@ -905,18 +946,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return before.length - i
     }
 
-    /**
-     * Live preview during drag-from-backspace.
-     *
-     * [travelPx] is how far the finger has moved left since the drag began.
-     * We convert that to a character count using an approximate key width,
-     * then walk whole word boundaries backwards until we've consumed at
-     * least that many characters. The selection therefore always ends on a
-     * word edge — never mid-word — and the user sees exactly what will be
-     * deleted if they release.
-     *
-     * Returns the current word count so the view can draw the badge.
-     */
     override fun onDeletePreview(travelPx: Float): Int {
         val ic = currentInputConnection ?: return 0
         if (cursorPos < 0) return 0
@@ -929,19 +958,15 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             return 0
         }
 
-        // Approximate how many characters the finger has swept over.
         val pxPerChar = approximateKeyWidth()
         val targetChars = (travelPx / pxPerChar).toInt().coerceAtLeast(0)
 
-        // Walk word boundaries backwards, snapping to whole words.
         var i = before.length
         var wordCount = 0
         var consumed = 0
         while (i > 0) {
-            // Skip trailing whitespace at the current position.
             while (i > 0 && before[i - 1].isWhitespace()) i -= 1
             if (i == 0) break
-            // Walk to the start of the current word.
             while (i > 0 && !before[i - 1].isWhitespace()) i -= 1
             wordCount += 1
             consumed = before.length - i
@@ -959,7 +984,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return wordCount
     }
 
-    /** Commit the previewed range as a delete. */
     override fun onDeleteCommit() {
         val ic = currentInputConnection ?: return
         val words = pendingDeleteWords
@@ -983,7 +1007,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         afterText()
     }
 
-    /** Collapse any active preview without deleting. */
     override fun onDeleteCancel() {
         val ic = currentInputConnection
         deletePreviewActive = false
@@ -992,11 +1015,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         ic?.setSelection(cursorPos, cursorPos)
     }
 
-    /**
-     * Legacy word-delete entry point. Retained so the toolbar / programmatic
-     * callers still work; the drag-from-backspace path now uses
-     * [onDeletePreview] + [onDeleteCommit] instead.
-     */
     override fun onDeleteWords(count: Int) {
         val ic = currentInputConnection ?: return
         if (count <= 0) return
