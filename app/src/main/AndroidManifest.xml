@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Overlay permission is required for the floating keyboard window (API 23+). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <!-- Intentionally NO internet permission: a keyboard sees everything you type. -->
     <application
         android:allowBackup="true"
@@ -36,6 +40,23 @@
             <meta-data
                 android:name="android.view.im"
                 android:resource="@xml/method" />
+
+            <input-method-subtype
+                android:label="English"
+                android:imeSubtypeLocale="en"
+                android:imeSubtypeMode="keyboard" />
+            <input-method-subtype
+                android:label="Deutsch"
+                android:imeSubtypeLocale="de"
+                android:imeSubtypeMode="keyboard" />
+            <input-method-subtype
+                android:label="Français"
+                android:imeSubtypeLocale="fr"
+                android:imeSubtypeMode="keyboard" />
+            <input-method-subtype
+                android:label="Español"
+                android:imeSubtypeLocale="es"
+                android:imeSubtypeMode="keyboard" />
         </service>
     </application>
 </manifest>
