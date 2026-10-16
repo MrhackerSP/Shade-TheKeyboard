@@ -104,6 +104,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var bgStamp = -1L
     private var lastAppliedInputType = -1
 
+    // --- Delete-slide preview state ----------------------------------------
+    // `pendingDeleteWords` is the number of words the current slide would
+    // delete. `deletePreviewActive` tells onUpdateSelection() to ignore
+    // selection changes that we caused ourselves via setSelection().
+    private var pendingDeleteWords = 0
+    private var deletePreviewActive = false
+
     private val undoStack = ArrayDeque<UndoEntry>(10)
 
     private val tail = StringBuilder(16)
@@ -156,6 +163,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         tail.setLength(0)
         tailValid = false
         info = null
+        pendingDeleteWords = 0
+        deletePreviewActive = false
 
         super.onDestroy()
     }
@@ -313,6 +322,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         shiftState = 0
         autoShifted = false
         toolbarOpen = prefs.getBoolean("toolbar_open_default", false)
+        pendingDeleteWords = 0
+        deletePreviewActive = false
 
         mode = Mode.LETTERS
 
@@ -381,6 +392,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         selectionEnd = -1
         mode = Mode.LETTERS
         lastAppliedInputType = -1
+        pendingDeleteWords = 0
+        deletePreviewActive = false
     }
 
     override fun onFinishInput() {
@@ -390,6 +403,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         undoStack.clear()
         tail.setLength(0)
         tailValid = false
+        pendingDeleteWords = 0
+        deletePreviewActive = false
     }
 
     override fun onUpdateSelection(
@@ -400,6 +415,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             oldSelStart, oldSelEnd, newSelStart, newSelEnd,
             candidatesStart, candidatesEnd
         )
+
+        // While a delete-slide preview is active, the selection we see is
+        // the one we created ourselves via setSelection(). Do not treat it
+        // as the user moving the cursor — keep cursorPos anchored where it
+        // was when the slide began.
+        if (deletePreviewActive) return
+
         if (newSelStart != cursorPos || newSelEnd != selectionEnd) {
             cursorPos = newSelStart
             selectionEnd = newSelEnd
@@ -843,26 +865,98 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    override fun onDeleteWords(count: Int) {
-        val ic = currentInputConnection ?: return
-        if (count <= 0) return
-        val before = ic.getTextBeforeCursor(400, 0)?.toString() ?: return
-        if (before.isEmpty()) return
+    /**
+     * Compute how many characters back from the cursor a word-delete of
+     * [wordCount] words would cover. Shared by the preview path
+     * ([onDeletePreview]) and the commit path ([onDeleteCommit]) so the
+     * highlighted selection always matches what gets deleted.
+     */
+    private fun wordDeleteRange(wordCount: Int): Int {
+        if (wordCount <= 0) return 0
+        val ic = currentInputConnection ?: return 0
+        val before = ic.getTextBeforeCursor(500, 0)?.toString() ?: return 0
+        if (before.isEmpty()) return 0
 
-        var deleted = 0
         var i = before.length
+        var deleted = 0
+        // Skip trailing whitespace first.
         while (i > 0 && before[i - 1].isWhitespace()) i -= 1
-        while (i > 0 && deleted < count) {
+        // Then walk back over `wordCount` words, consuming the whitespace
+        // that separates them.
+        while (i > 0 && deleted < wordCount) {
             while (i > 0 && !before[i - 1].isWhitespace()) i -= 1
             deleted += 1
             while (i > 0 && before[i - 1].isWhitespace()) i -= 1
         }
-        val charsToDelete = before.length - i
-        if (charsToDelete <= 0) return
+        return before.length - i
+    }
+
+    /**
+     * Live preview during drag-from-backspace. Extends the system selection
+     * backward to cover [wordCount] words. No text is deleted yet — the
+     * user sees the highlight and can still cancel by lifting without
+     * crossing a word boundary.
+     */
+    override fun onDeletePreview(wordCount: Int) {
+        val ic = currentInputConnection ?: return
+        if (cursorPos < 0) return
+        pendingDeleteWords = wordCount
+        deletePreviewActive = true
+        val chars = wordDeleteRange(wordCount)
+        if (chars <= 0) {
+            // Nothing to select — collapse just in case.
+            ic.setSelection(cursorPos, cursorPos)
+            return
+        }
+        ic.setSelection(cursorPos - chars, cursorPos)
+    }
+
+    /** Commit the previewed range as a delete. */
+    override fun onDeleteCommit() {
+        val ic = currentInputConnection ?: return
+        val words = pendingDeleteWords
+        deletePreviewActive = false
+        pendingDeleteWords = 0
+        if (cursorPos < 0 || words <= 0) return
+        val chars = wordDeleteRange(words)
+        if (chars <= 0) return
 
         ic.beginBatchEdit()
         try {
-            ic.deleteSurroundingText(charsToDelete, 0)
+            ic.setSelection(cursorPos - chars, cursorPos)
+            ic.commitText("", 1)
+        } finally {
+            ic.endBatchEdit()
+        }
+        tail.setLength(0)
+        tailValid = false
+        composing.clear()
+        clearUndo()
+        afterText()
+    }
+
+    /** Collapse any active preview without deleting. */
+    override fun onDeleteCancel() {
+        val ic = currentInputConnection
+        deletePreviewActive = false
+        pendingDeleteWords = 0
+        if (cursorPos < 0) return
+        ic?.setSelection(cursorPos, cursorPos)
+    }
+
+    /**
+     * Legacy word-delete entry point. Retained so the toolbar / programmatic
+     * callers still work; the drag-from-backspace path now uses
+     * [onDeletePreview] + [onDeleteCommit] instead.
+     */
+    override fun onDeleteWords(count: Int) {
+        val ic = currentInputConnection ?: return
+        if (count <= 0) return
+        val chars = wordDeleteRange(count)
+        if (chars <= 0) return
+        ic.beginBatchEdit()
+        try {
+            ic.deleteSurroundingText(chars, 0)
         } finally {
             ic.endBatchEdit()
         }
