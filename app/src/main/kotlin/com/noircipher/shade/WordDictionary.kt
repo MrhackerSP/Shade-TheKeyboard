@@ -2,16 +2,22 @@ package com.noircipher.shade
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.darkrockstudios.symspellkt.api.SymSpell
+import com.darkrockstudios.symspellkt.common.SymSpellConfig
+import com.darkrockstudios.symspellkt.exception.SymSpellException
+import com.darkrockstudios.symspellkt.impl.SymSpellImpl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * In-memory dictionary with a prefix index for O(k) suggestions.
+ * In-memory dictionary with:
+ *  - Prefix index for O(k) suggestions
+ *  - SymSpellKt for O(1) fuzzy correction (deletion-index)
+ *  - User-learned words with their own prefix index
  *
- * The prefix index maps 1- and 2-character prefixes to the list of words
- * starting with them, sorted by frequency descending. Suggestions for a
- * prefix `p` become `index[p.take(2)].filter { it.startsWith(p) }`, which
- * is far cheaper than scanning the entire word set on every keystroke.
+ * SymSpell handles misspelling lookups; the prefix index handles
+ * prefix completion. They're separate fast paths and neither blocks
+ * the other.
  */
 class WordDictionary(private val ctx: Context) {
 
@@ -26,6 +32,9 @@ class WordDictionary(private val ctx: Context) {
     private val userPrefix2: MutableMap<String, MutableList<String>> = HashMap()
 
     var bigramModel: BigramModel? = null
+
+    /** SymSpell instance, built once after the dictionary loads. */
+    @Volatile private var symSpell: SymSpell? = null
 
     private val contractions: Map<String, String> = mapOf(
         "dont" to "don't", "cant" to "can't", "wont" to "won't",
@@ -64,6 +73,7 @@ class WordDictionary(private val ctx: Context) {
                 words.clear()
                 words.putAll(w)
                 rebuildPrefixIndex()
+                buildSymSpell()
             } catch (_: Exception) {
                 // No dictionary file
             }
@@ -71,23 +81,41 @@ class WordDictionary(private val ctx: Context) {
     }
 
     /**
-     * Rebuild the prefix indexes from `words`. Called after loading a
-     * dictionary file. Sorted by frequency descending so `suggest()` can
-     * stop early once it has enough results.
+     * Build the SymSpell deletion index over the loaded dictionary plus
+     * the user's learned words. Runs once per locale load.
      */
+    private fun buildSymSpell() {
+        try {
+            val config = SymSpellConfig(
+                language = "en",
+                maxDictionaryEditDistance = 2,
+                prefixLength = 7,
+                countThreshold = 1
+            )
+            val ss = SymSpellImpl(config)
+            // Bulk-load dictionary terms. Frequency is used for tiebreaks.
+            val dictionary = words.map { (word, freq) ->
+                com.darkrockstudios.symspellkt.common.Suggestions(word, freq.toDouble())
+            }
+            ss.loadDictionary(dictionary)
+            symSpell = ss
+        } catch (_: SymSpellException) {
+            symSpell = null
+        } catch (_: Exception) {
+            symSpell = null
+        }
+    }
+
     private fun rebuildPrefixIndex() {
         prefix1.clear()
         prefix2.clear()
         for ((word, freq) in words) {
             if (word.isEmpty()) continue
-            val k1 = word.substring(0, 1)
-            prefix1.getOrPut(k1) { ArrayList() }.add(word)
+            prefix1.getOrPut(word.substring(0, 1)) { ArrayList() }.add(word)
             if (word.length >= 2) {
-                val k2 = word.substring(0, 2)
-                prefix2.getOrPut(k2) { ArrayList() }.add(word)
+                prefix2.getOrPut(word.substring(0, 2)) { ArrayList() }.add(word)
             }
         }
-        // Sort each bucket by frequency once, so lookups don't re-sort.
         for (list in prefix1.values) list.sortByDescending { words[it] ?: 0L }
         for (list in prefix2.values) list.sortByDescending { words[it] ?: 0L }
     }
@@ -97,11 +125,9 @@ class WordDictionary(private val ctx: Context) {
         userPrefix2.clear()
         for ((word, _) in user) {
             if (word.isEmpty()) continue
-            val k1 = word.substring(0, 1)
-            userPrefix1.getOrPut(k1) { ArrayList() }.add(word)
+            userPrefix1.getOrPut(word.substring(0, 1)) { ArrayList() }.add(word)
             if (word.length >= 2) {
-                val k2 = word.substring(0, 2)
-                userPrefix2.getOrPut(k2) { ArrayList() }.add(word)
+                userPrefix2.getOrPut(word.substring(0, 2)) { ArrayList() }.add(word)
             }
         }
         for (list in userPrefix1.values) list.sortByDescending { user[it] ?: 0f }
@@ -133,7 +159,6 @@ class WordDictionary(private val ctx: Context) {
         user[w] = score
         prefs.edit().putFloat(w, score).apply()
 
-        // Update the user prefix index incrementally.
         if (w.isNotEmpty()) {
             val k1 = w.substring(0, 1)
             val l1 = userPrefix1.getOrPut(k1) { ArrayList() }
@@ -148,18 +173,18 @@ class WordDictionary(private val ctx: Context) {
     }
 
     /**
-     * Prefix-aware suggestion. Uses the 2-char index when the prefix is
-     * long enough, falling back to the 1-char index for very short input.
+     * Prefix completion. Uses the 2-char index when possible; falls back
+     * to 1-char for very short input.
      */
     fun suggest(prefix: String, max: Int): List<String> {
         if (prefix.isEmpty()) return emptyList()
         val p = prefix.lowercase()
         val out = LinkedHashSet<String>(max * 2)
 
-        // User words first.
-        val userBucket: List<String>? = when {
-            p.length >= 2 -> userPrefix2[p.substring(0, 2)]
-            else -> userPrefix1[p.substring(0, 1)]
+        val userBucket: List<String>? = if (p.length >= 2) {
+            userPrefix2[p.substring(0, 2)]
+        } else {
+            userPrefix1[p.substring(0, 1)]
         }
         userBucket?.asSequence()
             ?.filter { it.startsWith(p) }
@@ -167,9 +192,10 @@ class WordDictionary(private val ctx: Context) {
             ?.forEach { out.add(it) }
 
         if (out.size < max) {
-            val bucket: List<String>? = when {
-                p.length >= 2 -> prefix2[p.substring(0, 2)]
-                else -> prefix1[p.substring(0, 1)]
+            val bucket: List<String>? = if (p.length >= 2) {
+                prefix2[p.substring(0, 2)]
+            } else {
+                prefix1[p.substring(0, 1)]
             }
             bucket?.asSequence()
                 ?.filter { it.startsWith(p) }
@@ -180,24 +206,34 @@ class WordDictionary(private val ctx: Context) {
     }
 
     /**
-     * Contraction-aware correction. Runs on whatever thread the caller
-     * uses — this is safe to call from Dispatchers.Default.
+     * Correction via SymSpell. Falls back to the old prefix-bucket scan
+     * if SymSpell isn't available (empty dictionary, or init failure).
      */
     fun correction(word: String): String? {
         val w = word.lowercase()
 
         contractions[w]?.let { return match(word, it) }
-
         if (w.length < 3 || !w.all { it.isLetter() || it == '\'' }) return null
         if (contains(w)) return null
 
-        // Use the 2-char prefix bucket when possible to avoid a full scan.
+        val ss = symSpell
+        if (ss != null) {
+            try {
+                val suggestions = ss.lookup(w, 2)
+                val best = suggestions.firstOrNull()?.term
+                if (best != null && best != w) return match(word, best)
+                return null
+            } catch (_: Exception) {
+                // Fall through to prefix-bucket scan.
+            }
+        }
+
+        // Fallback: prefix-bucket scan for edit distance 1.
         val candidates: Iterable<String> = if (w.length >= 2) {
             prefix2[w.substring(0, 2)] ?: emptyList()
         } else {
             words.keys
         }
-
         var best: String? = null
         var bestFreq = 0L
         for (cand in candidates) {
