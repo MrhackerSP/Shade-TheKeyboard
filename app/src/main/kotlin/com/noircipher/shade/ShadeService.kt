@@ -832,10 +832,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             (text[0].isLetter() || (text[0] == '\'' && composing.isNotEmpty()))
 
         if (isWordChar) {
-            if (smartCorrectionOn && canCompose &&
+            val sentenceEnd = smartCorrectionOn && canCompose &&
                 text.length == 1 && text[0].isLowerCase() &&
-                atSentenceEndBeforeCursor() && composing.isEmpty()
-            ) {
+                composing.isEmpty() && atSentenceEndBeforeCursor()
+            if (sentenceEnd) {
                 val upper = text.uppercase()
                 composing.append(upper)
                 ic.setComposingText(composing.toString(), 1)
@@ -893,11 +893,23 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onCursorMove(dx: Int, dy: Int) {
         var i = 0
-        while (i < dx) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT); i++ }
-        while (i > dx) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT); i-- }
+        while (i < dx) {
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT)
+            i += 1
+        }
+        while (i > dx) {
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT)
+            i -= 1
+        }
         var j = 0
-        while (j < dy) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_DOWN); j++ }
-        while (j > dy) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_UP); j-- }
+        while (j < dy) {
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_DOWN)
+            j += 1
+        }
+        while (j > dy) {
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_UP)
+            j -= 1
+        }
         clearUndo()
         tailValid = false
     }
@@ -1075,13 +1087,23 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     private fun atSentenceEndBeforeCursor(): Boolean {
-        val before = if (tailValid) tail.toString()
-        else currentInputConnection?.getTextBeforeCursor(2, 0)?.toString() ?: return false
+        val before: String = if (tailValid) {
+            tail.toString()
+        } else {
+            val fromIc = currentInputConnection?.getTextBeforeCursor(2, 0)?.toString()
+            if (fromIc == null) return false
+            fromIc
+        }
         if (before.isEmpty()) return true
-        for (i in before.length - 1 downTo 0) {
+        var i = before.length - 1
+        while (i >= 0) {
             val ch = before[i]
-            if (ch == ' ' || ch == '\n' || ch == '\t') continue
-            return ch == '.' || ch == '!' || ch == '?'
+            if (ch == ' ' || ch == '\n' || ch == '\t') {
+                i -= 1
+                continue
+            }
+            if (ch == '.' || ch == '!' || ch == '?') return true
+            return false
         }
         return true
     }
@@ -1115,10 +1137,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val prefix = composing.toString()
         if (prefix.isEmpty()) {
             val prev1 = lastWord()
-            val next = if (prev1 != null) dict.predictNext(null, prev1, 3) else emptyList()
-            val list = if (next.isNotEmpty()) next
-            else if (atSentenceEndBeforeCursor()) listOf("I", "The", "I'm")
-            else emptyList()
+            val next: List<String>
+            if (prev1 != null) {
+                next = dict.predictNext(null, prev1, 3)
+            } else {
+                next = emptyList()
+            }
+            val list: List<String>
+            if (next.isNotEmpty()) {
+                list = next
+            } else if (atSentenceEndBeforeCursor()) {
+                list = listOf("I", "The", "I'm")
+            } else {
+                list = emptyList()
+            }
             setCandidates(list)
             return
         }
