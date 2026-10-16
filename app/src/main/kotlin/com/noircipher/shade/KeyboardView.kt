@@ -308,11 +308,9 @@ class KeyboardView(context: Context) : View(context) {
         }
 
         // Reduced top and bottom padding so the bottom row hugs the edge.
-        // padBottom = 0 lets the outer rounded corners reach the very
-        // bottom of the view, matching Gboard.
         val padTop = dp(5f)
-        val padBottom = dp(0f)
-        val bottomRowPad = dp(1f)
+        val padBottom = dp(1f)
+        val bottomRowPad = dp(2f)
         val defaultPad = dp(3f)
         rowHeight = (h - padTop - padBottom) / rows.size
         val maxGap = min(dp(72f), w * 0.15f)
@@ -410,11 +408,10 @@ class KeyboardView(context: Context) : View(context) {
         val clipR = clipBounds.right.toFloat()
         val clipB = clipBounds.bottom.toFloat()
 
-        // Widened gap and larger radius to match Gboard's key spacing.
-        val gx = dp(3.5f)
-        val gy = dp(4f)
-        val radius = dp(10f)
-        val outerRadius = dp(24f)
+        val gx = dp(2.5f)
+        val gy = dp(3f)
+        val radius = dp(7f)
+        val outerRadius = dp(16f)
         val combinedAlpha = ((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255)
         val pressDown = dp(0.7f) * pressProgress
 
@@ -518,6 +515,8 @@ class KeyboardView(context: Context) : View(context) {
     /**
      * Draw a key whose outer bottom corner (left or right) is rounded with
      * [outerRadius] while the other three corners use the regular [radius].
+     * Used for the ?123 key (bottom-left) and Enter key (bottom-right) so
+     * they hug the screen edge the way Gboard's do.
      *
      * The radii array follows the order expected by Path.addRoundRect:
      *   [topLeftX, topLeftY, topRightX, topRightY,
@@ -563,11 +562,10 @@ class KeyboardView(context: Context) : View(context) {
                 textPaint.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
                 textPaint.textSize = min(rowHeight * 0.40f, dp(24f))
                 c.drawText(display(k.label), cx, textY(textPaint, cy), textPaint)
-                // Number hint in the top-left corner, matching Gboard.
                 if (showHints && k.alts.isNotEmpty() && k.alts[0].isDigit()) {
                     textPaint.color = ColorUtils.setAlphaComponent(kbTheme.hint, alpha)
-                    textPaint.textSize = dp(11f)
-                    c.drawText(k.alts.substring(0, 1), rect.left + dp(8f), rect.top + dp(13f), textPaint)
+                    textPaint.textSize = dp(10f)
+                    c.drawText(k.alts.substring(0, 1), rect.right - dp(7f), rect.top + dp(12f), textPaint)
                 }
             }
             KeyKind.SPACE -> Unit
