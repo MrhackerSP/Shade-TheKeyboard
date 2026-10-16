@@ -39,7 +39,7 @@
     <string name="scr_feedback">Feedback</string>
     <string name="scr_feedback_sum">Vibration, sound, long-press delay, animations</string>
     <string name="scr_backup">Backup &amp; restore</string>
-    <string name="scr_backup_sum">Export or import settings and learned words</string>
+    <string name="scr_backup_sum">Export or import settings, learned words, and training data</string>
 
     <!-- Layouts -->
     <string name="pref_layout">Layout</string>
@@ -122,6 +122,21 @@
     <string name="backup_done">Backup saved</string>
     <string name="restore_done">Restored. Reopen the keyboard to apply.</string>
     <string name="backup_failed">That did not work</string>
+
+    <!-- Training data contribution -->
+    <string name="pref_contribute">Contribute anonymized typing data</string>
+    <string name="pref_contribute_sum">On by default. Shade periodically saves your learned words and n-gram counts to a file on this device so future versions can be trained on real typing. No sentences, no clipboard, no personal identifiers. Turn off to stop and delete.</string>
+    <string name="pref_export_training">Export training data now</string>
+    <string name="pref_export_training_sum">Write your learned words and n-gram counts to a file you choose</string>
+    <string name="pref_clear_training">Delete saved training data</string>
+    <string name="pref_clear_training_sum">Remove all auto-saved training exports from this device</string>
+    <string name="export_training_done">Training data exported</string>
+    <string name="export_training_failed">Could not export training data</string>
+    <string name="export_training_none">No training data to export yet</string>
+    <string name="export_training_confirm">Export learned words and n-gram counts?</string>
+    <string name="export_training_confirm_msg">This file contains only aggregated statistics: word frequencies and word-pair counts. No sentences, no clipboard, no personal identifiers.</string>
+    <string name="clear_training_confirm">Delete all saved training data?</string>
+    <string name="clear_training_done">Saved training data deleted</string>
 
     <string name="about_title">About Shade</string>
     <string name="about_sum">Version 1.0, no internet permission</string>
