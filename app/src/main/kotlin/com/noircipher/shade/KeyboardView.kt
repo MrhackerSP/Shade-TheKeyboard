@@ -307,14 +307,16 @@ class KeyboardView(context: Context) : View(context) {
             else -> 0f
         }
 
-        // Reduced top and bottom padding so the bottom row hugs the edge.
-        // padBottom = 0 lets the outer rounded corners reach the very
-        // bottom of the view, matching Gboard.
-        val padTop = dp(5f)
+        // Gboard spec: 4-6dp outer margins, 6dp vertical row gap,
+        // 0dp bottom margin so the outer corners hug the screen edge.
+        val padTop = dp(4f)
         val padBottom = dp(0f)
-        val bottomRowPad = dp(1f)
-        val defaultPad = dp(3f)
-        rowHeight = (h - padTop - padBottom) / rows.size
+        val bottomRowPad = dp(3f)
+        val defaultPad = dp(2f)
+        val rowGapV = dp(6f)
+
+        rowHeight = (h - padTop - padBottom - rowGapV * (rows.size - 1)) / rows.size
+
         val maxGap = min(dp(72f), w * 0.15f)
         val gap = maxGap * splitProgress
 
@@ -322,22 +324,22 @@ class KeyboardView(context: Context) : View(context) {
             val isBottom = r == rows.lastIndex
             val padX = if (isBottom) bottomRowPad else defaultPad
             val eligible = gap > 0.5f && row.size >= 6 && row.none { it.kind == KeyKind.SPACE }
-            val rowGap = if (eligible) gap else 0f
+            val rowGapH = if (eligible) gap else 0f
             val total = row.sumOf { it.weight.toDouble() }.toFloat()
             val bottomExtraGaps = if (isBottom) dp(3f) * (row.size - 1) else 0f
-            val unit = (availW - 2 * padX - rowGap - bottomExtraGaps) / total
+            val unit = (availW - 2 * padX - rowGapH - bottomExtraGaps) / total
 
             var x = offX + padX
             var cum = 0f
             var gapDone = false
             for ((idx, k) in row.withIndex()) {
                 if (eligible && !gapDone && cum >= total / 2f - 0.01f) {
-                    x += rowGap
+                    x += rowGapH
                     gapDone = true
                 }
                 k.left = x
                 k.right = x + k.weight * unit
-                k.top = padTop + r * rowHeight
+                k.top = padTop + r * (rowHeight + rowGapV)
                 k.bottom = k.top + rowHeight
                 k.updateInvalidateRect(dp(3f).toInt())
                 x = k.right
@@ -346,9 +348,8 @@ class KeyboardView(context: Context) : View(context) {
             }
         }
 
-        // Bottom-row outer corners: only the first and last *functional*
-        // keys (not spacers) get a corner treatment so ?123 and Enter hug
-        // the screen edge, matching Gboard.
+        // Bottom-row outer corners: only the first and last functional
+        // keys get a corner treatment so ?123 and Enter hug the screen.
         val lastRow = rows.lastOrNull() ?: return
         val visible = lastRow.filter { it.kind != KeyKind.SPACER }
         for (k in visible) k.outerCorner = KeyOuterCorner.NONE
@@ -410,11 +411,13 @@ class KeyboardView(context: Context) : View(context) {
         val clipR = clipBounds.right.toFloat()
         val clipB = clipBounds.bottom.toFloat()
 
-        // Widened gap and larger radius to match Gboard's key spacing.
-        val gx = dp(3.5f)
-        val gy = dp(4f)
-        val radius = dp(10f)
-        val outerRadius = dp(24f)
+        // Gboard spec:
+        //   horizontal gap 5dp → gx = 2.5f (margin drawn on each side)
+        //   inner radius 8dp, outer corner radius 22dp on the bottom row
+        val gx = dp(2.5f)
+        val gy = dp(3f)
+        val radius = dp(8f)
+        val outerRadius = dp(22f)
         val combinedAlpha = ((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255)
         val pressDown = dp(0.7f) * pressProgress
 
@@ -440,9 +443,9 @@ class KeyboardView(context: Context) : View(context) {
                 shadowPaint.color = 0x18000000
                 rect.set(
                     k.left + gx,
-                    k.top + gy + dp(1.5f),
+                    k.top + gy + dp(0.5f),
                     k.right - gx,
-                    k.bottom - gy + dp(1.5f)
+                    k.bottom - gy + dp(0.5f)
                 )
                 if (k.outerCorner == KeyOuterCorner.NONE) {
                     c.drawRoundRect(rect, radius, radius, shadowPaint)
@@ -483,9 +486,11 @@ class KeyboardView(context: Context) : View(context) {
             }
             fill.color = ColorUtils.setAlphaComponent(col, combinedAlpha)
 
+            // Space bar gets a fully pill-shaped radius (18dp per spec).
+            val keyRadius = if (k.kind == KeyKind.SPACE) dp(18f) else radius
             val outer = k.outerCorner
             if (outer == KeyOuterCorner.NONE) {
-                c.drawRoundRect(rect, radius, radius, fill)
+                c.drawRoundRect(rect, keyRadius, keyRadius, fill)
             } else {
                 drawOuterRoundedKey(c, k, radius, outerRadius, outer)
             }
@@ -519,7 +524,7 @@ class KeyboardView(context: Context) : View(context) {
      * Draw a key whose outer bottom corner (left or right) is rounded with
      * [outerRadius] while the other three corners use the regular [radius].
      *
-     * The radii array follows the order expected by Path.addRoundRect:
+     * Path.addRoundRect radii order:
      *   [topLeftX, topLeftY, topRightX, topRightY,
      *    bottomRightX, bottomRightY, bottomLeftX, bottomLeftY]
      */
@@ -563,7 +568,6 @@ class KeyboardView(context: Context) : View(context) {
                 textPaint.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
                 textPaint.textSize = min(rowHeight * 0.40f, dp(24f))
                 c.drawText(display(k.label), cx, textY(textPaint, cy), textPaint)
-                // Number hint in the top-left corner, matching Gboard.
                 if (showHints && k.alts.isNotEmpty() && k.alts[0].isDigit()) {
                     textPaint.color = ColorUtils.setAlphaComponent(kbTheme.hint, alpha)
                     textPaint.textSize = dp(11f)
