@@ -57,6 +57,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val restore: String
     )
 
+    // Top row spec: 42dp height, 14sp text, 38dp touch targets for icons.
+    private val TOP_ROW_HEIGHT_DP = 42f
+    private val TOP_ROW_TEXT_SP = 14f
+    private val TOP_ROW_ICON_TOUCH_DP = 38f
+    private val TOP_ROW_ICON_SIZE_SP = 18f
+
     private val toolDefs = listOf(
         "clip" to "📋", "emoji" to "😀", "numpad" to "123", "left" to "◀", "right" to "▶",
         "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste",
@@ -188,7 +194,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         toggle = TextView(this).apply {
             gravity = Gravity.CENTER
-            textSize = 22f
+            textSize = TOP_ROW_ICON_SIZE_SP
+            setTextColor(kbTheme.hint)
             setOnClickListener {
                 toolbarOpen = if (toolbarOpen) false else true
                 animateToggle()
@@ -200,9 +207,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             TextView(this).apply {
                 gravity = Gravity.CENTER
                 maxLines = 1
-                textSize = 19f
+                textSize = TOP_ROW_TEXT_SP
                 tag = i
-                setPadding(dp(6f).toInt(), 0, dp(6f).toInt(), 0)
+                setPadding(dp(10f).toInt(), 0, dp(10f).toInt(), 0)
                 setOnClickListener { pickSuggestion(it.tag as Int) }
             }
         }
@@ -210,8 +217,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             TextView(this).apply {
                 gravity = Gravity.CENTER
                 maxLines = 1
-                textSize = 19f
-                setPadding(dp(6f).toInt(), 0, dp(6f).toInt(), 0)
+                textSize = TOP_ROW_TEXT_SP
+                setPadding(dp(10f).toInt(), 0, dp(10f).toInt(), 0)
                 alpha = 0f
                 isClickable = false
                 isFocusable = false
@@ -235,6 +242,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         toolRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4f).toInt(), 0, dp(4f).toInt(), 0)
         }
         toolScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -247,7 +255,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         strip = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(toggle, LinearLayout.LayoutParams(dp(40f).toInt(), MATCH))
+            addView(toggle, LinearLayout.LayoutParams(dp(TOP_ROW_ICON_TOUCH_DP).toInt(), MATCH))
             addView(frame, LinearLayout.LayoutParams(0, MATCH, 1f))
         }
 
@@ -276,7 +284,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(strip, LinearLayout.LayoutParams(MATCH, dp(52f).toInt()))
+            addView(strip, LinearLayout.LayoutParams(MATCH, dp(TOP_ROW_HEIGHT_DP).toInt()))
             addView(kb, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
             addView(emoji, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
             addView(clipPanel, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
@@ -505,7 +513,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val locale = prefs.getString("locale", "en") ?: "en"
         scope.launch(Dispatchers.Default) { dict.configure(locale) }
 
-        val keyH = prefs.getInt("key_height", 50)
+        // Gboard spec default: 52dp row height per letter row.
+        val keyH = prefs.getInt("key_height", 52)
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val factor = if (landscape) 0.65f else 1f
         val contentH = (dp(keyH.toFloat()) * (if (numberRow) 4.7f else 4f) * factor).toInt()
@@ -569,12 +578,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val enabled = prefs.getStringSet("toolbar_keys", null) ?: toolDefs.map { it.first }.toSet()
         for ((id, label) in toolDefs) {
             if (enabled.contains(id) == false) continue
+            // Per spec: 38x38dp touch target per icon.
             val tv = TextView(this).apply {
                 text = label
-                textSize = 15f
+                textSize = TOP_ROW_ICON_SIZE_SP
                 gravity = Gravity.CENTER
                 setTextColor(kbTheme.text)
-                setPadding(dp(12f).toInt(), 0, dp(12f).toInt(), 0)
                 isClickable = true
                 isFocusable = false
                 setOnTouchListener { v, event ->
@@ -600,11 +609,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
             if (id == "incognito" && incognito) {
                 tv.background = GradientDrawable().apply {
-                    cornerRadius = dp(10f)
+                    cornerRadius = dp(6f)
                     setColor(kbTheme.keyFn)
                 }
             }
-            toolRow.addView(tv, LinearLayout.LayoutParams(WRAP, MATCH))
+            val lp = LinearLayout.LayoutParams(
+                dp(TOP_ROW_ICON_TOUCH_DP).toInt(),
+                dp(TOP_ROW_ICON_TOUCH_DP).toInt()
+            )
+            lp.marginStart = dp(4f).toInt()
+            lp.marginEnd = dp(4f).toInt()
+            toolRow.addView(tv, lp)
         }
     }
 
