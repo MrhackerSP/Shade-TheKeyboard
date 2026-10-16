@@ -37,10 +37,22 @@ class KeyboardView(context: Context) : View(context) {
         fun onTrackpadEnter()
         fun onTrackpadExit()
         fun onDeleteWords(count: Int)
-        /** Live preview: extend system selection back by [wordCount] words. */
-        fun onDeletePreview(wordCount: Int)
+
+        /**
+         * Live preview during drag-from-backspace.
+         *
+         * [travelPx] is how far the finger has moved left since the drag
+         * began. The service decides how many whole words that distance
+         * covers (using the actual text and an approximate key width) and
+         * extends the system selection to match.
+         *
+         * Returns the current word count so the view can draw the badge.
+         */
+        fun onDeletePreview(travelPx: Float): Int
+
         /** Commit the previewed selection as a delete. */
         fun onDeleteCommit()
+
         /** Collapse any preview without deleting. */
         fun onDeleteCancel()
     }
@@ -1067,15 +1079,14 @@ class KeyboardView(context: Context) : View(context) {
             }
 
             if (deleteSlideActive) {
+                // Report raw travel distance. The service decides how many
+                // whole words that covers based on actual word lengths, so
+                // the selection snaps word-by-word instead of mid-word.
                 val travel = (p.downX - x).coerceAtLeast(0f)
-                val words = (travel / dp(40f)).toInt()
+                val words = listener?.onDeletePreview(travel) ?: 0
                 if (words != deleteSlideWordCount) {
                     deleteSlideWordCount = words
                     hapticTick()
-                    // Extend the system selection to cover `words` words back.
-                    // The service handles the actual setSelection() call so
-                    // the preview always matches what commit will delete.
-                    if (words > 0) listener?.onDeletePreview(words)
                     invalidate()
                 }
             }
