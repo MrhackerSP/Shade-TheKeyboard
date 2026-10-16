@@ -14,8 +14,6 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
@@ -104,18 +102,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var info: EditorInfo? = null
     private var bgBmp: Bitmap? = null
     private var bgStamp = -1L
-
-    // Mode change coordination
-    private val modeHandler = Handler(Looper.getMainLooper())
-    private var pendingMode: Mode? = null
-    private var pendingModeAnimate = false
     private var lastAppliedInputType = -1
-    private val modeRunnable = Runnable {
-        val m = pendingMode ?: return@Runnable
-        val a = pendingModeAnimate
-        pendingMode = null
-        applyMode(m, a)
-    }
 
     private val undoStack = ArrayDeque<UndoEntry>(10)
 
@@ -129,7 +116,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var suggestJob: Job? = null
     private var slotFadeAnimator: ValueAnimator? = null
 
-    private var modeFadeAnimator: ValueAnimator? = null
     private var panelTransitionAnimator: ValueAnimator? = null
     private var currentTransition: String? = null
 
@@ -159,9 +145,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         dict.bigramModel?.save()
         suggestJob?.cancel()
         slotFadeAnimator?.cancel()
-        modeFadeAnimator?.cancel()
         panelTransitionAnimator?.cancel()
-        modeHandler.removeCallbacks(modeRunnable)
         serviceJob.cancel()
 
         if (this::kb.isInitialized) kb.release()
@@ -316,8 +300,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         autoShifted = false
         toolbarOpen = prefs.getBoolean("toolbar_open_default", false)
 
-        // Always reset mode for the current field. A user-chosen numpad
-        // state does NOT carry over from a previous field.
+        // Always reset mode for the current field. User-chosen numpad state
+        // does not carry over from a previous field.
         mode = Mode.LETTERS
 
         val type = editorInfo.inputType
@@ -350,7 +334,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val inputTypeChanged = type != lastAppliedInputType
         lastAppliedInputType = type
         if (inputTypeChanged || mode != m) {
-            applyMode(m, animate = false)
+            applyMode(m)
         }
 
         transitionToPanel(Panel.NONE, animate = false)
@@ -383,7 +367,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         tailValid = false
         cursorPos = -1
         selectionEnd = -1
-        // Reset mode so the next time the keyboard opens it starts on letters.
         mode = Mode.LETTERS
         lastAppliedInputType = -1
     }
@@ -479,7 +462,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         for (tv in slots) tv.setTextColor(kbTheme.text)
         rebuildToolbar()
         refreshStrip()
-        applyMode(mode, animate = false)
+        applyMode(mode)
     }
 
     private fun loadBackground() {
@@ -583,16 +566,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     // ------------------------------------------------------------------ mode switching
 
-    private fun setMode(m: Mode, animate: Boolean = true) {
-        if (m == mode && animate) return
-        pendingMode = m
-        pendingModeAnimate = animate
-        modeHandler.removeCallbacks(modeRunnable)
-        modeHandler.postDelayed(modeRunnable, 60L)
+    private fun setMode(m: Mode) {
+        if (m == mode) return
+        applyMode(m)
     }
 
-    private fun applyMode(m: Mode, animate: Boolean) {
-        if (m == mode && animate) return
+    private fun applyMode(m: Mode) {
+        if (m == mode) return
         mode = m
 
         val rows = when (m) {
@@ -605,32 +585,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             Mode.NUMPAD -> Layouts.numpad()
         }
 
-        if (animate) {
-            modeFadeAnimator?.cancel()
-            modeFadeAnimator = ValueAnimator.ofFloat(1f, 0.55f).apply {
-                duration = 60L
-                interpolator = DecelerateInterpolator()
-                addUpdateListener { kb.alpha = it.animatedValue as Float }
-                addListener(object : AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: Animator) {
-                        kb.setRows(rows)
-                        kb.shiftState = if (m == Mode.LETTERS) shiftState else 0
-                        kb.relayout()
-                        modeFadeAnimator = ValueAnimator.ofFloat(0.55f, 1f).apply {
-                            duration = 60L
-                            interpolator = DecelerateInterpolator()
-                            addUpdateListener { kb.alpha = it.animatedValue as Float }
-                            start()
-                        }
-                    }
-                })
-                start()
-            }
-        } else {
-            kb.setRows(rows)
-            kb.shiftState = if (m == Mode.LETTERS) shiftState else 0
-            kb.relayout()
-        }
+        kb.setRows(rows)
+        kb.shiftState = if (m == Mode.LETTERS) shiftState else 0
+        kb.relayout()
     }
 
     // ------------------------------------------------------------------ panel transitions
