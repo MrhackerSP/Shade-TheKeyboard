@@ -1,5 +1,6 @@
 package com.noircipher.shade
 
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -11,6 +12,7 @@ import androidx.preference.MultiSelectListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
 import java.io.File
 import java.io.FileOutputStream
 
@@ -71,6 +73,14 @@ class SettingsActivity : AppCompatActivity(),
                 )
             }
         }
+        private val exportTraining = registerForActivityResult(
+            ActivityResultContracts.CreateDocument("application/zip")
+        ) { uri ->
+            if (uri != null) {
+                val ok = TrainingExport.exportToUri(requireContext(), uri)
+                toast(if (ok) R.string.export_training_done else R.string.export_training_failed)
+            }
+        }
 
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.preferences, rootKey)
@@ -93,6 +103,37 @@ class SettingsActivity : AppCompatActivity(),
             }
             click("backup_export") { exportBackup.launch("shade-backup.json") }
             click("backup_import") { importBackup.launch(arrayOf("*/*")) }
+
+            click("export_training") {
+                if (!TrainingExport.hasTrainingData(ctx)) {
+                    toast(R.string.export_training_none)
+                } else {
+                    AlertDialog.Builder(ctx)
+                        .setTitle(R.string.export_training_confirm)
+                        .setMessage(R.string.export_training_confirm_msg)
+                        .setPositiveButton(R.string.yes) { _, _ ->
+                            exportTraining.launch("shade-training.zip")
+                        }
+                        .setNegativeButton(R.string.no, null)
+                        .show()
+                }
+            }
+
+            click("clear_training_export") {
+                confirm(R.string.clear_training_confirm) {
+                    TrainingExport.clearAutoExports(ctx)
+                    toast(R.string.clear_training_done)
+                }
+            }
+
+            findPreference<SwitchPreferenceCompat>("contribute_data")
+                ?.setOnPreferenceChangeListener { _, newValue ->
+                    val on = newValue as? Boolean ?: true
+                    if (!on) {
+                        TrainingExport.clearAutoExports(ctx)
+                    }
+                    true
+                }
 
             findPreference<EditTextPreference>("custom_layout")
                 ?.setOnBindEditTextListener {
@@ -138,10 +179,6 @@ class SettingsActivity : AppCompatActivity(),
                 .show()
         }
 
-        /**
-         * Populate the language multi-select from bundled assets.
-         * Only locales present in assets/wordlists/ are listed.
-         */
         private fun refreshLanguagePref() {
             val pref = findPreference<MultiSelectListPreference>("active_languages") ?: return
             val ctx = requireContext()
