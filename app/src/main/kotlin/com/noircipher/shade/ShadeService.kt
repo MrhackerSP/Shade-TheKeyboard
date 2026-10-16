@@ -312,7 +312,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
             variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS ||
             variation == InputType.TYPE_TEXT_VARIATION_URI
-        canCompose = cls == InputType.TYPE_CLASS_TEXT && !noSuggest && !blocked
+        canCompose = cls == InputType.TYPE_CLASS_TEXT && noSuggest.not() && blocked.not()
 
         applyPrefs()
         val m = when (cls) {
@@ -385,7 +385,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // ------------------------------------------------------------------ prefs / theme
 
     private fun applyPrefs() {
-        if (!::kb.isInitialized) return
+        if (::kb.isInitialized.not()) return
         kbTheme = Themes.resolve(this, prefs)
         numberRow = prefs.getBoolean("number_row", false)
         suggestionsOn = prefs.getBoolean("suggestions", true)
@@ -448,7 +448,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun loadBackground() {
         val f = File(filesDir, "bg.jpg")
-        if (!f.exists()) { bgBmp = null; bgStamp = -1L; return }
+        if (f.exists().not()) { bgBmp = null; bgStamp = -1L; return }
         if (f.lastModified() == bgStamp && bgBmp != null) return
         try {
             val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -465,7 +465,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         toolRow.removeAllViews()
         val enabled = prefs.getStringSet("toolbar_keys", null) ?: toolDefs.map { it.first }.toSet()
         for ((id, label) in toolDefs) {
-            if (!enabled.contains(id)) continue
+            if (enabled.contains(id).not()) continue
             val tv = TextView(this).apply {
                 text = label
                 textSize = 15f
@@ -521,9 +521,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     private fun refreshStrip() {
-        if (!::strip.isInitialized) return
+        if (::strip.isInitialized.not()) return
         val suggestionsActive = suggestionsOn && canCompose
-        val showTools = toolbarOpen || !suggestionsActive
+        val showTools = toolbarOpen || suggestionsActive.not()
         val targetSlotAlpha = if (showTools) 0f else 1f
         val targetToolAlpha = if (showTools) 1f else 0f
         animateAlpha(slotRow, slotRow.alpha, targetSlotAlpha)
@@ -592,7 +592,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     private fun transitionToPanel(p: Panel, animate: Boolean = true) {
-        if (!::emoji.isInitialized) return
+        if (::emoji.isInitialized.not()) return
         if (p != Panel.NONE) endWord()
         if (animate && panel != p) {
             runTransition("panel:${p.name}") { applyPanelState(p) }
@@ -652,9 +652,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun enableFloating() {
         if (floatingMode) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            !android.provider.Settings.canDrawOverlays(this)
-        ) {
+        val needsPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            android.provider.Settings.canDrawOverlays(this).not()
+        if (needsPermission) {
             startActivity(
                 Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
                     .setData(android.net.Uri.parse("package:$packageName"))
@@ -684,7 +684,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val x = prefs.getInt("float_x", (metrics.widthPixels - w) / 2)
         val y = prefs.getInt("float_y", (metrics.heightPixels * 0.55f).toInt())
 
-        if (!f.show(kb, w, h, x, y)) {
+        if (f.show(kb, w, h, x, y).not()) {
             root.addView(kb, 1, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
             applyPrefs()
             return
@@ -860,7 +860,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
                 if (smartCorrectionOn && canCompose && text.length == 1) {
                     val c = text[0]
-                    val autoSpace = c == '.' || c == '!' || c == '?' || c == ',' || c == ';' || c == ':'
+                    val autoSpace = c == '.' || c == '!' || c == '?' ||
+                        c == ',' || c == ';' || c == ':'
                     if (autoSpace) {
                         ic.commitText(" ", 1)
                         appendTail(" ")
@@ -1010,7 +1011,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val opts = info?.imeOptions ?: 0
         val action = opts and EditorInfo.IME_MASK_ACTION
         val noEnterAction = (opts and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
-        if (!noEnterAction &&
+        if (noEnterAction.not() &&
             action != EditorInfo.IME_ACTION_NONE &&
             action != EditorInfo.IME_ACTION_UNSPECIFIED
         ) ic.performEditorAction(action)
@@ -1074,12 +1075,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun atSentenceEndBeforeCursor(): Boolean {
         val before = if (tailValid) tail.toString()
         else currentInputConnection?.getTextBeforeCursor(2, 0)?.toString() ?: return false
-        val last = before.lastOrNull { !it.isWhitespace() } ?: return true
+        val last = before.lastOrNull { ch -> ch.isWhitespace().not() } ?: return true
         return last == '.' || last == '!' || last == '?'
     }
 
     private fun updateShiftFromCaps() {
-        if (!::kb.isInitialized) return
+        if (::kb.isInitialized.not()) return
         if (mode != Mode.LETTERS) { kb.shiftState = 0; return }
         if (shiftState != 2) {
             val ei = info
@@ -1098,7 +1099,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // ------------------------------------------------------------------ suggestions
 
     private fun updateSuggestions() {
-        if (!::slots.isInitialized) return
+        if (::slots.isInitialized.not()) return
         suggestJob?.cancel()
         if (suggestionsOn.not() || canCompose.not()) { setCandidates(emptyList()); return }
         val prefix = composing.toString()
@@ -1153,7 +1154,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     private fun renderSlots() {
-        if (!::slots.isInitialized) return
+        if (::slots.isInitialized.not()) return
         slots.forEachIndexed { i, tv ->
             tv.text = candidates.getOrNull(i) ?: ""
             tv.setTypeface(null, if (i == 0) Typeface.BOLD else Typeface.NORMAL)
