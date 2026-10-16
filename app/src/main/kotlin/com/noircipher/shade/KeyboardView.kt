@@ -34,26 +34,12 @@ class KeyboardView(context: Context) : View(context) {
         fun onCursor(delta: Int)
         fun onCursorMove(dx: Int, dy: Int)
         fun onLongPressSpecial()
+        fun onEnterLongPress()
         fun onTrackpadEnter()
         fun onTrackpadExit()
         fun onDeleteWords(count: Int)
-
-        /**
-         * Live preview during drag-from-backspace.
-         *
-         * [travelPx] is how far the finger has moved left since the drag
-         * began. The service decides how many whole words that distance
-         * covers (using the actual text and an approximate key width) and
-         * extends the system selection to match.
-         *
-         * Returns the current word count so the view can draw the badge.
-         */
         fun onDeletePreview(travelPx: Float): Int
-
-        /** Commit the previewed selection as a delete. */
         fun onDeleteCommit()
-
-        /** Collapse any preview without deleting. */
         fun onDeleteCancel()
     }
 
@@ -64,6 +50,7 @@ class KeyboardView(context: Context) : View(context) {
         private set
     var contentHeightPx = 0
     var oneHanded = 0
+        private set
     var haptic = true
     var sound = false
     var showPreview = true
@@ -100,6 +87,9 @@ class KeyboardView(context: Context) : View(context) {
 
     private var splitProgress = if (splitKeyboard) 1f else 0f
     private var splitAnimator: ValueAnimator? = null
+
+    private var oneHandedProgress = 1f
+    private var oneHandedAnimator: ValueAnimator? = null
 
     private var layoutAlpha = 1f
     private var layoutAnimator: ValueAnimator? = null
@@ -278,6 +268,27 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    /**
+     * Gboard-style one-handed transition. Shrinks the keyboard to 75% width
+     * and slides it to the chosen edge over 200ms.
+     */
+    fun setOneHandedAnimated(side: Int) {
+        oneHanded = side
+        val target = if (side == 0) 1f else 0.75f
+        if (oneHandedProgress == target) return
+        oneHandedAnimator?.cancel()
+        oneHandedAnimator = ValueAnimator.ofFloat(oneHandedProgress, target).apply {
+            duration = 200L
+            interpolator = DecelerateInterpolator(1.4f)
+            addUpdateListener {
+                oneHandedProgress = it.animatedValue as Float
+                layoutKeys()
+                invalidate()
+            }
+            start()
+        }
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val h = if (contentHeightPx > 0) contentHeightPx else dp(200f).toInt()
         setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), h)
@@ -292,8 +303,15 @@ class KeyboardView(context: Context) : View(context) {
         val w = width.toFloat()
         val h = height.toFloat()
         if (w <= 0f || h <= 0f || rows.isEmpty()) return
-        val availW = if (oneHanded == 0) w else w * 0.8f
-        val offX = if (oneHanded == 2) w - availW else 0f
+
+        // One-handed: shrink to 75% and slide to the chosen edge.
+        val availW = w * oneHandedProgress
+        val offX = when (oneHanded) {
+            1 -> 0f
+            2 -> w - availW
+            else -> 0f
+        }
+
         val padTop = dp(5f)
         val padBottom = dp(5f)
         val bottomRowPad = dp(6f)
@@ -996,14 +1014,14 @@ class KeyboardView(context: Context) : View(context) {
             animateShiftTap()
         }
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
-            // Schedule hold-to-repeat. move() will cancel this if the user
-            // starts sliding left to delete whole words.
             val r = Runnable { startDeleteRepeat(p) }
             p.longRunnable = r
             handler.postDelayed(r, longPressMs)
             return
         }
+        // Enter long-press triggers Gboard-style one-handed mode menu.
         val longable = k.kind == KeyKind.SPACE ||
+            k.kind == KeyKind.ENTER ||
             (k.kind == KeyKind.CHAR && k.alts.isNotEmpty()) ||
             (k.kind == KeyKind.FUNC && k.code == Codes.EMOJI)
         if (longable) {
@@ -1013,11 +1031,6 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    /**
-     * Hold-to-repeat for backspace. Fires one delete immediately so the hold
-     * feels responsive, then repeats every [repeatIntervalMs] after
-     * [repeatDelayMs]. Cancelled by move() when a drag starts.
-     */
     private fun startDeleteRepeat(p: Pointer) {
         val k = p.key ?: return
         if (k.kind != KeyKind.FUNC || k.code != Codes.DELETE) return
@@ -1067,9 +1080,6 @@ class KeyboardView(context: Context) : View(context) {
         }
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             val dx = x - p.downX
-
-            // Starting a leftward slide cancels the hold-repeat and switches
-            // to live word-delete preview mode.
             if (!deleteSlideActive && dx < -dp(20f)) {
                 deleteSlideActive = true
                 deleteSlideStartX = p.downX
@@ -1077,11 +1087,7 @@ class KeyboardView(context: Context) : View(context) {
                 cancelLong(p)
                 hapticTick()
             }
-
             if (deleteSlideActive) {
-                // Report raw travel distance. The service decides how many
-                // whole words that covers based on actual word lengths, so
-                // the selection snaps word-by-word instead of mid-word.
                 val travel = (p.downX - x).coerceAtLeast(0f)
                 val words = listener?.onDeletePreview(travel) ?: 0
                 if (words != deleteSlideWordCount) {
@@ -1117,7 +1123,6 @@ class KeyboardView(context: Context) : View(context) {
         val k = p.key
         if (k != null && k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             if (deleteSlideActive) {
-                // Commit or cancel the selection preview.
                 if (!cancel && deleteSlideWordCount > 0) {
                     listener?.onDeleteCommit()
                 } else {
@@ -1127,7 +1132,6 @@ class KeyboardView(context: Context) : View(context) {
                 deleteSlideWordCount = 0
                 invalidate(k)
             } else if (!cancel && !p.consumed && !p.repeated) {
-                // Short tap: the hold-repeat never fired.
                 listener?.onKey(Codes.DELETE)
             }
         } else if (altShown) {
@@ -1172,6 +1176,13 @@ class KeyboardView(context: Context) : View(context) {
             p.consumed = true
             return
         }
+        // Gboard-style: long-press Enter opens the one-handed mode menu.
+        if (k.kind == KeyKind.ENTER) {
+            p.consumed = true
+            hidePreview()
+            listener?.onEnterLongPress()
+            return
+        }
         if (k.kind == KeyKind.SPACE) {
             if (trackpadEnabled) {
                 p.consumed = true
@@ -1195,11 +1206,6 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     // ------------------------------------------------------------------ haptics
-    //
-    // Gboard uses HapticFeedbackConstants.KEYBOARD_RELEASE (API 27+) for its
-    // signature "crisp tick" feel. Most keyboards use KEYBOARD_TAP, which is
-    // heavier and buzzier. Swapping the constant is the single biggest
-    // improvement you can make to match Gboard's feel.
 
     private fun feedback(k: Key) {
         if (haptic) {
@@ -1222,7 +1228,6 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    /** Gboard-style keypress feedback using KEYBOARD_RELEASE. */
     private fun hapticGboard() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             performHapticFeedback(
@@ -1237,7 +1242,6 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    /** Light tick for alt-strip scrubbing and delete-slide word counters. */
     private fun hapticTick() {
         if (!haptic) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -1252,7 +1256,6 @@ class KeyboardView(context: Context) : View(context) {
         )
     }
 
-    /** Heavy click for trackpad entry and caps-lock engagement. */
     private fun hapticHeavy() {
         if (!haptic) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -1274,6 +1277,7 @@ class KeyboardView(context: Context) : View(context) {
         trailAnimator?.cancel()
         splitAnimator?.cancel()
         shiftTapAnimator?.cancel()
+        oneHandedAnimator?.cancel()
         val n = pointers.size()
         for (i in 0 until n) {
             val p = pointers.valueAt(i)
@@ -1299,6 +1303,7 @@ class KeyboardView(context: Context) : View(context) {
         trailAnimator?.cancel()
         splitAnimator?.cancel()
         shiftTapAnimator?.cancel()
+        oneHandedAnimator?.cancel()
         pointers.clear()
         pointerPool.clear()
         previewKey = null
