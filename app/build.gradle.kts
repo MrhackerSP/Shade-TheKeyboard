@@ -52,6 +52,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.8.0")
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.asynclayoutinflater:asynclayoutinflater:1.1.0")
+    implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
