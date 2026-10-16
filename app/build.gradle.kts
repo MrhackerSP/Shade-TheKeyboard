@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
 }
@@ -12,15 +14,13 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
-        resourceConfigurations += listOf("en", "de", "es", "fr")
-        vectorDrawables.useSupportLibrary = true
     }
 
     signingConfigs {
         create("release") {
             val propsFile = rootProject.file("keystore.properties")
             if (propsFile.exists()) {
-                val props = java.util.Properties().apply {
+                val props = Properties().apply {
                     propsFile.inputStream().use { load(it) }
                 }
                 storeFile = file(props["storeFile"] as String)
@@ -48,8 +48,6 @@ android {
         }
         debug {
             isMinifyEnabled = false
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
         }
     }
 
