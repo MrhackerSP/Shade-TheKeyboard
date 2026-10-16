@@ -6,29 +6,27 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * On-device bigram/trigram next-word predictor.
- * Stores P(next | prev) and P(next | prev2, prev1) as decayed frequency counts.
- * Pure Kotlin, no JNI, no external model file.
+ * On-device bigram/trigram next-word predictor with decayed counts.
+ *
+ * On first run, a bundled `prime.json` seeds the model with ~200 common
+ * bigrams so the first sentence typed gets real predictions instead of
+ * an empty list.
  */
 class BigramModel(private val ctx: Context) {
 
-    // key: "prev" -> (candidate -> decayed count)
     private val bigrams = ConcurrentHashMap<String, HashMap<String, Float>>()
-    // key: "prev2|prev1" -> (candidate -> decayed count)
     private val trigrams = ConcurrentHashMap<String, HashMap<String, Float>>()
-    // key: "prev" -> total observed count for normalization
     private val bigramTotals = ConcurrentHashMap<String, Float>()
     private val trigramTotals = ConcurrentHashMap<String, Float>()
 
     private val store = File(ctx.filesDir, "ngram.json")
     private var dirty = false
 
-    init { load() }
+    init {
+        load()
+        if (bigrams.isEmpty()) seedFromAssets()
+    }
 
-    /**
-     * Update counts from a newly committed word.
-     * [prev2] and [prev1] are the two words before [word] in the sentence context.
-     */
     @Synchronized
     fun observe(prev2: String?, prev1: String?, word: String) {
         val w = word.lowercase()
@@ -49,10 +47,6 @@ class BigramModel(private val ctx: Context) {
         dirty = true
     }
 
-    /**
-     * Score candidates for next-word prediction given [prev2] and [prev1].
-     * Returns pairs sorted by descending score. Empty if no context is known.
-     */
     fun predict(prev2: String?, prev1: String?, max: Int): List<Pair<String, Float>> {
         if (prev1 == null) return emptyList()
         val p1 = prev1.lowercase()
@@ -60,7 +54,6 @@ class BigramModel(private val ctx: Context) {
 
         val scores = HashMap<String, Float>()
 
-        // trigram: weight 0.7
         if (p2 != null) {
             val tk = "$p2|$p1"
             val tm = trigrams[tk]
@@ -69,7 +62,6 @@ class BigramModel(private val ctx: Context) {
                 for ((w, c) in tm) scores[w] = (scores[w] ?: 0f) + 0.7f * (c / tt)
             }
         }
-        // bigram: weight 0.3
         val bm = bigrams[p1]
         val bt = bigramTotals[p1] ?: 0f
         if (bm != null && bt > 0f) {
@@ -83,10 +75,6 @@ class BigramModel(private val ctx: Context) {
             .map { it.key to it.value }
     }
 
-    /**
-     * Rerank an existing suggestion list using bigram context.
-     * Returns the list in the new order, with score 0 for words not in the model.
-     */
     fun rerank(prev2: String?, prev1: String?, candidates: List<String>): List<String> {
         if (candidates.isEmpty() || prev1 == null) return candidates
         val scores = predict(prev2, prev1, candidates.size * 2).toMap()
@@ -114,6 +102,32 @@ class BigramModel(private val ctx: Context) {
             store.writeText(root.toString())
             dirty = false
         } catch (_: Exception) {}
+    }
+
+    /**
+     * Seed the model from bundled `prime.json`. Format is a flat object
+     * mapping `prev` to `{next: weight}`. Called only when the persisted
+     * ngram file is empty, so it runs once per install.
+     */
+    private fun seedFromAssets() {
+        try {
+            val text = ctx.assets.open("prime.json").bufferedReader().use { it.readText() }
+            val root = JSONObject(text)
+            for (key in root.keys()) {
+                val inner = root.getJSONObject(key)
+                val m = HashMap<String, Float>()
+                var total = 0f
+                for (w in inner.keys()) {
+                    val c = inner.getDouble(w).toFloat()
+                    m[w] = c
+                    total += c
+                }
+                bigrams[key] = m
+                bigramTotals[key] = total
+            }
+        } catch (_: Exception) {
+            // No prime file — start cold, same as before.
+        }
     }
 
     private fun load() {
