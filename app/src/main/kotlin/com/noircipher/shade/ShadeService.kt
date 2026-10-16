@@ -14,6 +14,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
@@ -103,6 +105,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var bgBmp: Bitmap? = null
     private var bgStamp = -1L
 
+    // Mode change coordination
+    private val modeHandler = Handler(Looper.getMainLooper())
+    private var pendingMode: Mode? = null
+    private var pendingModeAnimate = false
+    private var lastAppliedInputType = -1
+    private val modeRunnable = Runnable {
+        val m = pendingMode ?: return@Runnable
+        val a = pendingModeAnimate
+        pendingMode = null
+        applyMode(m, a)
+    }
+
     private val undoStack = ArrayDeque<UndoEntry>(10)
 
     private val tail = StringBuilder(16)
@@ -115,7 +129,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var suggestJob: Job? = null
     private var slotFadeAnimator: ValueAnimator? = null
 
-    private var modeTransitionAnimator: ValueAnimator? = null
+    private var modeFadeAnimator: ValueAnimator? = null
+    private var panelTransitionAnimator: ValueAnimator? = null
     private var currentTransition: String? = null
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
@@ -144,7 +159,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         dict.bigramModel?.save()
         suggestJob?.cancel()
         slotFadeAnimator?.cancel()
-        modeTransitionAnimator?.cancel()
+        modeFadeAnimator?.cancel()
+        panelTransitionAnimator?.cancel()
+        modeHandler.removeCallbacks(modeRunnable)
         serviceJob.cancel()
 
         if (this::kb.isInitialized) kb.release()
@@ -299,6 +316,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         autoShifted = false
         toolbarOpen = prefs.getBoolean("toolbar_open_default", false)
 
+        // Always reset mode for the current field. A user-chosen numpad
+        // state does NOT carry over from a previous field.
+        mode = Mode.LETTERS
+
         val type = editorInfo.inputType
         val cls = type and InputType.TYPE_MASK_CLASS
         val variation = type and InputType.TYPE_MASK_VARIATION
@@ -315,18 +336,23 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         val isTextField = cls == InputType.TYPE_CLASS_TEXT
 
-        // Autocorrect + smart correction only when the app allows it.
         canCompose = isTextField && (passwordField == false) && (searchField == false)
-        // Suggestions are shown for any text field except passwords.
         suggestionsAllowed = isTextField && (passwordField == false)
 
         applyPrefs()
+
         val m = when (cls) {
             InputType.TYPE_CLASS_NUMBER, InputType.TYPE_CLASS_PHONE -> Mode.NUMPAD
             InputType.TYPE_CLASS_DATETIME -> Mode.SYM1
             else -> Mode.LETTERS
         }
-        setMode(m, animate = false)
+
+        val inputTypeChanged = type != lastAppliedInputType
+        lastAppliedInputType = type
+        if (inputTypeChanged || mode != m) {
+            applyMode(m, animate = false)
+        }
+
         transitionToPanel(Panel.NONE, animate = false)
 
         val action = editorInfo.imeOptions and EditorInfo.IME_MASK_ACTION
@@ -339,6 +365,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             EditorInfo.IME_ACTION_DONE -> getString(R.string.done)
             else -> ""
         }
+        kb.enterIsPrimary = noEnterAction == false &&
+            action != EditorInfo.IME_ACTION_NONE &&
+            action != EditorInfo.IME_ACTION_UNSPECIFIED
         updateShiftFromCaps()
         updateSuggestions()
     }
@@ -354,6 +383,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         tailValid = false
         cursorPos = -1
         selectionEnd = -1
+        // Reset mode so the next time the keyboard opens it starts on letters.
+        mode = Mode.LETTERS
+        lastAppliedInputType = -1
     }
 
     override fun onFinishInput() {
@@ -434,7 +466,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.sound = prefs.getBoolean("sound", false)
         kb.showPreview = prefs.getBoolean("popup_preview", true)
         kb.bgBitmap = bgBmp
-        kb.spaceLabel = if (layoutName == "custom") "Custom" else layoutName.uppercase()
 
         (kb.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
         (emoji.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
@@ -448,7 +479,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         for (tv in slots) tv.setTextColor(kbTheme.text)
         rebuildToolbar()
         refreshStrip()
-        setMode(mode, animate = false)
+        applyMode(mode, animate = false)
     }
 
     private fun loadBackground() {
@@ -550,20 +581,72 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    // ------------------------------------------------------------------ transition controller
+    // ------------------------------------------------------------------ mode switching
 
-    private fun runTransition(tag: String, apply: () -> Unit) {
+    private fun setMode(m: Mode, animate: Boolean = true) {
+        if (m == mode && animate) return
+        pendingMode = m
+        pendingModeAnimate = animate
+        modeHandler.removeCallbacks(modeRunnable)
+        modeHandler.postDelayed(modeRunnable, 60L)
+    }
+
+    private fun applyMode(m: Mode, animate: Boolean) {
+        if (m == mode && animate) return
+        mode = m
+
+        val rows = when (m) {
+            Mode.LETTERS -> Layouts.letters(
+                layoutName, numberRow,
+                prefs.getString("custom_layout", "") ?: ""
+            )
+            Mode.SYM1 -> Layouts.symbols1()
+            Mode.SYM2 -> Layouts.symbols2()
+            Mode.NUMPAD -> Layouts.numpad()
+        }
+
+        if (animate) {
+            modeFadeAnimator?.cancel()
+            modeFadeAnimator = ValueAnimator.ofFloat(1f, 0.55f).apply {
+                duration = 60L
+                interpolator = DecelerateInterpolator()
+                addUpdateListener { kb.alpha = it.animatedValue as Float }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        kb.setRows(rows)
+                        kb.shiftState = if (m == Mode.LETTERS) shiftState else 0
+                        kb.relayout()
+                        modeFadeAnimator = ValueAnimator.ofFloat(0.55f, 1f).apply {
+                            duration = 60L
+                            interpolator = DecelerateInterpolator()
+                            addUpdateListener { kb.alpha = it.animatedValue as Float }
+                            start()
+                        }
+                    }
+                })
+                start()
+            }
+        } else {
+            kb.setRows(rows)
+            kb.shiftState = if (m == Mode.LETTERS) shiftState else 0
+            kb.relayout()
+        }
+    }
+
+    // ------------------------------------------------------------------ panel transitions
+
+    private fun runPanelTransition(tag: String, apply: () -> Unit) {
         if (currentTransition == tag) { apply(); return }
-        modeTransitionAnimator?.cancel()
+        panelTransitionAnimator?.cancel()
         currentTransition = tag
-        modeTransitionAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
+        panelTransitionAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
             duration = 80L
             interpolator = DecelerateInterpolator()
             addUpdateListener { root.alpha = it.animatedValue as Float }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
                     apply()
-                    modeTransitionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                    panelTransitionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
                         duration = 120L
                         interpolator = DecelerateInterpolator()
                         addUpdateListener { root.alpha = it.animatedValue as Float }
@@ -580,27 +663,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    private fun setMode(m: Mode, animate: Boolean = true) {
-        mode = m
-        val rows = when (m) {
-            Mode.LETTERS -> Layouts.letters(
-                layoutName, numberRow,
-                prefs.getString("custom_layout", "") ?: ""
-            )
-            Mode.SYM1 -> Layouts.symbols1()
-            Mode.SYM2 -> Layouts.symbols2()
-            Mode.NUMPAD -> Layouts.numpad()
-        }
-        if (animate) kb.setRowsAnimated(rows) else kb.setRows(rows)
-        kb.shiftState = if (m == Mode.LETTERS) shiftState else 0
-        kb.relayout()
-    }
-
     private fun transitionToPanel(p: Panel, animate: Boolean = true) {
         if (this::emoji.isInitialized == false) return
         if (p != Panel.NONE) endWord()
         if (animate && panel != p) {
-            runTransition("panel:${p.name}") { applyPanelState(p) }
+            runPanelTransition("panel:${p.name}") { applyPanelState(p) }
         } else {
             applyPanelState(p)
         }
@@ -656,7 +723,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         when (id) {
             "clip" -> transitionToPanel(Panel.CLIP)
             "emoji" -> transitionToPanel(Panel.EMOJI)
-            "numpad" -> { endWord(); runTransition("mode:NUMPAD") { setMode(Mode.NUMPAD, animate = false) } }
+            "numpad" -> {
+                endWord()
+                if (mode == Mode.NUMPAD) {
+                    setMode(Mode.LETTERS)
+                } else {
+                    setMode(Mode.NUMPAD)
+                }
+            }
             "left" -> onCursor(-1)
             "right" -> onCursor(1)
             "selectall" -> ic?.performContextMenuAction(android.R.id.selectAll)
@@ -674,10 +748,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     "off" -> "left"; "left" -> "right"; else -> "off"
                 }
                 prefs.edit().putString("one_handed", next).apply()
-                runTransition("onehand:$next") {
-                    kb.oneHanded = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
-                    kb.relayout()
-                }
+                kb.oneHanded = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
+                kb.relayout()
             }
             "settings" -> startActivity(
                 Intent(this, SettingsActivity::class.java)
@@ -745,14 +817,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return if (idx < 0) s else s.substring(idx + 1).takeIf { it.isNotEmpty() }
     }
 
-    /**
-     * For search fields, the composing region is disabled (canCompose is false),
-     * so we cannot rely on [composing] to know what the user is currently typing.
-     * Read the current word directly from the InputConnection instead.
-     */
     private fun currentTypedWordFromField(): String {
         val before = currentInputConnection?.getTextBeforeCursor(32, 0)?.toString() ?: return ""
-        // Take the trailing run of letters/apostrophes
         var i = before.length - 1
         while (i >= 0) {
             val c = before[i]
@@ -765,14 +831,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return before.substring(i + 1)
     }
 
-    /**
-     * In a search field, the previous word is what comes before the trailing
-     * separator. Used for next-word / sentence suggestions after a space.
-     */
     private fun previousWordFromField(): String? {
         val before = currentInputConnection?.getTextBeforeCursor(48, 0)?.toString() ?: return null
         var end = before.length
-        // Skip trailing spaces
         while (end > 0 && before[end - 1].isWhitespace()) end -= 1
         if (end == 0) return null
         var start = end
@@ -792,14 +853,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             Codes.DELETE -> backspace()
             Codes.ENTER -> enter()
             Codes.SPACE -> space()
-            Codes.SYMBOLS -> { endWord(); runTransition("mode:SYM1") { setMode(Mode.SYM1, animate = false) } }
-            Codes.SYMBOLS2 -> runTransition("mode:SYM2") { setMode(Mode.SYM2, animate = false) }
+            Codes.SYMBOLS -> { endWord(); setMode(Mode.SYM1) }
+            Codes.SYMBOLS2 -> setMode(Mode.SYM2)
             Codes.LETTERS -> {
                 endWord()
-                runTransition("mode:LETTERS") {
-                    setMode(Mode.LETTERS, animate = false)
-                    updateShiftFromCaps()
-                }
+                setMode(Mode.LETTERS)
+                updateShiftFromCaps()
             }
             Codes.EMOJI -> transitionToPanel(Panel.EMOJI)
         }
@@ -1117,8 +1176,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             return
         }
 
-        // Determine the current typed word. In composing fields it's `composing`.
-        // In search fields (no composing), read it from the connection.
         val typedWord: String
         val composingActive = composing.isNotEmpty()
         if (composingActive) {
@@ -1130,7 +1187,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
 
         if (typedWord.isEmpty()) {
-            // Nothing being typed. Try next-word prediction from the previous word.
             val prev1: String? = if (composingActive) {
                 lastWord()
             } else if (canCompose == false && suggestionsAllowed) {
@@ -1156,7 +1212,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             return
         }
 
-        // Word completions for the current typed word
         val emoji = if (emojiSuggest && composingActive) {
             EmojiKeywords.map[typedWord.lowercase()]
         } else {
@@ -1218,12 +1273,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         ic.beginBatchEdit()
         try {
             if (composing.isNotEmpty()) {
-                // Replace the composing region with the picked word
                 composing.clear()
                 ic.commitText(w, 1)
             } else {
-                // In a search field: delete the current typed word from the field
-                // then commit the completion, so "the" doesn't become "thehello".
                 val typed = currentTypedWordFromField()
                 if (typed.isNotEmpty()) {
                     ic.deleteSurroundingText(typed.length, 0)
