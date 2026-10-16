@@ -1,51 +1,72 @@
 package com.noircipher.shade
 
 import kotlin.math.exp
-import kotlin.math.pow
 
 /**
- * Spatial Gaussian scorer: reweights autocorrect candidates by how close
+ * Spatial Gaussian scorer. Re-weights autocorrect candidates by how close
  * the user's finger was to each candidate's letter positions.
- * Adapted from SpectreBoard's approach.
+ *
+ * Uses per-axis sigma computed from the actual key width/height, so wide
+ * keys (space, shift) tolerate more horizontal drift than narrow keys.
+ * Vertical sigma is tighter than horizontal — vertical errors on a
+ * touchscreen are almost always typos, while horizontal errors are
+ * usually finger drift on the same row.
+ *
+ * This is a TIEBREAKER, not a primary signal. Running it on every
+ * candidate for every keystroke adds latency without improving rank.
  */
 object SpatialScorer {
 
-    // Finger-position error model (in key-widths)
-    private const val SIGMA = 0.55f
+    /** Half the key width — finger drift allowance on the horizontal axis. */
+    private fun sigmaX(k: Key) = ((k.right - k.left) * 0.45f).coerceAtLeast(1f)
+
+    /** Tighter vertical — vertical error is usually a real typo. */
+    private fun sigmaY(k: Key) = ((k.bottom - k.top) * 0.35f).coerceAtLeast(1f)
 
     /**
-     * Given a typed word and the key layout, score a candidate word by
-     * summing the negative log-likelihood of each candidate letter being
-     * produced by a finger near the typed letter's key.
+     * Score a candidate word against the user's actual touch points.
+     * Higher (less negative) is better.
+     *
+     * [touches] is a parallel list of (x, y) points recorded as the user
+     * typed the word, one per committed character. [layout] maps each
+     * character to its key bounds.
      */
-    fun score(typed: String, candidate: String, layout: Map<Char, KeyPos>): Float {
-        if (typed.isEmpty() || candidate.isEmpty()) return 0f
-        val n = maxOf(typed.length, candidate.length)
+    fun score(
+        candidate: String,
+        touches: List<FloatArray>,
+        layout: Map<Char, Key>
+    ): Float {
+        if (candidate.isEmpty() || touches.isEmpty()) return 0f
+        val n = minOf(candidate.length, touches.size)
         var total = 0f
 
         for (i in 0 until n) {
-            val tc = typed.getOrNull(i)?.lowercaseChar() ?: continue
-            val cc = candidate.getOrNull(i)?.lowercaseChar() ?: continue
-            val tp = layout[tc] ?: continue
-            val cp = layout[cc] ?: continue
-            val d2 = (tp.x - cp.x).pow(2) + (tp.y - cp.y).pow(2)
-            total += -exp(-d2 / (2f * SIGMA * SIGMA))
+            val c = candidate[i].lowercaseChar()
+            val k = layout[c] ?: continue
+            val cx = (k.left + k.right) / 2f
+            val cy = (k.top + k.bottom) / 2f
+            val sx = sigmaX(k)
+            val sy = sigmaY(k)
+            val dx = touches[i][0] - cx
+            val dy = touches[i][1] - cy
+            total += -exp(
+                -((dx * dx) / (2f * sx * sx) + (dy * dy) / (2f * sy * sy))
+            )
         }
         return total / n
     }
 
     /**
-     * Rerank candidates by combined dictionary score + spatial score.
-     * Higher is better.
+     * Rank candidates that already tied on unigram + bigram score.
+     * Only called when the caller has determined that two or more
+     * candidates need to be disambiguated spatially.
      */
-    fun rerank(typed: String, candidates: List<String>, layout: Map<Char, KeyPos>): List<String> {
-        if (layout.isEmpty()) return candidates
-        return candidates.sortedByDescending { c ->
-            // Dictionary rank is not passed here; spatial is a small tiebreaker.
-            score(typed, c, layout)
-        }
+    fun tiebreak(
+        candidates: List<String>,
+        touches: List<FloatArray>,
+        layout: Map<Char, Key>
+    ): List<String> {
+        if (layout.isEmpty() || touches.isEmpty() || candidates.size < 2) return candidates
+        return candidates.sortedByDescending { score(it, touches, layout) }
     }
-
-    /** Normalized key-center coordinates in key-width units. */
-    data class KeyPos(val x: Float, val y: Float)
 }
