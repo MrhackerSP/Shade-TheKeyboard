@@ -268,10 +268,6 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    /**
-     * Gboard-style one-handed transition. Shrinks the keyboard to 75% width
-     * and slides it to the chosen edge over 200ms.
-     */
     fun setOneHandedAnimated(side: Int) {
         oneHanded = side
         val target = if (side == 0) 1f else 0.75f
@@ -304,7 +300,6 @@ class KeyboardView(context: Context) : View(context) {
         val h = height.toFloat()
         if (w <= 0f || h <= 0f || rows.isEmpty()) return
 
-        // One-handed: shrink to 75% and slide to the chosen edge.
         val availW = w * oneHandedProgress
         val offX = when (oneHanded) {
             1 -> 0f
@@ -312,9 +307,10 @@ class KeyboardView(context: Context) : View(context) {
             else -> 0f
         }
 
+        // Reduced top and bottom padding so the bottom row hugs the edge.
         val padTop = dp(5f)
-        val padBottom = dp(5f)
-        val bottomRowPad = dp(6f)
+        val padBottom = dp(1f)
+        val bottomRowPad = dp(2f)
         val defaultPad = dp(3f)
         rowHeight = (h - padTop - padBottom) / rows.size
         val maxGap = min(dp(72f), w * 0.15f)
@@ -348,6 +344,9 @@ class KeyboardView(context: Context) : View(context) {
             }
         }
 
+        // Bottom-row outer corners: only the first and last *functional*
+        // keys (not spacers) get a corner treatment so ?123 and Enter hug
+        // the screen edge, matching Gboard.
         val lastRow = rows.lastOrNull() ?: return
         val visible = lastRow.filter { it.kind != KeyKind.SPACER }
         for (k in visible) k.outerCorner = KeyOuterCorner.NONE
@@ -412,6 +411,7 @@ class KeyboardView(context: Context) : View(context) {
         val gx = dp(2.5f)
         val gy = dp(3f)
         val radius = dp(7f)
+        val outerRadius = dp(16f)
         val combinedAlpha = ((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255)
         val pressDown = dp(0.7f) * pressProgress
 
@@ -441,7 +441,22 @@ class KeyboardView(context: Context) : View(context) {
                     k.right - gx,
                     k.bottom - gy + dp(1.5f)
                 )
-                c.drawRoundRect(rect, radius, radius, shadowPaint)
+                if (k.outerCorner == KeyOuterCorner.NONE) {
+                    c.drawRoundRect(rect, radius, radius, shadowPaint)
+                } else {
+                    val sr = floatArrayOf(
+                        radius, radius, radius, radius,
+                        radius, radius, radius, radius
+                    )
+                    when (k.outerCorner) {
+                        KeyOuterCorner.BOTTOM_LEFT -> { sr[6] = outerRadius; sr[7] = outerRadius }
+                        KeyOuterCorner.BOTTOM_RIGHT -> { sr[4] = outerRadius; sr[5] = outerRadius }
+                        KeyOuterCorner.NONE -> {}
+                    }
+                    path.reset()
+                    path.addRoundRect(rect, sr, Path.Direction.CW)
+                    c.drawPath(path, shadowPaint)
+                }
                 rect.set(
                     k.left + gx,
                     k.top + gy + topShift,
@@ -469,7 +484,7 @@ class KeyboardView(context: Context) : View(context) {
             if (outer == KeyOuterCorner.NONE) {
                 c.drawRoundRect(rect, radius, radius, fill)
             } else {
-                drawOuterRoundedKey(c, k, radius, outer)
+                drawOuterRoundedKey(c, k, radius, outerRadius, outer)
             }
             drawContent(c, k, combinedAlpha)
 
@@ -497,35 +512,42 @@ class KeyboardView(context: Context) : View(context) {
         c.drawText(badge, cx, badgeY - (textPaint.ascent() + textPaint.descent()) / 2f, textPaint)
     }
 
+    /**
+     * Draw a key whose outer bottom corner (left or right) is rounded with
+     * [outerRadius] while the other three corners use the regular [radius].
+     * Used for the ?123 key (bottom-left) and Enter key (bottom-right) so
+     * they hug the screen edge the way Gboard's do.
+     *
+     * The radii array follows the order expected by Path.addRoundRect:
+     *   [topLeftX, topLeftY, topRightX, topRightY,
+     *    bottomRightX, bottomRightY, bottomLeftX, bottomLeftY]
+     */
     private fun drawOuterRoundedKey(
         c: Canvas,
         k: Key,
         radius: Float,
+        outerRadius: Float,
         which: KeyOuterCorner
     ) {
-        val left = rect.left
-        val top = rect.top
-        val right = rect.right
-        val bottom = rect.bottom
-
-        c.drawRoundRect(rect, radius, radius, fill)
-
-        path.reset()
-        if (which == KeyOuterCorner.BOTTOM_LEFT) {
-            path.addRoundRect(
-                RectF(left, top, left + radius * 2f, bottom),
-                floatArrayOf(0f, 0f, 0f, 0f, radius, radius, 0f, 0f),
-                Path.Direction.CW
-            )
-            path.addRect(left, top, left + radius, bottom - radius, Path.Direction.CW)
-        } else {
-            path.addRoundRect(
-                RectF(right - radius * 2f, top, right, bottom),
-                floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, radius, radius),
-                Path.Direction.CW
-            )
-            path.addRect(right - radius, top, right, bottom - radius, Path.Direction.CW)
+        val r = floatArrayOf(
+            radius, radius,
+            radius, radius,
+            radius, radius,
+            radius, radius
+        )
+        when (which) {
+            KeyOuterCorner.BOTTOM_LEFT -> {
+                r[6] = outerRadius
+                r[7] = outerRadius
+            }
+            KeyOuterCorner.BOTTOM_RIGHT -> {
+                r[4] = outerRadius
+                r[5] = outerRadius
+            }
+            KeyOuterCorner.NONE -> {}
         }
+        path.reset()
+        path.addRoundRect(rect, r, Path.Direction.CW)
         c.drawPath(path, fill)
     }
 
@@ -1019,7 +1041,6 @@ class KeyboardView(context: Context) : View(context) {
             handler.postDelayed(r, longPressMs)
             return
         }
-        // Enter long-press triggers Gboard-style one-handed mode menu.
         val longable = k.kind == KeyKind.SPACE ||
             k.kind == KeyKind.ENTER ||
             (k.kind == KeyKind.CHAR && k.alts.isNotEmpty()) ||
@@ -1176,7 +1197,6 @@ class KeyboardView(context: Context) : View(context) {
             p.consumed = true
             return
         }
-        // Gboard-style: long-press Enter opens the one-handed mode menu.
         if (k.kind == KeyKind.ENTER) {
             p.consumed = true
             hidePreview()
