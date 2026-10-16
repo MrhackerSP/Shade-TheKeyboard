@@ -1,5 +1,8 @@
 package com.noircipher.shade
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -16,6 +19,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
@@ -23,6 +27,7 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.preference.PreferenceManager
 import kotlinx.coroutines.CoroutineScope
@@ -97,7 +102,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private val serviceJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Main.immediate + serviceJob)
     private var suggestJob: Job? = null
-    private var correctJob: Job? = null
+
+    private var slotFadeAnimator: ValueAnimator? = null
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
@@ -124,7 +130,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         try { cm.removePrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
         dict.bigramModel?.save()
         suggestJob?.cancel()
-        correctJob?.cancel()
+        slotFadeAnimator?.cancel()
         serviceJob.cancel()
 
         if (::kb.isInitialized) kb.release()
@@ -216,11 +222,45 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             addView(emoji, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
             addView(clipPanel, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
         }
+
+        // Insets handling: apply bottom padding and register the animation callback
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val b = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
             v.setPadding(0, 0, 0, b)
             insets
         }
+        ViewCompat.setWindowInsetsAnimationCallback(root,
+            object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+                override fun onPrepare(animation: WindowInsetsAnimationCompat) {
+                    // Prepare
+                }
+
+                override fun onProgress(
+                    insets: WindowInsetsCompat,
+                    runningAnimations: MutableList<WindowInsetsAnimationCompat>
+                ): WindowInsetsCompat {
+                    // Sync the keyboard translation with the IME inset progress so
+                    // the slide-up matches the app content shrink.
+                    for (anim in runningAnimations) {
+                        if (anim.typeMask and WindowInsetsCompat.Type.ime() != 0) {
+                            val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+                            kb.translationY = imeBottom.toFloat()
+                        }
+                    }
+                    return insets
+                }
+
+                override fun onEnd(animation: WindowInsetsAnimationCompat) {
+                    val imeVisible = ViewCompat.getRootWindowInsets(root)
+                        ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+                    kb.translationY = 0f
+                    if (!imeVisible) {
+                        // Keyboard hidden: no action needed, we are detached by the system
+                    }
+                }
+            }
+        )
+
         applyPrefs()
         return root
     }
@@ -259,7 +299,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             InputType.TYPE_CLASS_DATETIME -> Mode.SYM1
             else -> Mode.LETTERS
         }
-        setMode(m)
+        setMode(m, animate = false)
         showPanel(Panel.NONE)
 
         val action = editorInfo.imeOptions and EditorInfo.IME_MASK_ACTION
@@ -279,7 +319,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
         suggestJob?.cancel()
-        correctJob?.cancel()
         info = null
         candidates = emptyList()
         composing.clear()
@@ -381,7 +420,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         for (tv in slots) tv.setTextColor(kbTheme.text)
         rebuildToolbar()
         refreshStrip()
-        setMode(mode)
+        setMode(mode, animate = false)
     }
 
     private fun loadBackground() {
@@ -432,26 +471,40 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (!::strip.isInitialized) return
         val suggestionsActive = suggestionsOn && canCompose
         val showTools = toolbarOpen || !suggestionsActive
-        slotRow.visibility = if (showTools) View.GONE else View.VISIBLE
-        toolScroll.visibility = if (showTools) View.VISIBLE else View.GONE
+        // Animated show/hide between slotRow and toolScroll
+        val targetSlotAlpha = if (showTools) 0f else 1f
+        val targetToolAlpha = if (showTools) 1f else 0f
+        animateAlpha(slotRow, slotRow.alpha, targetSlotAlpha)
+        animateAlpha(toolScroll, toolScroll.alpha, targetToolAlpha)
+        slotRow.visibility = View.VISIBLE
+        toolScroll.visibility = View.VISIBLE
         toggle.text = if (showTools) "‹" else "›"
         toggle.visibility = if (suggestionsActive) View.VISIBLE else View.GONE
         strip.visibility = if (panel == Panel.NONE) View.VISIBLE else View.GONE
     }
 
-    private fun setMode(m: Mode) {
+    private fun animateAlpha(v: View, from: Float, to: Float) {
+        if (from == to) { v.alpha = to; return }
+        ValueAnimator.ofFloat(from, to).apply {
+            duration = 140L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { v.alpha = it.animatedValue as Float }
+            start()
+        }
+    }
+
+    private fun setMode(m: Mode, animate: Boolean = true) {
         mode = m
-        kb.setRows(
-            when (m) {
-                Mode.LETTERS -> Layouts.letters(
-                    layoutName, numberRow,
-                    prefs.getString("custom_layout", "") ?: ""
-                )
-                Mode.SYM1 -> Layouts.symbols1()
-                Mode.SYM2 -> Layouts.symbols2()
-                Mode.NUMPAD -> Layouts.numpad()
-            }
-        )
+        val rows = when (m) {
+            Mode.LETTERS -> Layouts.letters(
+                layoutName, numberRow,
+                prefs.getString("custom_layout", "") ?: ""
+            )
+            Mode.SYM1 -> Layouts.symbols1()
+            Mode.SYM2 -> Layouts.symbols2()
+            Mode.NUMPAD -> Layouts.numpad()
+        }
+        if (animate) kb.setRowsAnimated(rows) else kb.setRows(rows)
         kb.shiftState = if (m == Mode.LETTERS) shiftState else 0
         kb.relayout()
     }
@@ -460,11 +513,46 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (!::emoji.isInitialized) return
         if (p != Panel.NONE) endWord()
         panel = p
-        kb.visibility = if (p == Panel.NONE) View.VISIBLE else View.GONE
-        emoji.visibility = if (p == Panel.EMOJI) View.VISIBLE else View.GONE
-        clipPanel.visibility = if (p == Panel.CLIP) View.VISIBLE else View.GONE
-        if (p == Panel.CLIP) clipPanel.refresh()
+        // Fade panels in/out
+        when (p) {
+            Panel.NONE -> {
+                crossfadePanel(emoji, false)
+                crossfadePanel(clipPanel, false)
+                kb.visibility = View.VISIBLE
+            }
+            Panel.EMOJI -> {
+                kb.visibility = View.GONE
+                crossfadePanel(clipPanel, false)
+                crossfadePanel(emoji, true)
+            }
+            Panel.CLIP -> {
+                kb.visibility = View.GONE
+                crossfadePanel(emoji, false)
+                crossfadePanel(clipPanel, true)
+                clipPanel.refresh()
+            }
+        }
         refreshStrip()
+    }
+
+    private fun crossfadePanel(panel: View, show: Boolean) {
+        val targetAlpha = if (show) 1f else 0f
+        if (panel.alpha == targetAlpha) {
+            panel.visibility = if (show) View.VISIBLE else View.GONE
+            return
+        }
+        panel.visibility = View.VISIBLE
+        ValueAnimator.ofFloat(panel.alpha, targetAlpha).apply {
+            duration = 120L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { panel.alpha = it.animatedValue as Float }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    if (!show) panel.visibility = View.GONE
+                }
+            })
+            start()
+        }
     }
 
     // ------------------------------------------------------------------ toolbar
@@ -610,10 +698,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         tailValid = false
     }
 
-    override fun onTrackpadEnter() {
-        // Optional: could show a hint or dim the keyboard further
-    }
-
+    override fun onTrackpadEnter() {}
     override fun onTrackpadExit() {
         updateShiftFromCaps()
         updateSuggestions()
@@ -799,18 +884,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (!::slots.isInitialized) return
         suggestJob?.cancel()
         if (!suggestionsOn || !canCompose) {
-            candidates = emptyList()
-            renderSlots()
+            setCandidates(emptyList())
             return
         }
         val prefix = composing.toString()
         if (prefix.isEmpty()) {
             val prev1 = lastWord()
             val next = if (prev1 != null) dict.predictNext(null, prev1, 3) else emptyList()
-            candidates = if (next.isNotEmpty()) next
+            val list = if (next.isNotEmpty()) next
             else if (atSentenceStart()) listOf("I", "The", "I'm")
             else emptyList()
-            renderSlots()
+            setCandidates(list)
             return
         }
         val emoji = if (emojiSuggest) EmojiKeywords.map[prefix.lowercase()] else null
@@ -820,8 +904,31 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             list.addAll(dict.suggestAsync(prefix, 3))
             val words = list.take(3)
             val final = if (emoji != null) words.take(2) + emoji else words
-            candidates = final
-            renderSlots()
+            setCandidates(final)
+        }
+    }
+
+    /**
+     * Update the slots with a short fade when the candidate list actually changes.
+     * If the list is identical, skip the animation to avoid flicker on every keystroke.
+     */
+    private fun setCandidates(list: List<String>) {
+        if (list == candidates) return
+        candidates = list
+        slotFadeAnimator?.cancel()
+        slotFadeAnimator = ValueAnimator.ofFloat(1f, 0.4f, 1f).apply {
+            duration = 140L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                val a = it.animatedValue as Float
+                for (tv in slots) tv.alpha = a
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationStart(animation: Animator) {
+                    renderSlots()
+                }
+            })
+            start()
         }
     }
 
