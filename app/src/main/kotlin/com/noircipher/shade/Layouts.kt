@@ -15,6 +15,8 @@ object Codes {
 
 enum class KeyKind { CHAR, FUNC, SPACE, ENTER, SPACER }
 
+enum class KeyOuterCorner { NONE, BOTTOM_LEFT, BOTTOM_RIGHT }
+
 class Key(
     val label: String,
     val code: Int = 0,
@@ -28,8 +30,8 @@ class Key(
     var bottom = 0f
     val centerX: Float get() = (left + right) / 2f
 
-    /** Pre-computed invalidate bounds; updated in KeyboardView.layoutKeys(). */
     var invalidateRect: Rect? = null
+    var outerCorner: KeyOuterCorner = KeyOuterCorner.NONE
 
     fun updateInvalidateRect(pad: Int) {
         val r = invalidateRect ?: Rect().also { invalidateRect = it }
@@ -63,7 +65,7 @@ object Layouts {
         left,
         fn(Codes.EMOJI, 1f),
         sym(','),
-        Key(" ", Codes.SPACE, 4f, KeyKind.SPACE),
+        Key("", Codes.SPACE, 4f, KeyKind.SPACE),
         sym('.', ",?!:;'\"-@/"),
         Key("", Codes.ENTER, 1.5f, KeyKind.ENTER)
     )
