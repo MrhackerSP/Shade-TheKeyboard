@@ -294,6 +294,22 @@
             android:key="backup_import"
             android:title="@string/pref_backup_import"
             app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="contribute_data"
+            android:title="@string/pref_contribute"
+            android:summary="@string/pref_contribute_sum"
+            app:iconSpaceReserved="false" />
+        <Preference
+            android:key="export_training"
+            android:title="@string/pref_export_training"
+            android:summary="@string/pref_export_training_sum"
+            app:iconSpaceReserved="false" />
+        <Preference
+            android:key="clear_training_export"
+            android:title="@string/pref_clear_training"
+            android:summary="@string/pref_clear_training_sum"
+            app:iconSpaceReserved="false" />
     </PreferenceScreen>
     <PreferenceScreen
         android:key="screen_about"
