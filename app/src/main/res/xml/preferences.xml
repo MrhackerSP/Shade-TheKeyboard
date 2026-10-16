@@ -210,6 +210,12 @@
             android:title="@string/pref_toolbar_open"
             app:iconSpaceReserved="false" />
         <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="floating_mode"
+            android:title="@string/pref_floating"
+            android:summary="@string/pref_floating_sum"
+            app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat
             android:defaultValue="true"
             android:key="clipboard_history"
             android:title="@string/pref_clip"
