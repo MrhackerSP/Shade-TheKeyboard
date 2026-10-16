@@ -4,10 +4,12 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Shader
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -24,9 +26,7 @@ import androidx.core.graphics.ColorUtils
 import java.util.ArrayDeque
 import kotlin.math.abs
 import kotlin.math.min
-import kotlin.random.Random
 
-/** Canvas-drawn keyboard with Gboard-style animated circular popups, haptics, and smooth press feedback. */
 class KeyboardView(context: Context) : View(context) {
 
     interface Listener {
@@ -58,12 +58,10 @@ class KeyboardView(context: Context) : View(context) {
     var splitKeyboard = false
     var showHints = true
 
-    // Split delays for long-press vs key repeat
     var longPressMs = 300L
     var repeatDelayMs = 400L
     var repeatIntervalMs = 50L
 
-    // Typing speed animation (off by default)
     var typingBurstEnabled = false
 
     var bgBitmap: Bitmap? = null
@@ -77,6 +75,10 @@ class KeyboardView(context: Context) : View(context) {
     private var trackpadLastSentX = 0f
     private var trackpadLastSentY = 0f
     private val trackpadStep = 22f
+
+    // Split animation: 0 = joined, 1 = fully split
+    private var splitProgress = if (splitKeyboard) 1f else 0f
+    private var splitAnimator: ValueAnimator? = null
 
     // Layout crossfade
     private var layoutAlpha = 1f
@@ -108,7 +110,7 @@ class KeyboardView(context: Context) : View(context) {
     private var pressProgress = 1f
     private var pressAnimator: ValueAnimator? = null
 
-    // Circular key preview (Gboard-style)
+    // Circular key preview
     private var previewKey: Key? = null
     private var previewProgress = 0f
     private var previewAnimator: ValueAnimator? = null
@@ -132,7 +134,24 @@ class KeyboardView(context: Context) : View(context) {
     private val altRect = RectF()
     private val altShadow = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    // Typing speed animation
+    // Spacebar swipe trail
+    private var trailActive = false
+    private var trailStartX = 0f
+    private var trailStartY = 0f
+    private var trailEndX = 0f
+    private var trailEndY = 0f
+    private var trailAlpha = 0f
+    private var trailAnimator: ValueAnimator? = null
+    private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val trailGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    // Typing burst
     private var lastKeyTime = 0L
     private var burstCount = 0
     private var burstActive = false
@@ -219,6 +238,24 @@ class KeyboardView(context: Context) : View(context) {
 
     fun relayout() { layoutKeys(); invalidate() }
 
+    /** Animate the split keyboard into or out of position. */
+    fun setSplitAnimated(split: Boolean) {
+        splitKeyboard = split
+        val target = if (split) 1f else 0f
+        if (splitProgress == target) return
+        splitAnimator?.cancel()
+        splitAnimator = ValueAnimator.ofFloat(splitProgress, target).apply {
+            duration = 200L
+            interpolator = DecelerateInterpolator(1.4f)
+            addUpdateListener {
+                splitProgress = it.animatedValue as Float
+                layoutKeys()
+                invalidate()
+            }
+            start()
+        }
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val h = if (contentHeightPx > 0) contentHeightPx else dp(200f).toInt()
         setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), h)
@@ -239,9 +276,10 @@ class KeyboardView(context: Context) : View(context) {
         val padTop = dp(5f)
         val padBottom = dp(5f)
         rowHeight = (h - padTop - padBottom) / rows.size
-        val gap = if (splitKeyboard) min(dp(72f), w * 0.15f) else 0f
+        val maxGap = min(dp(72f), w * 0.15f)
+        val gap = maxGap * splitProgress
         rows.forEachIndexed { r, row ->
-            val eligible = gap > 0f && row.size >= 6 && row.none { it.kind == KeyKind.SPACE }
+            val eligible = gap > 0.5f && row.size >= 6 && row.none { it.kind == KeyKind.SPACE }
             val rowGap = if (eligible) gap else 0f
             val total = row.sumOf { it.weight.toDouble() }.toFloat()
             val unit = (availW - 2 * padX - rowGap) / total
@@ -348,10 +386,13 @@ class KeyboardView(context: Context) : View(context) {
             drawContent(c, k, combinedAlpha)
         }
 
-        // Typing burst overlay (behind popups, above keys)
+        // Swipe trail under popups
+        if (trailActive && trailAlpha > 0f) drawTrail(c)
+
+        // Burst
         if (burstActive && typingBurstEnabled) drawTypingBurst(c)
 
-        // Popups on top
+        // Popups
         if (altShown && altItems.isNotEmpty()) drawAltStrip(c)
         previewKey?.let { if (previewProgress > 0f) drawKeyPreview(c, it) }
     }
@@ -462,38 +503,90 @@ class KeyboardView(context: Context) : View(context) {
         c.drawArc(rect, 20f, 140f, false, stroke)
     }
 
-    // ------------------------------------------------------------------ Gboard-style circular preview
+    // ------------------------------------------------------------------ spacebar swipe trail
+
+    private fun drawTrail(c: Canvas) {
+        val a = trailAlpha
+        if (a <= 0f) return
+        val x0 = trailStartX
+        val y0 = trailStartY
+        val x1 = trailEndX
+        val y1 = trailEndY
+
+        // Outer glow: wider, softer
+        trailGlowPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0x22).toInt())
+        trailGlowPaint.strokeWidth = dp(10f)
+        c.drawLine(x0, y0, x1, y1, trailGlowPaint)
+
+        // Core line
+        trailPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xAA).toInt())
+        trailPaint.strokeWidth = dp(3f)
+        c.drawLine(x0, y0, x1, y1, trailPaint)
+
+        // End cap: small circle at the current cursor position
+        fill.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xCC).toInt())
+        c.drawCircle(x1, y1, dp(5f), fill)
+    }
+
+    private fun startTrail(x: Float, y: Float) {
+        trailActive = true
+        trailStartX = x
+        trailStartY = y
+        trailEndX = x
+        trailEndY = y
+        trailAlpha = 0f
+        trailAnimator?.cancel()
+        trailAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 90L
+            addUpdateListener { trailAlpha = it.animatedValue as Float; invalidate() }
+            start()
+        }
+    }
+
+    private fun updateTrail(x: Float, y: Float) {
+        if (!trailActive) return
+        trailEndX = x
+        trailEndY = y
+        invalidate()
+    }
+
+    private fun endTrail() {
+        if (!trailActive) return
+        trailAnimator?.cancel()
+        trailAnimator = ValueAnimator.ofFloat(trailAlpha, 0f).apply {
+            duration = 180L
+            addUpdateListener { trailAlpha = it.animatedValue as Float; invalidate() }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    trailActive = false
+                    invalidate()
+                }
+            })
+            start()
+        }
+    }
+
+    // ------------------------------------------------------------------ preview / alt
 
     private fun drawKeyPreview(c: Canvas, k: Key) {
         val label = display(k.label)
-        // Circular bubble: diameter larger than key width for visual weight
         val baseDiameter = maxOf(k.right - k.left, k.bottom - k.top) * 1.45f
         val diameter = baseDiameter * (0.65f + 0.35f * previewProgress)
         val radius = diameter / 2f
         val cx = k.centerX
         val cy = k.top - dp(8f) - radius
-
-        // Clamp inside keyboard bounds
         val cl = cx.coerceIn(radius + dp(2f), width - radius - dp(2f))
         val ct = cy.coerceIn(radius + dp(2f), height - radius - dp(2f))
 
-        // Shadow
         previewShadow.color = 0x55000000
         c.drawCircle(cl, ct + dp(2f), radius, previewShadow)
-
-        // Bubble base
         previewBg.color = kbTheme.popupBg
         c.drawCircle(cl, ct, radius, previewBg)
-
-        // Hue accent (Material You style inner ring)
         previewHue.color = ColorUtils.setAlphaComponent(kbTheme.accent, 0x33)
         c.drawCircle(cl, ct, radius * 0.82f, previewHue)
-
-        // Character
         previewText.color = kbTheme.text
         previewText.textSize = min(radius * 1.1f, dp(34f))
-        val ty = ct - (previewText.ascent() + previewText.descent()) / 2f
-        c.drawText(label, cl, ty, previewText)
+        c.drawText(label, cl, ct - (previewText.ascent() + previewText.descent()) / 2f, previewText)
     }
 
     private fun showPreviewFor(k: Key) {
@@ -503,10 +596,7 @@ class KeyboardView(context: Context) : View(context) {
         previewAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 95L
             interpolator = DecelerateInterpolator(2f)
-            addUpdateListener {
-                previewProgress = it.animatedValue as Float
-                invalidate()
-            }
+            addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             start()
         }
     }
@@ -517,10 +607,7 @@ class KeyboardView(context: Context) : View(context) {
         previewAnimator = ValueAnimator.ofFloat(previewProgress, 0f).apply {
             duration = 70L
             interpolator = DecelerateInterpolator()
-            addUpdateListener {
-                previewProgress = it.animatedValue as Float
-                invalidate()
-            }
+            addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
                     previewKey = null
@@ -530,8 +617,6 @@ class KeyboardView(context: Context) : View(context) {
             start()
         }
     }
-
-    // ------------------------------------------------------------------ accent strip
 
     private fun drawAltStrip(c: Canvas) {
         val n = altItems.size
@@ -588,10 +673,7 @@ class KeyboardView(context: Context) : View(context) {
         altAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 100L
             interpolator = DecelerateInterpolator(2f)
-            addUpdateListener {
-                altProgress = it.animatedValue as Float
-                invalidate()
-            }
+            addUpdateListener { altProgress = it.animatedValue as Float; invalidate() }
             start()
         }
     }
@@ -612,10 +694,7 @@ class KeyboardView(context: Context) : View(context) {
         altAnimator = ValueAnimator.ofFloat(altProgress, 0f).apply {
             duration = 80L
             interpolator = DecelerateInterpolator()
-            addUpdateListener {
-                altProgress = it.animatedValue as Float
-                invalidate()
-            }
+            addUpdateListener { altProgress = it.animatedValue as Float; invalidate() }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
                     altShown = false
@@ -627,7 +706,7 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    // ------------------------------------------------------------------ typing burst
+    // ------------------------------------------------------------------ burst
 
     private fun drawTypingBurst(c: Canvas) {
         val intensity = burstProgress
@@ -644,11 +723,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun onKeyBurst() {
         if (!typingBurstEnabled) return
         val now = SystemClock.uptimeMillis()
-        if (now - lastKeyTime < 120L) {
-            burstCount++
-        } else {
-            burstCount = 1
-        }
+        if (now - lastKeyTime < 120L) burstCount++ else burstCount = 1
         lastKeyTime = now
         if (burstCount >= 6 && !burstActive) {
             burstActive = true
@@ -656,16 +731,10 @@ class KeyboardView(context: Context) : View(context) {
             burstAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
                 duration = 450L
                 interpolator = DecelerateInterpolator()
-                addUpdateListener {
-                    burstProgress = it.animatedValue as Float
-                    invalidate()
-                }
+                addUpdateListener { burstProgress = it.animatedValue as Float; invalidate() }
                 addListener(object : android.animation.AnimatorListenerAdapter() {
                     override fun onAnimationEnd(animation: android.animation.Animator) {
-                        burstActive = false
-                        burstProgress = 0f
-                        burstCount = 0
-                        invalidate()
+                        burstActive = false; burstProgress = 0f; burstCount = 0; invalidate()
                     }
                 })
                 start()
@@ -760,10 +829,7 @@ class KeyboardView(context: Context) : View(context) {
         pressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 55L
             interpolator = DecelerateInterpolator(2f)
-            addUpdateListener {
-                pressProgress = it.animatedValue as Float
-                invalidate()
-            }
+            addUpdateListener { pressProgress = it.animatedValue as Float; invalidate() }
             start()
         }
     }
@@ -773,10 +839,7 @@ class KeyboardView(context: Context) : View(context) {
         pressAnimator = ValueAnimator.ofFloat(pressProgress, 0f).apply {
             duration = 110L
             interpolator = DecelerateInterpolator(1.5f)
-            addUpdateListener {
-                pressProgress = it.animatedValue as Float
-                invalidate()
-            }
+            addUpdateListener { pressProgress = it.animatedValue as Float; invalidate() }
             start()
         }
     }
@@ -787,10 +850,8 @@ class KeyboardView(context: Context) : View(context) {
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             listener?.onKey(Codes.DELETE)
             val r = object : Runnable {
-                var n = 0
                 override fun run() {
                     listener?.onKey(Codes.DELETE)
-                    n++
                     handler.postDelayed(this, repeatIntervalMs)
                 }
             }
@@ -823,11 +884,13 @@ class KeyboardView(context: Context) : View(context) {
                 cancelLong(p)
                 hidePreview()
                 p.lastX = x
+                startTrail(p.downX, p.downY)
             }
             if (p.swiping) {
                 val step = dp(14f)
                 while (x - p.lastX >= step) { listener?.onCursor(1); p.lastX += step }
                 while (p.lastX - x >= step) { listener?.onCursor(-1); p.lastX -= step }
+                updateTrail(x, y)
             }
             return
         }
@@ -851,6 +914,7 @@ class KeyboardView(context: Context) : View(context) {
         p.repeatRunnable?.let { handler.removeCallbacks(it) }
         p.repeatRunnable = null
         hidePreview()
+        if (p.swiping) endTrail()
         val k = p.key
 
         if (altShown) {
@@ -978,6 +1042,8 @@ class KeyboardView(context: Context) : View(context) {
         previewAnimator?.cancel()
         altAnimator?.cancel()
         burstAnimator?.cancel()
+        trailAnimator?.cancel()
+        splitAnimator?.cancel()
         val n = pointers.size()
         for (i in 0 until n) {
             val p = pointers.valueAt(i)
@@ -989,6 +1055,7 @@ class KeyboardView(context: Context) : View(context) {
         previewKey = null
         altShown = false
         altItems = emptyList()
+        trailActive = false
     }
 
     fun release() {
@@ -999,10 +1066,13 @@ class KeyboardView(context: Context) : View(context) {
         previewAnimator?.cancel()
         altAnimator?.cancel()
         burstAnimator?.cancel()
+        trailAnimator?.cancel()
+        splitAnimator?.cancel()
         pointers.clear()
         pointerPool.clear()
         previewKey = null
         altShown = false
         altItems = emptyList()
+        trailActive = false
     }
 }
