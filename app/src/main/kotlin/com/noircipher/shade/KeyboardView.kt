@@ -8,7 +8,6 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.Typeface
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -37,6 +36,7 @@ class KeyboardView(context: Context) : View(context) {
         fun onLongPressSpecial()
         fun onTrackpadEnter()
         fun onTrackpadExit()
+        fun onDeleteWords(count: Int)
     }
 
     var listener: Listener? = null
@@ -53,11 +53,8 @@ class KeyboardView(context: Context) : View(context) {
         set(v) { field = v; invalidate() }
     var enterLabel = ""
         set(v) { field = v; invalidate() }
-
-    /** True when the Enter key represents the primary action and should be tinted. */
     var enterIsPrimary = false
         set(v) { field = v; invalidate() }
-
     var keyBorders = true
     var splitKeyboard = false
     var showHints = true
@@ -79,6 +76,12 @@ class KeyboardView(context: Context) : View(context) {
     private var trackpadLastSentY = 0f
     private val trackpadStep = 22f
 
+    // SwiftKey-style backspace slide-to-delete state
+    private var deleteSlideActive = false
+    private var deleteSlideStartX = 0f
+    private var deleteSlideWordCount = 0
+    private var deleteSlideDeleteRunnable: Runnable? = null
+
     private var splitProgress = if (splitKeyboard) 1f else 0f
     private var splitAnimator: ValueAnimator? = null
 
@@ -97,12 +100,9 @@ class KeyboardView(context: Context) : View(context) {
         strokeJoin = Paint.Join.ROUND
     }
 
-    // Shadow render pass — only used when the theme requests it.
     private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x22000000
+        color = 0x18000000
     }
-    private val keyShape = Path()
-    private val shadowShape = Path()
 
     private val rect = RectF()
     private val dst = RectF()
@@ -279,8 +279,6 @@ class KeyboardView(context: Context) : View(context) {
         val offX = if (oneHanded == 2) w - availW else 0f
         val padTop = dp(5f)
         val padBottom = dp(5f)
-        // Bottom row gets a slightly larger outer margin so the rounded
-        // outer corners sit visually inside the screen edge.
         val bottomRowPad = dp(6f)
         val defaultPad = dp(3f)
         rowHeight = (h - padTop - padBottom) / rows.size
@@ -293,11 +291,6 @@ class KeyboardView(context: Context) : View(context) {
             val eligible = gap > 0.5f && row.size >= 6 && row.none { it.kind == KeyKind.SPACE }
             val rowGap = if (eligible) gap else 0f
             val total = row.sumOf { it.weight.toDouble() }.toFloat()
-
-            // Bottom row: non-character keys get a wider outer gap than
-            // character keys, so the spacebar and enter read as distinct.
-            // Model: sum of weights = total, but we subtract extra gap widths
-            // from the available width when laying out the bottom row.
             val bottomExtraGaps = if (isBottom) dp(3f) * (row.size - 1) else 0f
             val unit = (availW - 2 * padX - rowGap - bottomExtraGaps) / total
 
@@ -316,12 +309,10 @@ class KeyboardView(context: Context) : View(context) {
                 k.updateInvalidateRect(dp(3f).toInt())
                 x = k.right
                 cum += k.weight
-                // Bottom row extra gap between keys
                 if (isBottom && idx < row.size - 1) x += dp(3f)
             }
         }
 
-        // Tag the outer keys of the bottom row for screen-corner rounding.
         val lastRow = rows.lastOrNull() ?: return
         val visible = lastRow.filter { it.kind != KeyKind.SPACER }
         for (k in visible) k.outerCorner = KeyOuterCorner.NONE
@@ -393,7 +384,6 @@ class KeyboardView(context: Context) : View(context) {
             if (k.kind == KeyKind.SPACER) continue
             if (k.right < clipL || k.left > clipR || k.bottom < clipT || k.top > clipB) continue
             val isPressed = k in pressedKeys
-            // Press-down shift
             val topShift = if (isPressed) pressDown else 0f
             rect.set(
                 k.left + gx,
@@ -408,7 +398,6 @@ class KeyboardView(context: Context) : View(context) {
                 continue
             }
 
-            // Soft shadow beneath keys (Material You style)
             if (keyBorders) {
                 shadowPaint.color = 0x18000000
                 rect.set(
@@ -448,12 +437,31 @@ class KeyboardView(context: Context) : View(context) {
                 drawOuterRoundedKey(c, k, radius, outer)
             }
             drawContent(c, k, combinedAlpha)
+
+            // Draw the delete word-count badge while sliding
+            if (k.code == Codes.DELETE && deleteSlideActive && deleteSlideWordCount > 0) {
+                drawDeleteSlideBadge(c, k)
+            }
         }
 
         if (trailActive && trailAlpha > 0f) drawTrail(c)
         if (burstActive && typingBurstEnabled) drawTypingBurst(c)
         if (altShown && altItems.isNotEmpty()) drawAltStrip(c)
         previewKey?.let { if (previewProgress > 0f) drawKeyPreview(c, it) }
+    }
+
+    private fun drawDeleteSlideBadge(c: Canvas, k: Key) {
+        val cx = k.centerX
+        val cy = k.centerY - dp(6f)
+        val text = deleteSlideWordCount.toString()
+        val r = dp(9f)
+        fill.color = kbTheme.accent
+        c.drawCircle(cx, cy - r - dp(12f), r, fill)
+        textPaint.color = kbTheme.accentText
+        textPaint.textSize = dp(11f)
+        textPaint.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        c.drawText(text, cx, cy - r - dp(12f) - (textPaint.ascent() + textPaint.descent()) / 2f, textPaint)
+        textPaint.typeface = android.graphics.Typeface.DEFAULT
     }
 
     private fun drawOuterRoundedKey(
@@ -467,19 +475,15 @@ class KeyboardView(context: Context) : View(context) {
         val right = rect.right
         val bottom = rect.bottom
 
-        // Two-pass: rounded rect with uniform radius, then overdraw the
-        // screen-facing bottom corner flush with the keyboard edge.
         c.drawRoundRect(rect, radius, radius, fill)
 
         path.reset()
         if (which == KeyOuterCorner.BOTTOM_LEFT) {
-            // Overdraw only the bottom-left corner area
             path.addRoundRect(
                 RectF(left, top, left + radius * 2f, bottom),
                 floatArrayOf(0f, 0f, 0f, 0f, radius, radius, 0f, 0f),
                 Path.Direction.CW
             )
-            // Extend into the bottom-left outer corner so the curve is flush
             path.addRect(left, top, left + radius, bottom - radius, Path.Direction.CW)
         } else {
             path.addRoundRect(
@@ -509,9 +513,7 @@ class KeyboardView(context: Context) : View(context) {
                     c.drawText(k.alts.substring(0, 1), rect.right - dp(7f), rect.top + dp(12f), textPaint)
                 }
             }
-            KeyKind.SPACE -> {
-                // Spacebar has no label anymore. Draw nothing.
-            }
+            KeyKind.SPACE -> Unit
             KeyKind.ENTER -> {
                 if (enterLabel.isNotEmpty()) {
                     textPaint.color = ColorUtils.setAlphaComponent(
@@ -554,9 +556,6 @@ class KeyboardView(context: Context) : View(context) {
         val shiftBoost = 1f + 0.18f * shiftTapProgress
         val s = s0 * shiftBoost
         val cy = if (caps) cy0 - s * 0.1f else cy0
-
-        // Shift glyph is always drawn in theme text color now — no accent
-        // fill on caps lock. The state is signalled by a small dot below.
         val col = kbTheme.text
 
         path.reset()
@@ -574,7 +573,6 @@ class KeyboardView(context: Context) : View(context) {
         c.drawPath(path, stroke)
 
         if (caps) {
-            // Small dot underneath to indicate caps lock
             stroke.style = Paint.Style.FILL
             stroke.color = ColorUtils.setAlphaComponent(kbTheme.accent, alpha)
             c.drawCircle(cx, cy + s * 1.35f, dp(2.5f), stroke)
@@ -678,7 +676,6 @@ class KeyboardView(context: Context) : View(context) {
         val diameter = baseDiameter * (0.65f + 0.35f * previewProgress)
         val radius = diameter / 2f
         val cx = k.centerX
-        // Prefer above the key, but fall back below if there's no room.
         var cy = k.top - dp(8f) - radius
         if (cy - radius < dp(2f)) {
             cy = k.bottom + dp(8f) + radius
@@ -984,15 +981,8 @@ class KeyboardView(context: Context) : View(context) {
             animateShiftTap()
         }
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
-            listener?.onKey(Codes.DELETE)
-            val r = object : Runnable {
-                override fun run() {
-                    listener?.onKey(Codes.DELETE)
-                    handler.postDelayed(this, repeatIntervalMs)
-                }
-            }
-            p.repeatRunnable = r
-            handler.postDelayed(r, repeatDelayMs)
+            // Do not fire delete on down. Wait to see if the user slides left
+            // (SwiftKey-style word deletion) or taps (single character).
             return
         }
         val longable = k.kind == KeyKind.SPACE ||
@@ -1030,7 +1020,28 @@ class KeyboardView(context: Context) : View(context) {
             }
             return
         }
-        if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) return
+        if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
+            // SwiftKey-style slide-to-delete. Each 40dp of leftward travel
+            // selects one more word. Rightward travel deselects.
+            val dx = x - p.downX
+            if (!deleteSlideActive && dx < -dp(20f)) {
+                deleteSlideActive = true
+                deleteSlideStartX = p.downX
+                deleteSlideWordCount = 0
+                cancelLong(p)
+                hapticTick()
+            }
+            if (deleteSlideActive) {
+                val travel = (p.downX - x).coerceAtLeast(0f)
+                val words = (travel / dp(40f)).toInt()
+                if (words != deleteSlideWordCount) {
+                    deleteSlideWordCount = words
+                    hapticTick()
+                    invalidate()
+                }
+            }
+            return
+        }
         val nk = hit(x, y)
         if (nk != null && nk !== k && !(nk.kind == KeyKind.FUNC && nk.code == Codes.DELETE)) {
             val old = k
@@ -1051,9 +1062,22 @@ class KeyboardView(context: Context) : View(context) {
         p.repeatRunnable = null
         hidePreview()
         if (p.swiping) endTrail()
-        val k = p.key
 
-        if (altShown) {
+        val k = p.key
+        if (k != null && k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
+            if (deleteSlideActive) {
+                // Commit the multi-word deletion
+                if (!cancel && deleteSlideWordCount > 0) {
+                    listener?.onDeleteWords(deleteSlideWordCount)
+                }
+                deleteSlideActive = false
+                deleteSlideWordCount = 0
+                invalidate(k)
+            } else if (!cancel && !p.consumed) {
+                // A simple tap on delete: single character
+                listener?.onKey(Codes.DELETE)
+            }
+        } else if (altShown) {
             val s = altItems.getOrNull(altSel)
             dismissAlt()
             if (!cancel && s != null) listener?.onText(s)
@@ -1089,6 +1113,13 @@ class KeyboardView(context: Context) : View(context) {
         val k = p.key ?: return
         p.longRunnable = null
         hapticHeavy()
+        if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
+            // Long-press delete falls through to SwiftKey behavior: the
+            // system will handle repeat, but we don't fire anything here
+            // because the slide gesture takes over.
+            p.consumed = true
+            return
+        }
         if (k.kind == KeyKind.SPACE) {
             if (trackpadEnabled) {
                 p.consumed = true
@@ -1117,6 +1148,8 @@ class KeyboardView(context: Context) : View(context) {
         if (haptic) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val effect = when {
+                    k.kind == KeyKind.FUNC && k.code == Codes.SHIFT && shiftState == 2 ->
+                        VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK)
                     k.kind == KeyKind.SPACE -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
                     k.kind == KeyKind.ENTER -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
                     k.kind == KeyKind.FUNC -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
@@ -1181,6 +1214,7 @@ class KeyboardView(context: Context) : View(context) {
         trailAnimator?.cancel()
         splitAnimator?.cancel()
         shiftTapAnimator?.cancel()
+        deleteSlideDeleteRunnable?.let { handler.removeCallbacks(it) }
         val n = pointers.size()
         for (i in 0 until n) {
             val p = pointers.valueAt(i)
@@ -1193,6 +1227,7 @@ class KeyboardView(context: Context) : View(context) {
         altShown = false
         altItems = emptyList()
         trailActive = false
+        deleteSlideActive = false
     }
 
     fun release() {
@@ -1206,11 +1241,13 @@ class KeyboardView(context: Context) : View(context) {
         trailAnimator?.cancel()
         splitAnimator?.cancel()
         shiftTapAnimator?.cancel()
+        deleteSlideDeleteRunnable?.let { handler.removeCallbacks(it) }
         pointers.clear()
         pointerPool.clear()
         previewKey = null
         altShown = false
         altItems = emptyList()
         trailActive = false
+        deleteSlideActive = false
     }
 }
