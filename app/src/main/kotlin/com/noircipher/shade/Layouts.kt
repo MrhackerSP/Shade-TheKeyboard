@@ -29,6 +29,7 @@ class Key(
     var right = 0f
     var bottom = 0f
     val centerX: Float get() = (left + right) / 2f
+    val centerY: Float get() = (top + bottom) / 2f
 
     var invalidateRect: Rect? = null
     var outerCorner: KeyOuterCorner = KeyOuterCorner.NONE
