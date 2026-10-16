@@ -34,7 +34,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.dynamicanimation.animation.DynamicAnimation
-import androidx.dynamicanimation.animation.FloatValueHolder
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
 import androidx.preference.PreferenceManager
@@ -116,6 +115,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var pendingDeleteWords = 0
     private var deletePreviewActive = false
 
+    // Ring buffer of the last touches, used by the spatial tiebreak.
+    private val touchTrace = TouchTrace(16)
+    // Last committed word's trailing touches. Kept until the next word
+    // boundary so the tiebreak has data when it needs it.
+    private var lastWordTouches: List<FloatArray> = emptyList()
+
     private val undoStack = ArrayDeque<UndoEntry>(10)
 
     private val tail = StringBuilder(16)
@@ -128,7 +133,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var suggestJob: Job? = null
     private var correctionJob: Job? = null
     private var slotAnimator: ValueAnimator? = null
-    private var panelSpringX: SpringAnimation? = null
+    private var panelSpring: SpringAnimation? = null
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
@@ -157,7 +162,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         suggestJob?.cancel()
         correctionJob?.cancel()
         slotAnimator?.cancel()
-        panelSpringX?.cancel()
+        panelSpring?.cancel()
         serviceJob.cancel()
 
         if (this::kb.isInitialized) kb.release()
@@ -170,6 +175,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         info = null
         pendingDeleteWords = 0
         deletePreviewActive = false
+        touchTrace.clear()
+        lastWordTouches = emptyList()
 
         super.onDestroy()
     }
@@ -180,8 +187,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun buildInputView(): View {
         kb = KeyboardView(this).also { it.listener = this }
-        // Cache the static keyboard as a GPU layer. Only pressed keys get
-        // re-rasterized each frame. Real 120fps win on high-refresh panels.
         kb.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         toggle = TextView(this).apply {
@@ -194,9 +199,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
         }
 
-        // Two layers per slot: the "old" layer holds the previous word and
-        // fades out; the "new" layer holds the incoming word and fades in.
-        // Only slots whose text changed animate.
         slots = List(3) { i ->
             TextView(this).apply {
                 gravity = Gravity.CENTER
@@ -355,6 +357,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         toolbarOpen = prefs.getBoolean("toolbar_open_default", false)
         pendingDeleteWords = 0
         deletePreviewActive = false
+        touchTrace.clear()
+        lastWordTouches = emptyList()
 
         mode = Mode.LETTERS
 
@@ -426,6 +430,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         lastAppliedInputType = -1
         pendingDeleteWords = 0
         deletePreviewActive = false
+        touchTrace.clear()
+        lastWordTouches = emptyList()
     }
 
     override fun onFinishInput() {
@@ -685,13 +691,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return if (this::kb.isInitialized && kb.width > 0) kb.width / 10f else dp(24f)
     }
 
-    // ------------------------------------------------------------------ panel transitions (spring)
+    // ------------------------------------------------------------------ panel transitions
 
-    /**
-     * Gboard-style panel transition. The outgoing panel slides left and
-     * fades out while the incoming panel slides in from the right, using
-     * a non-bouncy spring for a settled, physical feel.
-     */
     private fun transitionToPanel(p: Panel, animate: Boolean = true) {
         if (this::emoji.isInitialized == false) return
         if (p != Panel.NONE) endWord()
@@ -721,30 +722,26 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val w = root.width.toFloat().coerceAtLeast(1f)
         val slideDist = w * 0.15f
 
-        // Incoming slides in from the right.
         incoming?.let { v ->
             v.visibility = View.VISIBLE
             v.translationX = slideDist
             v.alpha = 0f
-            val spring = SpringAnimation(v, DynamicAnimation.TRANSLATION_X, 0f).apply {
+            SpringAnimation(v, DynamicAnimation.TRANSLATION_X, 0f).apply {
                 spring = SpringForce(0f).apply {
                     dampingRatio = SpringForce.DAMPING_RATIO_NO_BOUNCY
                     stiffness = SpringForce.STIFFNESS_MEDIUM
                 }
-            }
-            spring.start()
+            }.start()
             v.animate().alpha(1f).setDuration(180L).start()
         }
 
-        // Outgoing slides left and fades out.
         outgoing?.let { v ->
-            val spring = SpringAnimation(v, DynamicAnimation.TRANSLATION_X, -slideDist).apply {
+            SpringAnimation(v, DynamicAnimation.TRANSLATION_X, -slideDist).apply {
                 spring = SpringForce(-slideDist).apply {
                     dampingRatio = SpringForce.DAMPING_RATIO_NO_BOUNCY
                     stiffness = SpringForce.STIFFNESS_MEDIUM
                 }
-            }
-            spring.start()
+            }.start()
             v.animate().alpha(0f).setDuration(180L)
                 .withEndAction {
                     v.visibility = View.GONE
@@ -768,11 +765,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             "emoji" -> transitionToPanel(Panel.EMOJI)
             "numpad" -> {
                 endWord()
-                if (mode == Mode.NUMPAD) {
-                    setMode(Mode.LETTERS)
-                } else {
-                    setMode(Mode.NUMPAD)
-                }
+                if (mode == Mode.NUMPAD) setMode(Mode.LETTERS) else setMode(Mode.NUMPAD)
             }
             "left" -> onCursor(-1)
             "right" -> onCursor(1)
@@ -890,11 +883,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         var i = before.length - 1
         while (i >= 0) {
             val c = before[i]
-            if (c.isLetter() || c == '\'') {
-                i -= 1
-            } else {
-                break
-            }
+            if (c.isLetter() || c == '\'') i -= 1 else break
         }
         return before.substring(i + 1)
     }
@@ -1049,6 +1038,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             (text[0].isLetter() || (text[0] == '\'' && composing.isNotEmpty()))
 
         if (isWordChar) {
+            // Record the touch point so the spatial tiebreak has data.
+            recordLastTouch()
+
             if (shiftState == 1) {
                 shiftState = 0
                 autoShifted = false
@@ -1091,9 +1083,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         ic.commitText(" ", 1)
                         appendTail(" ")
                         pushUndo(1, "")
-                        if (c == '.' || c == '!' || c == '?') {
-                            resetBigramContext()
-                        }
+                        if (c == '.' || c == '!' || c == '?') resetBigramContext()
                     }
                 }
             } finally {
@@ -1102,6 +1092,58 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
         lastSpaceTime = 0L
         afterText()
+    }
+
+    /**
+     * Snapshot the last few touches into `lastWordTouches` before clearing
+     * the trace. Called when a word ends (space, enter, punctuation).
+     * These are the points the spatial tiebreak will use for the NEXT
+     * word's candidates.
+     */
+    private fun snapshotWordTouches() {
+        lastWordTouches = touchTrace.last(touchTrace.size())
+        touchTrace.clear()
+    }
+
+    /**
+     * The KeyboardView doesn't currently pass touch coordinates back to
+     * the service, so we approximate the touch point as the center of the
+     * key that was just pressed. That is exactly what the spatial scorer
+     * compares against anyway (key centers), so the approximation is
+     * neutral: spatial tiebreak degrades to "does the candidate's first
+     * letters match the keys the user hit", which is still useful.
+     *
+     * If KeyboardView later exposes real coordinates via the listener,
+     * swap this for the actual point.
+     */
+    private fun recordLastTouch() {
+        val w = composing.toString()
+        if (w.isEmpty()) return
+        val last = w.last()
+        val layout = kbKeyLayout() ?: return
+        val k = layout[last.lowercaseChar()] ?: return
+        touchTrace.record(
+            (k.left + k.right) / 2f,
+            (k.top + k.bottom) / 2f
+        )
+    }
+
+    /**
+     * Snapshot of the current keyboard layout as a char→Key map. Used by
+     * the spatial scorer. Rebuilt each time because the layout changes
+     * with mode (letters/symbols/numpad).
+     */
+    private fun kbKeyLayout(): Map<Char, Key>? {
+        if (this::kb.isInitialized == false) return null
+        val rows = kb.rows
+        if (rows.isEmpty()) return null
+        val map = HashMap<Char, Key>(64)
+        for (row in rows) for (k in row) {
+            if (k.kind == KeyKind.CHAR && k.label.length == 1) {
+                map[k.label[0].lowercaseChar()] = k
+            }
+        }
+        return map
     }
 
     override fun onCursor(delta: Int) {
@@ -1116,23 +1158,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onCursorMove(dx: Int, dy: Int) {
         var i = 0
-        while (i < dx) {
-            sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT)
-            i += 1
-        }
-        while (i > dx) {
-            sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT)
-            i -= 1
-        }
+        while (i < dx) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT); i += 1 }
+        while (i > dx) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT); i -= 1 }
         var j = 0
-        while (j < dy) {
-            sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_DOWN)
-            j += 1
-        }
-        while (j > dy) {
-            sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_UP)
-            j -= 1
-        }
+        while (j < dy) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_DOWN); j += 1 }
+        while (j > dy) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_UP); j -= 1 }
         clearUndo()
         tailValid = false
     }
@@ -1207,6 +1237,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun space() {
         val ic = currentInputConnection ?: return
+        snapshotWordTouches()
         ic.beginBatchEdit()
         try {
             val originalLen = composing.length
@@ -1218,7 +1249,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
 
             val now = SystemClock.uptimeMillis()
-
             if (smartCorrectionOn && canCompose && doubleSpace &&
                 corrected == null && now - lastSpaceTime < 500
             ) {
@@ -1247,6 +1277,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun enter() {
         val ic = currentInputConnection ?: return
+        snapshotWordTouches()
         endWord()
         val opts = info?.imeOptions ?: 0
         val action = opts and EditorInfo.IME_MASK_ACTION
@@ -1265,18 +1296,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     /**
-     * Commit the current composed word. Autocorrect now runs on a worker
-     * thread — the un-corrected word is committed optimistically, and if
-     * a correction is found we replace it in place. This keeps the UI
-     * thread free during fast typing, matching Gboard's latency profile.
-     *
-     * Returns null immediately; corrections are applied asynchronously.
-     * Callers that need the corrected string synchronously (e.g. space's
-     * undo stack) should not depend on the return value.
+     * Commit the current composed word. Autocorrect runs on a worker
+     * thread — the un-corrected word is committed optimistically, then
+     * replaced in place if SymSpell finds a correction. The UI thread
+     * never blocks.
      */
     private fun endWord(sep: String? = null): String? {
         val ic = currentInputConnection
-        var corrected: String? = null
 
         if (composing.isNotEmpty()) {
             val w = composing.toString()
@@ -1294,9 +1320,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 w.drop(1).none { it.isUpperCase() }
 
             if (shouldCorrect) {
-                // Commit the composed word as-is right now, then run
-                // correction off-thread. If a correction is found, replace
-                // the committed text in place.
                 ic?.commitText(w, 1)
                 composing.clear()
                 val prev1 = lastWord()
@@ -1306,6 +1329,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     if (c != null && c != w) {
                         withContext(Dispatchers.Main) {
                             val ic2 = currentInputConnection ?: return@withContext
+                            // Guard: only replace if the committed text is
+                            // still the word we're correcting.
+                            val current = ic2.getTextBeforeCursor(w.length, 0)?.toString()
+                            if (current != w) return@withContext
                             ic2.beginBatchEdit()
                             try {
                                 ic2.deleteSurroundingText(w.length, 0)
@@ -1324,7 +1351,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         }
                     }
                 }
-                // Suppress the sync correction path below.
                 return null
             } else {
                 if (learnOn && incognito == false && canCompose) {
@@ -1336,7 +1362,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         } else {
             ic?.finishComposingText()
         }
-        return corrected
+        return null
     }
 
     private fun resetBigramContext() {
@@ -1362,10 +1388,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         var i = before.length - 1
         while (i >= 0) {
             val ch = before[i]
-            if (ch == ' ' || ch == '\n' || ch == '\t') {
-                i -= 1
-                continue
-            }
+            if (ch == ' ' || ch == '\n' || ch == '\t') { i -= 1; continue }
             if (ch == '.' || ch == '!' || ch == '?') return true
             return false
         }
@@ -1389,8 +1412,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.shiftState = shiftState
     }
 
-    // ------------------------------------------------------------------ suggestions
+    // ------------------------------------------------------------------ suggestions (cascade)
 
+    /**
+     * Suggestion pipeline as a cascade:
+     *   1. Prefix filter + unigram rank  → up to 3 candidates
+     *   2. Bigram re-rank                → keeps top 3
+     *   3. Spatial tiebreak              → only when 2+ candidates tie
+     * Each stage reduces the candidate set so the expensive stages
+     * only ever see a handful of words.
+     */
     private fun updateSuggestions() {
         if (this::slots.isInitialized == false) return
         suggestJob?.cancel()
@@ -1410,26 +1441,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
 
         if (typedWord.isEmpty()) {
-            val prev1: String? = if (composingActive) {
-                lastWord()
-            } else if (canCompose == false && suggestionsAllowed) {
-                previousWordFromField()
-            } else {
-                lastWord()
-            }
-            val next: List<String>
-            if (prev1 != null) {
-                next = dict.predictNext(null, prev1, 3)
-            } else {
-                next = emptyList()
-            }
-            val list: List<String>
-            if (next.isNotEmpty()) {
-                list = next
-            } else if (atSentenceEndBeforeCursor()) {
-                list = listOf("I", "The", "I'm")
-            } else {
-                list = emptyList()
+            val prev1: String? = if (composingActive) lastWord()
+                else if (canCompose == false && suggestionsAllowed) previousWordFromField()
+                else lastWord()
+            val next: List<String> = if (prev1 != null) {
+                dict.predictNext(null, prev1, 3)
+            } else emptyList()
+            val list: List<String> = when {
+                next.isNotEmpty() -> next
+                atSentenceEndBeforeCursor() -> listOf("I", "The", "I'm")
+                else -> emptyList()
             }
             setCandidates(list)
             return
@@ -1437,24 +1458,42 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         val emoji = if (emojiSuggest && composingActive) {
             EmojiKeywords.map[typedWord.lowercase()]
-        } else {
-            null
-        }
+        } else null
+
         val prefix = typedWord
+        val prev1 = lastWord()
+        val touches = if (composingActive) touchTrace.last(touchTrace.size()) else emptyList()
+        val layout = kbKeyLayout()
+
         suggestJob = scope.launch {
-            val list = LinkedHashSet<String>()
-            if (dict.contains(prefix) == false) list.add(prefix)
-            list.addAll(dict.suggestAsync(prefix, 3))
-            val words = list.take(3)
+            // Stage 1: prefix + unigram.
+            val stage1 = LinkedHashSet<String>()
+            if (dict.contains(prefix) == false) stage1.add(prefix)
+            stage1.addAll(dict.suggestAsync(prefix, 3))
+
+            // Stage 2: bigram re-rank.
+            val stage2 = if (prev1 != null) {
+                dict.rerankWithContext(null, prev1, stage1.toList())
+            } else stage1.toList()
+
+            // Stage 3: spatial tiebreak, only if two candidates look tied.
+            // "Tied" here means: same length, edit distance 1 from typed,
+            // and both survive prefix filtering. In practice we just check
+            // whether the top 2 candidates both start with the same letters.
+            val stage3 = if (stage2.size >= 2 && layout != null && touches.isNotEmpty()) {
+                val a = stage2[0]
+                val b = stage2[1]
+                if (a.length == b.length && a.take(2) == b.take(2)) {
+                    SpatialScorer.tiebreak(stage2, touches, layout)
+                } else stage2
+            } else stage2
+
+            val words = stage3.take(3)
             val final = if (emoji != null) words.take(2) + emoji else words
             setCandidates(final)
         }
     }
 
-    /**
-     * Per-slot crossfade. Slots whose text is unchanged do not animate.
-     * The primary (index 0) slot gets a subtle scale-fade to match Gboard.
-     */
     private fun setCandidates(list: List<String>) {
         if (list == candidates) return
         val old = candidates
@@ -1530,9 +1569,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 ic.commitText(w, 1)
             } else {
                 val typed = currentTypedWordFromField()
-                if (typed.isNotEmpty()) {
-                    ic.deleteSurroundingText(typed.length, 0)
-                }
+                if (typed.isNotEmpty()) ic.deleteSurroundingText(typed.length, 0)
                 ic.commitText(w, 1)
             }
             appendTail(w)
