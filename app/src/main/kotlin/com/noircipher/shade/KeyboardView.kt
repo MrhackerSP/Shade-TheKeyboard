@@ -21,6 +21,7 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import androidx.core.graphics.ColorUtils
 import java.util.ArrayDeque
 import kotlin.math.abs
@@ -121,6 +122,7 @@ class KeyboardView(context: Context) : View(context) {
     private var rowHeight = 0f
 
     private var pressProgress = 1f
+    private var pressScale = 1f
     private var pressAnimator: ValueAnimator? = null
 
     private var shiftTapProgress = 0f
@@ -411,9 +413,7 @@ class KeyboardView(context: Context) : View(context) {
         val clipR = clipBounds.right.toFloat()
         val clipB = clipBounds.bottom.toFloat()
 
-        // Gboard spec:
-        //   horizontal gap 5dp → gx = 2.5f (margin drawn on each side)
-        //   inner radius 8dp, outer corner radius 22dp on the bottom row
+        // Gboard spec: horizontal gap 5dp, inner radius 8dp, outer 22dp.
         val gx = dp(2.5f)
         val gy = dp(3f)
         val radius = dp(8f)
@@ -426,11 +426,19 @@ class KeyboardView(context: Context) : View(context) {
             if (k.right < clipL || k.left > clipR || k.bottom < clipT || k.top > clipB) continue
             val isPressed = k in pressedKeys
             val topShift = if (isPressed) pressDown else 0f
+
+            // Press compression: scale the pressed key to ~96% around its center.
+            val s = if (isPressed) pressScale else 1f
+            val kx = (k.left + k.right) / 2f
+            val ky = (k.top + k.bottom) / 2f
+            val hw = (k.right - k.left) / 2f * s
+            val hh = (k.bottom - k.top) / 2f * s
+
             rect.set(
-                k.left + gx,
-                k.top + gy + topShift,
-                k.right - gx,
-                k.bottom - gy + topShift
+                kx - hw + gx,
+                ky - hh + gy + topShift,
+                kx + hw - gx,
+                ky + hh - gy + topShift
             )
 
             val special = k.kind == KeyKind.ENTER || (k.code == Codes.SHIFT && shiftState == 2)
@@ -442,10 +450,10 @@ class KeyboardView(context: Context) : View(context) {
             if (keyBorders) {
                 shadowPaint.color = 0x18000000
                 rect.set(
-                    k.left + gx,
-                    k.top + gy + dp(0.5f),
-                    k.right - gx,
-                    k.bottom - gy + dp(0.5f)
+                    kx - hw + gx,
+                    ky - hh + gy + dp(0.5f),
+                    kx + hw - gx,
+                    ky + hh - gy + dp(0.5f)
                 )
                 if (k.outerCorner == KeyOuterCorner.NONE) {
                     c.drawRoundRect(rect, radius, radius, shadowPaint)
@@ -464,10 +472,10 @@ class KeyboardView(context: Context) : View(context) {
                     c.drawPath(path, shadowPaint)
                 }
                 rect.set(
-                    k.left + gx,
-                    k.top + gy + topShift,
-                    k.right - gx,
-                    k.bottom - gy + topShift
+                    kx - hw + gx,
+                    ky - hh + gy + topShift,
+                    kx + hw - gx,
+                    ky + hh - gy + topShift
                 )
             }
 
@@ -523,10 +531,6 @@ class KeyboardView(context: Context) : View(context) {
     /**
      * Draw a key whose outer bottom corner (left or right) is rounded with
      * [outerRadius] while the other three corners use the regular [radius].
-     *
-     * Path.addRoundRect radii order:
-     *   [topLeftX, topLeftY, topRightX, topRightY,
-     *    bottomRightX, bottomRightY, bottomLeftX, bottomLeftY]
      */
     private fun drawOuterRoundedKey(
         c: Canvas,
@@ -731,28 +735,91 @@ class KeyboardView(context: Context) : View(context) {
 
     // ------------------------------------------------------------------ preview / alt
 
+    /**
+     * Gboard-style teardrop key preview.
+     *
+     * Geometry per spec:
+     *   Width:  38-42dp (matches key width + a bit)
+     *   Height: 52-58dp (contains the enlarged character)
+     *   Top corners:    16dp (broad round curve for the letter)
+     *   Bottom corners: 6-8dp (tapers down toward the key surface)
+     *   Vertical offset: top of preview sits 20-28dp above the key's top edge
+     *   Character anchored in the upper third of the bubble
+     */
     private fun drawKeyPreview(c: Canvas, k: Key) {
         val label = display(k.label)
-        val baseDiameter = maxOf(k.right - k.left, k.bottom - k.top) * 1.45f
-        val diameter = baseDiameter * (0.65f + 0.35f * previewProgress)
-        val radius = diameter / 2f
-        val cx = k.centerX
-        var cy = k.top - dp(8f) - radius
-        if (cy - radius < dp(2f)) {
-            cy = k.bottom + dp(8f) + radius
-        }
-        val cl = cx.coerceIn(radius + dp(2f), width - radius - dp(2f))
-        val ct = cy.coerceIn(radius + dp(2f), height - radius - dp(2f))
+        val keyW = k.right - k.left
 
+        val baseW = min(keyW + dp(4f), dp(42f))
+        val baseH = dp(56f)
+
+        // Animate from 0.8 scale to 1.0 as it pops up.
+        val scale = 0.8f + 0.2f * previewProgress
+        val w = baseW * scale
+        val h = baseH * scale
+
+        val cx = k.centerX
+
+        // Bottom of the teardrop sits ~8dp above the key's top edge, and
+        // continues rising slightly during the pop for a "lift" feel.
+        val bottomY = k.top - dp(8f) - (1f - previewProgress) * dp(10f)
+        val topY = bottomY - h
+        val left = cx - w / 2f
+        val right = cx + w / 2f
+
+        // Clamp horizontally so the teardrop stays on screen.
+        val cxClamped = cx.coerceIn(dp(6f) + w / 2f, width - dp(6f) - w / 2f)
+        val dx = cxClamped - cx
+        val finalLeft = left + dx
+        val finalRight = right + dx
+        val finalTop = topY.coerceAtLeast(dp(4f))
+
+        // Radii array in Path.addRoundRect order:
+        //   [TLx, TLy, TRx, TRy, BRx, BRy, BLx, BLy]
+        val rTop = dp(16f) * scale
+        val rBot = dp(8f) * scale
+        val radii = floatArrayOf(
+            rTop, rTop,
+            rTop, rTop,
+            rBot, rBot,
+            rBot, rBot
+        )
+
+        // Shadow layer — 5dp elevation offset.
+        altRect.set(
+            finalLeft,
+            finalTop + dp(5f),
+            finalRight,
+            bottomY + dp(5f)
+        )
         previewShadow.color = 0x55000000
-        c.drawCircle(cl, ct + dp(2f), radius, previewShadow)
+        path.reset()
+        path.addRoundRect(altRect, radii, Path.Direction.CW)
+        c.drawPath(path, previewShadow)
+
+        // Bubble background.
+        altRect.set(finalLeft, finalTop, finalRight, bottomY)
         previewBg.color = kbTheme.popupBg
-        c.drawCircle(cl, ct, radius, previewBg)
-        previewHue.color = ColorUtils.setAlphaComponent(kbTheme.accent, 0x33)
-        c.drawCircle(cl, ct, radius * 0.82f, previewHue)
+        path.reset()
+        path.addRoundRect(altRect, radii, Path.Direction.CW)
+        c.drawPath(path, previewBg)
+
+        // Subtle accent tint over the bubble.
+        previewHue.color = ColorUtils.setAlphaComponent(kbTheme.accent, 0x22)
+        path.reset()
+        path.addRoundRect(altRect, radii, Path.Direction.CW)
+        c.drawPath(path, previewHue)
+
+        // Character anchored in the UPPER third of the bubble.
+        val charCenterY = finalTop + h / 3f
         previewText.color = kbTheme.text
-        previewText.textSize = min(radius * 1.1f, dp(34f))
-        c.drawText(label, cl, ct - (previewText.ascent() + previewText.descent()) / 2f, previewText)
+        previewText.textSize = min(h * 0.42f, dp(26f))
+        c.drawText(
+            label,
+            (finalLeft + finalRight) / 2f,
+            charCenterY - (previewText.ascent() + previewText.descent()) / 2f,
+            previewText
+        )
     }
 
     private fun showPreviewFor(k: Key) {
@@ -760,8 +827,8 @@ class KeyboardView(context: Context) : View(context) {
         previewKey = k
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 95L
-            interpolator = DecelerateInterpolator(2f)
+            duration = 55L
+            interpolator = OvershootInterpolator(1.1f)
             addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             start()
         }
@@ -771,7 +838,7 @@ class KeyboardView(context: Context) : View(context) {
         if (previewKey == null) return
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(previewProgress, 0f).apply {
-            duration = 70L
+            duration = 45L
             interpolator = DecelerateInterpolator()
             addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             addListener(object : android.animation.AnimatorListenerAdapter() {
@@ -992,20 +1059,26 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun startPressAnimation() {
         pressAnimator?.cancel()
-        pressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 55L
-            interpolator = DecelerateInterpolator(2f)
-            addUpdateListener { pressProgress = it.animatedValue as Float; invalidate() }
+        pressAnimator = ValueAnimator.ofFloat(1f, 0.96f).apply {
+            duration = 50L
+            interpolator = DecelerateInterpolator(1.5f)
+            addUpdateListener {
+                pressScale = it.animatedValue as Float
+                invalidate()
+            }
             start()
         }
     }
 
     private fun stopPressAnimation() {
         pressAnimator?.cancel()
-        pressAnimator = ValueAnimator.ofFloat(pressProgress, 0f).apply {
-            duration = 110L
-            interpolator = DecelerateInterpolator(1.5f)
-            addUpdateListener { pressProgress = it.animatedValue as Float; invalidate() }
+        pressAnimator = ValueAnimator.ofFloat(pressScale, 1f).apply {
+            duration = 80L
+            interpolator = DecelerateInterpolator(1.2f)
+            addUpdateListener {
+                pressScale = it.animatedValue as Float
+                invalidate()
+            }
             start()
         }
     }
