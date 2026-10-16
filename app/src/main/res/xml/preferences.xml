@@ -235,13 +235,43 @@
             android:key="sound"
             android:title="@string/pref_sound"
             app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="typing_burst"
+            android:title="@string/pref_typing_burst"
+            android:summary="@string/pref_typing_burst_sum"
+            app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="trackpad_mode"
+            android:title="@string/pref_trackpad"
+            android:summary="@string/pref_trackpad_sum"
+            app:iconSpaceReserved="false" />
         <SeekBarPreference
-            android:defaultValue="380"
+            android:defaultValue="300"
             android:key="longpress_delay"
             android:max="700"
             android:title="@string/pref_longpress"
             app:iconSpaceReserved="false"
             app:min="200"
+            app:showSeekBarValue="true" />
+        <SeekBarPreference
+            android:defaultValue="400"
+            android:key="repeat_delay"
+            android:max="800"
+            android:title="@string/pref_repeat_delay"
+            android:summary="@string/pref_repeat_delay_sum"
+            app:iconSpaceReserved="false"
+            app:min="200"
+            app:showSeekBarValue="true" />
+        <SeekBarPreference
+            android:defaultValue="50"
+            android:key="repeat_interval"
+            android:max="150"
+            android:title="@string/pref_repeat_interval"
+            android:summary="@string/pref_repeat_interval_sum"
+            app:iconSpaceReserved="false"
+            app:min="20"
             app:showSeekBarValue="true" />
     </PreferenceScreen>
     <PreferenceScreen
