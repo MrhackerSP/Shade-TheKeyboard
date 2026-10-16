@@ -2,26 +2,17 @@ package com.noircipher.shade
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.darkrockstudios.symspellkt.api.SpellChecker
-import com.darkrockstudios.symspellkt.api.loadUnigramTxtFile
-import com.darkrockstudios.symspellkt.common.DamerauLevenshteinDistance
-import com.darkrockstudios.symspellkt.common.Murmur3HashFunction
-import com.darkrockstudios.symspellkt.common.SpellCheckSettings
-import com.darkrockstudios.symspellkt.common.SuggestItem
-import com.darkrockstudios.symspellkt.common.Verbosity
-import com.darkrockstudios.symspellkt.impl.InMemoryDictionaryHolder
-import com.darkrockstudios.symspellkt.impl.SymSpell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Offline dictionaries backed by SymSpellKt (Symmetric Delete algorithm).
- * Dictionary is loaded directly from Norvig's plain-text frequency list
- * (count_1w.txt) bundled in assets.
+ * Simple in-memory dictionary. Loads Norvig's plain-text frequency list
+ * from assets. Temporarily does not depend on SymSpellKt; swap in a
+ * SymSpell-backed lookup once the API is confirmed.
  */
 class WordDictionary(private val ctx: Context) {
 
-    private var spellChecker: SpellChecker? = null
+    private val words: MutableMap<String, Long> = HashMap()
     private var loadedId: String? = null
 
     private val prefs: SharedPreferences = ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE)
@@ -31,39 +22,27 @@ class WordDictionary(private val ctx: Context) {
 
     init { reloadUser() }
 
-    /**
-     * Load Norvig's plain-text frequency dictionary into SymSpellKt.
-     * Called on a background dispatcher because loading is I/O-bound.
-     *
-     * Norvig's count_1w.txt format: "word frequency" per line (UTF-8).
-     * SymSpellKt's loadUnigramTxtFile expects exactly this format.
-     */
     suspend fun configure(localeId: String = "en") {
-        if (loadedId == localeId && spellChecker != null) return
+        if (loadedId == localeId) return
         loadedId = localeId
-
-        val settings = SpellCheckSettings(
-            maxEditDistance = 2.0,
-            prefixLength = 7,
-            countThreshold = 1
-        )
-
-        val holder = InMemoryDictionaryHolder(settings, Murmur3HashFunction())
-
-        try {
-            val text = ctx.assets.open("wordlists/${localeId}.txt")
-                .bufferedReader()
-                .use { it.readText() }
-            holder.loadUnigramTxtFile(text)
-        } catch (_: Exception) {
-            // Dictionary failed to load; spell checker will be unavailable.
+        withContext(Dispatchers.IO) {
+            try {
+                ctx.assets.open("wordlists/${localeId}.txt").bufferedReader().useLines { lines ->
+                    words.clear()
+                    for (line in lines) {
+                        val parts = line.trim().split(Regex("\\s+"), limit = 2)
+                        if (parts.size == 2) {
+                            val freq = parts[1].toLongOrNull() ?: continue
+                            words[parts[0].lowercase()] = freq
+                        } else if (parts.size == 1 && parts[0].isNotEmpty()) {
+                            words[parts[0].lowercase()] = 1L
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // No dictionary file
+            }
         }
-
-        spellChecker = SymSpell(
-            settings,
-            DamerauLevenshteinDistance(),
-            holder
-        )
     }
 
     fun reloadUser() {
@@ -79,15 +58,9 @@ class WordDictionary(private val ctx: Context) {
 
     fun contains(word: String): Boolean {
         val w = word.lowercase()
-        if (user.containsKey(w)) return true
-        val sc = spellChecker ?: return false
-        val suggestions = sc.lookup(w, Verbosity.Top, 0)
-        return suggestions.isNotEmpty() && suggestions[0].distance == 0
+        return user.containsKey(w) || words.containsKey(w)
     }
 
-    /**
-     * Learn a word with temporal decay and feed the bigram model.
-     */
     fun learn(word: String, prev2: String? = null, prev1: String? = null) {
         val w = word.lowercase()
         if (w.length < 2 || !w.all { it.isLetter() || it == '\'' }) return
@@ -98,66 +71,62 @@ class WordDictionary(private val ctx: Context) {
         bigramModel?.observe(prev2, prev1, w)
     }
 
-    /**
-     * Prefix completion. User-learned words are scored first, then SymSpell
-     * suggestions filtered by prefix.
-     */
     fun suggest(prefix: String, max: Int): List<String> {
         if (prefix.isEmpty()) return emptyList()
         val p = prefix.lowercase()
         val out = LinkedHashSet<String>(max * 2)
 
-        // 1. user-learned words matching the prefix, ranked by decayed score
         user.entries.asSequence()
             .filter { it.key.startsWith(p) }
             .sortedByDescending { it.value }
             .take(max)
             .forEach { out.add(it.key) }
 
-        // 2. SymSpell lookup with no edit distance (pure prefix / exact match)
-        val sc = spellChecker
-        if (sc != null && out.size < max) {
-            val suggestions = sc.lookup(p, Verbosity.All, 0)
-            for (s in suggestions) {
-                if (out.size >= max) break
-                if (s.item.startsWith(p)) out.add(s.item)
-            }
+        if (out.size < max) {
+            words.entries.asSequence()
+                .filter { it.key.startsWith(p) }
+                .sortedByDescending { it.value }
+                .take(max - out.size)
+                .forEach { out.add(it.key) }
         }
-
         return out.take(max).map { match(prefix, it) }
     }
 
-    /**
-     * Autocorrect a single word. SymSpellKt returns suggestions ordered by
-     * edit distance, then term frequency.
-     */
     fun correction(word: String): String? {
         val w = word.lowercase()
-        if (w.length < 3 || !w.all { it.isLetter() || it == '\'' }) return null
+        if (w.length < 3 || contains(w) || !w.all { it.isLetter() || it == '\'' }) return null
 
-        val sc = spellChecker ?: return null
-
-        val suggestions = sc.lookup(w, Verbosity.Closest, 1)
-        if (suggestions.isEmpty()) return null
-
-        val best: SuggestItem = suggestions[0]
-        if (best.distance == 0) return null
-
-        return match(word, best.item)
+        // Simple bounded edit-distance-1 scan. Replace with SymSpellKt when wired up.
+        var best: String? = null
+        var bestFreq = 0L
+        for ((cand, freq) in words) {
+            if (cand.length !in (w.length - 1)..(w.length + 1)) continue
+            if (cand.firstOrNull() != w.firstOrNull()) continue
+            if (within1(w, cand) && freq > bestFreq) {
+                best = cand
+                bestFreq = freq
+            }
+        }
+        return best?.let { match(word, it) }
     }
 
-    /**
-     * Compound correction: splits wrongly merged words and merges wrongly
-     * split ones using the bigram dictionary for context.
-     */
-    fun correctionCompound(input: String): String? {
-        val sc = spellChecker ?: return null
-        return try {
-            val result = sc.lookupCompound(input, 2)
-            result.joinToString(" ").takeIf { it.isNotEmpty() && it != input }
-        } catch (_: Exception) {
-            null
+    private fun within1(a: String, b: String): Boolean {
+        val la = a.length
+        val lb = b.length
+        if (a == b || kotlin.math.abs(la - lb) > 1) return false
+        if (la == lb) {
+            var i = 0
+            while (i < la && a[i] == b[i]) i++
+            if (i == la) return false
+            if (a.substring(i + 1) == b.substring(i + 1)) return true
+            return i + 1 < la && a[i] == b[i + 1] && a[i + 1] == b[i] &&
+                a.substring(i + 2) == b.substring(i + 2)
         }
+        val s = if (la < lb) a else b
+        val l = if (la < lb) b else a
+        var i = 0
+        while (i < s.length && s[i] == l[i]) i++
+        return s.substring(i) == l.substring(i + 1)
     }
 
     private fun match(typed: String, w: String): String {
