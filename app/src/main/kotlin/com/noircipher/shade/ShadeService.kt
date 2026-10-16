@@ -300,8 +300,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         autoShifted = false
         toolbarOpen = prefs.getBoolean("toolbar_open_default", false)
 
-        // Always reset mode for the current field. User-chosen numpad state
-        // does not carry over from a previous field.
         mode = Mode.LETTERS
 
         val type = editorInfo.inputType
@@ -419,9 +417,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         layoutName = prefs.getString("layout", "qwerty") ?: "qwerty"
         kb.trackpadEnabled = prefs.getBoolean("trackpad_mode", true)
         kb.typingBurstEnabled = prefs.getBoolean("typing_burst", false)
-        kb.longPressMs = prefs.getInt("longpress_delay", 300).toLong()
-        kb.repeatDelayMs = prefs.getInt("repeat_delay", 400).toLong()
-        kb.repeatIntervalMs = prefs.getInt("repeat_interval", 50).toLong()
+        // Gboard uses 300ms for long-press, 350ms for repeat start.
+        kb.longPressMs = 300L
+        kb.repeatDelayMs = 350L
+        kb.repeatIntervalMs = 40L
 
         val locale = prefs.getString("locale", "en") ?: "en"
         scope.launch(Dispatchers.Default) { dict.configure(locale) }
@@ -821,6 +820,44 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    override fun onDeleteWords(count: Int) {
+        val ic = currentInputConnection ?: return
+        if (count <= 0) return
+        // SwiftKey-style: delete `count` words plus the surrounding whitespace.
+        // We read backwards from the cursor, walking word boundaries.
+        val before = ic.getTextBeforeCursor(400, 0)?.toString() ?: return
+        if (before.isEmpty()) return
+
+        var deleted = 0
+        var i = before.length
+        // Skip trailing whitespace first
+        while (i > 0 && before[i - 1].isWhitespace()) i -= 1
+        // Then walk back over `count` words
+        while (i > 0 && deleted < count) {
+            // Skip non-word chars (already stripped punctuation boundaries)
+            // Walk back to the start of the current word
+            while (i > 0 && !before[i - 1].isWhitespace()) i -= 1
+            deleted += 1
+            // Skip whitespace before the word
+            while (i > 0 && before[i - 1].isWhitespace()) i -= 1
+        }
+        val charsToDelete = before.length - i
+        if (charsToDelete <= 0) return
+
+        ic.beginBatchEdit()
+        try {
+            ic.deleteSurroundingText(charsToDelete, 0)
+        } finally {
+            ic.endBatchEdit()
+        }
+        // Invalidate the tail cache since we removed text
+        tail.setLength(0)
+        tailValid = false
+        composing.clear()
+        clearUndo()
+        afterText()
+    }
+
     override fun onText(text: String) {
         val ic = currentInputConnection ?: return
 
@@ -830,6 +867,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             (text[0].isLetter() || (text[0] == '\'' && composing.isNotEmpty()))
 
         if (isWordChar) {
+            // Shift-once auto-release: flip state before commit so the key
+            // visual updates in the same frame as the letter appears.
+            if (shiftState == 1) {
+                shiftState = 0
+                autoShifted = false
+                kb.shiftState = 0
+            }
+
             val sentenceEnd = smartCorrectionOn && canCompose &&
                 text.length == 1 && text[0].isLowerCase() &&
                 composing.isEmpty() && atSentenceEndBeforeCursor()
@@ -912,7 +957,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         tailValid = false
     }
 
-    override fun onTrackpadEnter() {}
+    override fun onTrackpadEnter() {
+        // Two-stage cue: tick on entry, heavier haptic when the cursor moves.
+        kb.haptic = prefs.getBoolean("haptic", true)
+    }
+
     override fun onTrackpadExit() {
         updateShiftFromCaps()
         updateSuggestions()
