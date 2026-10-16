@@ -56,7 +56,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         "clip" to "📋", "emoji" to "😀", "numpad" to "123", "left" to "◀", "right" to "▶",
         "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste",
         "undo" to "Undo", "incognito" to "🕶", "onehand" to "1-hand",
-        "floating" to "⬚", "settings" to "⚙"
+        "settings" to "⚙"
     )
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -102,9 +102,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var bgBmp: Bitmap? = null
     private var bgStamp = -1L
 
-    private var floating: FloatingKeyboard? = null
-    private var floatingMode = false
-
     private val undoStack = ArrayDeque<UndoEntry>(10)
 
     private val tail = StringBuilder(16)
@@ -143,7 +140,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onDestroy() {
         try { cm.removePrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
-        if (floatingMode) disableFloating()
         dict.bigramModel?.save()
         suggestJob?.cancel()
         slotFadeAnimator?.cancel()
@@ -339,7 +335,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
-        if (floatingMode) disableFloating()
         suggestJob?.cancel()
         info = null
         candidates = emptyList()
@@ -644,67 +639,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    // ------------------------------------------------------------------ floating keyboard
-
-    private fun toggleFloatingMode() {
-        if (floatingMode) disableFloating() else enableFloating()
-    }
-
-    private fun enableFloating() {
-        if (floatingMode) return
-        val hasOverlayPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
-            android.provider.Settings.canDrawOverlays(this)
-        if (hasOverlayPermission == false) {
-            startActivity(
-                Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
-                    .setData(android.net.Uri.parse("package:$packageName"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-            return
-        }
-
-        val f = FloatingKeyboard(this)
-        f.listener = object : FloatingKeyboard.Listener {
-            override fun onBoundsChanged(x: Int, y: Int, width: Int, height: Int) {
-                prefs.edit()
-                    .putInt("float_x", x)
-                    .putInt("float_y", y)
-                    .putInt("float_w", width)
-                    .putInt("float_h", height)
-                    .apply()
-            }
-            override fun onFocusRestored() {}
-        }
-
-        (kb.parent as? ViewGroup)?.removeView(kb)
-
-        val metrics = resources.displayMetrics
-        val w = prefs.getInt("float_w", (metrics.widthPixels * 0.85f).toInt())
-        val h = prefs.getInt("float_h", dp(220f).toInt())
-        val x = prefs.getInt("float_x", (metrics.widthPixels - w) / 2)
-        val y = prefs.getInt("float_y", (metrics.heightPixels * 0.55f).toInt())
-
-        val shown = f.show(kb, w, h, x, y)
-        if (shown == false) {
-            root.addView(kb, 1, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
-            applyPrefs()
-            return
-        }
-        floating = f
-        floatingMode = true
-    }
-
-    private fun disableFloating() {
-        val f = floating ?: return
-        f.hide()
-        floating = null
-        floatingMode = false
-
-        (kb.parent as? ViewGroup)?.removeView(kb)
-        root.addView(kb, 1, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
-        applyPrefs()
-    }
-
     // ------------------------------------------------------------------ toolbar
 
     private fun onTool(id: String) {
@@ -735,7 +669,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     kb.relayout()
                 }
             }
-            "floating" -> toggleFloatingMode()
             "settings" -> startActivity(
                 Intent(this, SettingsActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -983,8 +916,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection ?: return
         ic.beginBatchEdit()
         try {
-            val originalLen = composing.length
-            val corrected = endWord(" ")
+            val originalLen = composing.length            val corrected = endWord(" ")
             if (corrected != null) {
                 popTail(originalLen)
                 appendTail(corrected)
