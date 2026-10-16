@@ -13,12 +13,14 @@ import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
+import android.os.Build
 import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -102,8 +104,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private val serviceJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Main.immediate + serviceJob)
     private var suggestJob: Job? = null
-
     private var slotFadeAnimator: ValueAnimator? = null
+
+    // Unified transition controller
+    private var modeTransitionAnimator: ValueAnimator? = null
+    private var currentTransition: String? = null
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
@@ -131,6 +136,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         dict.bigramModel?.save()
         suggestJob?.cancel()
         slotFadeAnimator?.cancel()
+        modeTransitionAnimator?.cancel()
         serviceJob.cancel()
 
         if (::kb.isInitialized) kb.release()
@@ -198,7 +204,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 endWord()
                 currentInputConnection?.commitText(text, 1)
             },
-            onBack = { showPanel(Panel.NONE) },
+            onBack = { transitionToPanel(Panel.NONE) },
             onDelete = { backspace() }
         )
         clipPanel = ClipboardPanel(
@@ -206,10 +212,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             onPaste = { text ->
                 endWord()
                 currentInputConnection?.commitText(text, 1)
-                showPanel(Panel.NONE)
+                transitionToPanel(Panel.NONE)
                 afterText()
             },
-            onBack = { showPanel(Panel.NONE) },
+            onBack = { transitionToPanel(Panel.NONE) },
             onDelete = { backspace() }
         )
         emoji.visibility = View.GONE
@@ -223,24 +229,58 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             addView(clipPanel, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
         }
 
-        // Insets handling: apply bottom padding and register the animation callback
+        // Insets: apply padding and register animation callbacks.
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val b = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
             v.setPadding(0, 0, 0, b)
             insets
         }
+        registerInsetAnimationCallback()
+
+        applyPrefs()
+        return root
+    }
+
+    /**
+     * Register the appropriate insets animation listener:
+     *  - API 37.2+: ViewTreeObserver.WindowInsetsAnimationListener runs the
+     *    animation on a dedicated thread, so the main thread isn't touched.
+     *  - Otherwise: WindowInsetsAnimationCompat.Callback on the root view.
+     */
+    private fun registerInsetAnimationCallback() {
+        if (Build.VERSION.SDK_INT >= 37 && hasWindowInsetsAnimationListener()) {
+            try {
+                root.viewTreeObserver.addOnWindowInsetsAnimationListener(
+                    object : ViewTreeObserver.OnWindowInsetsAnimationListener {
+                        override fun onPrepare(animation: android.view.WindowInsetsAnimation) {}
+                        override fun onProgress(
+                            insets: android.view.WindowInsets,
+                            runningAnimations: MutableList<android.view.WindowInsetsAnimation>
+                        ) {
+                            for (a in runningAnimations) {
+                                if (a.typeMask and android.view.WindowInsets.Type.ime() != 0) {
+                                    kb.translationY =
+                                        insets.getInsets(android.view.WindowInsets.Type.ime()).bottom.toFloat()
+                                }
+                            }
+                        }
+                        override fun onEnd(animation: android.view.WindowInsetsAnimation) {
+                            kb.translationY = 0f
+                        }
+                    }
+                )
+                return
+            } catch (_: Throwable) {
+                // Fall through to compat
+            }
+        }
+        // Compat fallback
         ViewCompat.setWindowInsetsAnimationCallback(root,
             object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
-                override fun onPrepare(animation: WindowInsetsAnimationCompat) {
-                    // Prepare
-                }
-
                 override fun onProgress(
                     insets: WindowInsetsCompat,
                     runningAnimations: MutableList<WindowInsetsAnimationCompat>
                 ): WindowInsetsCompat {
-                    // Sync the keyboard translation with the IME inset progress so
-                    // the slide-up matches the app content shrink.
                     for (anim in runningAnimations) {
                         if (anim.typeMask and WindowInsetsCompat.Type.ime() != 0) {
                             val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
@@ -251,18 +291,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 }
 
                 override fun onEnd(animation: WindowInsetsAnimationCompat) {
-                    val imeVisible = ViewCompat.getRootWindowInsets(root)
-                        ?.isVisible(WindowInsetsCompat.Type.ime()) == true
                     kb.translationY = 0f
-                    if (!imeVisible) {
-                        // Keyboard hidden: no action needed, we are detached by the system
-                    }
                 }
             }
         )
+    }
 
-        applyPrefs()
-        return root
+    private fun hasWindowInsetsAnimationListener(): Boolean = try {
+        ViewTreeObserver::class.java.getMethod(
+            "addOnWindowInsetsAnimationListener",
+            ViewTreeObserver.OnWindowInsetsAnimationListener::class.java
+        )
+        true
+    } catch (_: Throwable) {
+        false
     }
 
     override fun onStartInputView(editorInfo: EditorInfo, restarting: Boolean) {
@@ -300,7 +342,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             else -> Mode.LETTERS
         }
         setMode(m, animate = false)
-        showPanel(Panel.NONE)
+        transitionToPanel(Panel.NONE, animate = false)
 
         val action = editorInfo.imeOptions and EditorInfo.IME_MASK_ACTION
         val noEnterAction = (editorInfo.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
@@ -374,6 +416,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         incognito = prefs.getBoolean("incognito", false)
         layoutName = prefs.getString("layout", "qwerty") ?: "qwerty"
         kb.trackpadEnabled = prefs.getBoolean("trackpad_mode", true)
+        kb.typingBurstEnabled = prefs.getBoolean("typing_burst", false)
+
+        // Split delays
+        kb.longPressMs = prefs.getInt("longpress_delay", 300).toLong()
+        kb.repeatDelayMs = prefs.getInt("repeat_delay", 400).toLong()
+        kb.repeatIntervalMs = prefs.getInt("repeat_interval", 50).toLong()
 
         val locale = prefs.getString("locale", "en") ?: "en"
         scope.launch(Dispatchers.Default) {
@@ -404,7 +452,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.haptic = prefs.getBoolean("haptic", true)
         kb.sound = prefs.getBoolean("sound", false)
         kb.showPreview = prefs.getBoolean("popup_preview", true)
-        kb.longPressMs = prefs.getInt("longpress_delay", 380).toLong()
         kb.bgBitmap = bgBmp
         kb.spaceLabel = if (layoutName == "custom") "Custom" else layoutName.uppercase()
 
@@ -471,7 +518,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (!::strip.isInitialized) return
         val suggestionsActive = suggestionsOn && canCompose
         val showTools = toolbarOpen || !suggestionsActive
-        // Animated show/hide between slotRow and toolScroll
         val targetSlotAlpha = if (showTools) 0f else 1f
         val targetToolAlpha = if (showTools) 1f else 0f
         animateAlpha(slotRow, slotRow.alpha, targetSlotAlpha)
@@ -493,6 +539,44 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    // ------------------------------------------------------------------ unified transition controller
+
+    /**
+     * All visual state changes (mode, panel, resize) funnel through this method so that
+     * overlapping animations don't fight. Each transition cancels the previous one and
+     * choreographs a fade-out / state-swap / fade-in over 200ms total.
+     */
+    private fun runTransition(tag: String, apply: () -> Unit) {
+        if (currentTransition == tag) {
+            apply()
+            return
+        }
+        modeTransitionAnimator?.cancel()
+        currentTransition = tag
+        modeTransitionAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
+            duration = 80L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { root.alpha = it.animatedValue as Float }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    apply()
+                    modeTransitionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                        duration = 120L
+                        interpolator = DecelerateInterpolator()
+                        addUpdateListener { root.alpha = it.animatedValue as Float }
+                        addListener(object : AnimatorListenerAdapter() {
+                            override fun onAnimationEnd(animation: Animator) {
+                                currentTransition = null
+                            }
+                        })
+                        start()
+                    }
+                }
+            })
+            start()
+        }
+    }
+
     private fun setMode(m: Mode, animate: Boolean = true) {
         mode = m
         val rows = when (m) {
@@ -509,11 +593,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.relayout()
     }
 
-    private fun showPanel(p: Panel) {
+    private fun transitionToPanel(p: Panel, animate: Boolean = true) {
         if (!::emoji.isInitialized) return
         if (p != Panel.NONE) endWord()
+        if (animate && panel != p) {
+            runTransition("panel:${p.name}") { applyPanelState(p) }
+        } else {
+            applyPanelState(p)
+        }
+    }
+
+    private fun applyPanelState(p: Panel) {
         panel = p
-        // Fade panels in/out
         when (p) {
             Panel.NONE -> {
                 crossfadePanel(emoji, false)
@@ -535,20 +626,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         refreshStrip()
     }
 
-    private fun crossfadePanel(panel: View, show: Boolean) {
+    private fun crossfadePanel(v: View, show: Boolean) {
         val targetAlpha = if (show) 1f else 0f
-        if (panel.alpha == targetAlpha) {
-            panel.visibility = if (show) View.VISIBLE else View.GONE
+        if (v.alpha == targetAlpha) {
+            v.visibility = if (show) View.VISIBLE else View.GONE
             return
         }
-        panel.visibility = View.VISIBLE
-        ValueAnimator.ofFloat(panel.alpha, targetAlpha).apply {
+        v.visibility = View.VISIBLE
+        ValueAnimator.ofFloat(v.alpha, targetAlpha).apply {
             duration = 120L
             interpolator = DecelerateInterpolator()
-            addUpdateListener { panel.alpha = it.animatedValue as Float }
+            addUpdateListener { v.alpha = it.animatedValue as Float }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    if (!show) panel.visibility = View.GONE
+                    if (!show) v.visibility = View.GONE
                 }
             })
             start()
@@ -560,9 +651,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun onTool(id: String) {
         val ic = currentInputConnection
         when (id) {
-            "clip" -> showPanel(Panel.CLIP)
-            "emoji" -> showPanel(Panel.EMOJI)
-            "numpad" -> { endWord(); setMode(Mode.NUMPAD) }
+            "clip" -> transitionToPanel(Panel.CLIP)
+            "emoji" -> transitionToPanel(Panel.EMOJI)
+            "numpad" -> { endWord(); runTransition("mode:NUMPAD") { setMode(Mode.NUMPAD, animate = false) } }
             "left" -> onCursor(-1)
             "right" -> onCursor(1)
             "selectall" -> ic?.performContextMenuAction(android.R.id.selectAll)
@@ -580,10 +671,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     "off" -> "left"; "left" -> "right"; else -> "off"
                 }
                 prefs.edit().putString("one_handed", next).apply()
-                kb.oneHanded = when (next) {
-                    "left" -> 1; "right" -> 2; else -> 0
+                runTransition("onehand:$next") {
+                    kb.oneHanded = when (next) {
+                        "left" -> 1; "right" -> 2; else -> 0
+                    }
+                    kb.relayout()
                 }
-                kb.relayout()
             }
             "settings" -> startActivity(
                 Intent(this, SettingsActivity::class.java)
@@ -642,10 +735,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             Codes.DELETE -> backspace()
             Codes.ENTER -> enter()
             Codes.SPACE -> space()
-            Codes.SYMBOLS -> { endWord(); setMode(Mode.SYM1) }
-            Codes.SYMBOLS2 -> setMode(Mode.SYM2)
-            Codes.LETTERS -> { endWord(); setMode(Mode.LETTERS); updateShiftFromCaps() }
-            Codes.EMOJI -> showPanel(Panel.EMOJI)
+            Codes.SYMBOLS -> { endWord(); runTransition("mode:SYM1") { setMode(Mode.SYM1, animate = false) } }
+            Codes.SYMBOLS2 -> runTransition("mode:SYM2") { setMode(Mode.SYM2, animate = false) }
+            Codes.LETTERS -> {
+                endWord()
+                runTransition("mode:LETTERS") {
+                    setMode(Mode.LETTERS, animate = false)
+                    updateShiftFromCaps()
+                }
+            }
+            Codes.EMOJI -> transitionToPanel(Panel.EMOJI)
         }
     }
 
@@ -908,10 +1007,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    /**
-     * Update the slots with a short fade when the candidate list actually changes.
-     * If the list is identical, skip the animation to avoid flicker on every keystroke.
-     */
     private fun setCandidates(list: List<String>) {
         if (list == candidates) return
         candidates = list
