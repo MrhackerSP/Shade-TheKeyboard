@@ -200,7 +200,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             TextView(this).apply {
                 gravity = Gravity.CENTER
                 maxLines = 1
-                textSize = 17f
+                textSize = 19f
                 tag = i
                 setPadding(dp(6f).toInt(), 0, dp(6f).toInt(), 0)
                 setOnClickListener { pickSuggestion(it.tag as Int) }
@@ -210,7 +210,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             TextView(this).apply {
                 gravity = Gravity.CENTER
                 maxLines = 1
-                textSize = 17f
+                textSize = 19f
                 setPadding(dp(6f).toInt(), 0, dp(6f).toInt(), 0)
                 alpha = 0f
                 isClickable = false
@@ -276,7 +276,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(strip, LinearLayout.LayoutParams(MATCH, dp(44f).toInt()))
+            addView(strip, LinearLayout.LayoutParams(MATCH, dp(52f).toInt()))
             addView(kb, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
             addView(emoji, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
             addView(clipPanel, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
@@ -623,12 +623,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             .start()
     }
 
-    /**
-     * Swap which pane (suggestions vs toolbar) is active.
-     *
-     * Uses GONE rather than alpha-0 so the hidden pane is removed from touch
-     * dispatch entirely.
-     */
     private fun refreshStrip() {
         if (this::strip.isInitialized == false) return
         val suggestionsActive = suggestionsOn && suggestionsAllowed
