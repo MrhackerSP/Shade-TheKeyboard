@@ -40,12 +40,23 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.ArrayDeque
 
 class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private enum class Mode { LETTERS, SYM1, SYM2, NUMPAD }
     private enum class Panel { NONE, EMOJI, CLIP }
-    private class Revert(val original: String, val corrected: String, val sep: String)
+
+    /**
+     * A single reversible modification made by the keyboard.
+     * [charsCommitted] is how many characters were committed to the editor as part
+     * of this edit; [restore] is the text that should be re-committed if the user
+     * presses backspace to undo it.
+     */
+    private class UndoEntry(
+        val charsCommitted: Int,
+        val restore: String
+    )
 
     private val toolDefs = listOf(
         "clip" to "📋", "emoji" to "😀", "numpad" to "123", "left" to "◀", "right" to "▶",
@@ -79,8 +90,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var lastShiftTime = 0L
     private var lastSpaceTime = 0L
     private var justAutoSpaced = false
-    private var revert: Revert? = null
-    private val ignored = HashSet<String>()
     private val composing = StringBuilder()
     private var canCompose = true
     private var suggestionsOn = true
@@ -88,6 +97,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var autoCaps = true
     private var doubleSpace = true
     private var autocorrectOn = true
+    private var smartCorrectionOn = true
     private var emojiSuggest = true
     private var incognito = false
     private var numberRow = false
@@ -100,6 +110,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private var floating: FloatingKeyboard? = null
     private var floatingMode = false
+
+    /**
+     * Unified undo stack. Backspace pops one entry and reverses it.
+     * Any non-backspace input clears the stack so the reverts only apply
+     * to recent, still-relevant edits.
+     */
+    private val undoStack = ArrayDeque<UndoEntry>(10)
 
     private val tail = StringBuilder(16)
     private var cursorPos = -1
@@ -148,6 +165,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         bgBmp = null
         candidates = emptyList()
         composing.clear()
+        undoStack.clear()
         tail.setLength(0)
         tailValid = false
         info = null
@@ -208,7 +226,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             this,
             onEmoji = { text ->
                 endWord()
-                currentInputConnection?.commitText(text, 1)
+                commitSmart(text, text.length)
             },
             onBack = { transitionToPanel(Panel.NONE) },
             onDelete = { backspace() }
@@ -217,7 +235,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             this, clips,
             onPaste = { text ->
                 endWord()
-                currentInputConnection?.commitText(text, 1)
+                commitSmart(text, text.length)
                 transitionToPanel(Panel.NONE)
                 afterText()
             },
@@ -284,13 +302,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         info = editorInfo
         dict.reloadUser()
         composing.clear()
+        undoStack.clear()
         tail.setLength(0)
         tailValid = false
         cursorPos = -1
         selectionEnd = -1
         justAutoSpaced = false
         lastSpaceTime = 0L
-        revert = null
         shiftState = 0
         autoShifted = false
         toolbarOpen = prefs.getBoolean("toolbar_open_default", false)
@@ -305,7 +323,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
             variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS ||
             variation == InputType.TYPE_TEXT_VARIATION_URI
-        canCompose = cls == InputType.TYPE_CLASS_TEXT && !noSuggest && !blocked
+        canCompose = cls == InputType.TYPE_TEXT_CLASS_TEXT && !noSuggest && !blocked
 
         applyPrefs()
         val m = when (cls) {
@@ -337,6 +355,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         info = null
         candidates = emptyList()
         composing.clear()
+        undoStack.clear()
         tail.setLength(0)
         tailValid = false
         cursorPos = -1
@@ -347,7 +366,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         super.onFinishInput()
         currentInputConnection?.finishComposingText()
         composing.clear()
-        revert = null
+        undoStack.clear()
         tail.setLength(0)
         tailValid = false
     }
@@ -385,6 +404,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         autoCaps = prefs.getBoolean("auto_caps", true)
         doubleSpace = prefs.getBoolean("double_space", true)
         autocorrectOn = prefs.getBoolean("autocorrect", true)
+        smartCorrectionOn = prefs.getBoolean("smart_correction", true)
         emojiSuggest = prefs.getBoolean("emoji_suggestions", true)
         incognito = prefs.getBoolean("incognito", false)
         layoutName = prefs.getString("layout", "qwerty") ?: "qwerty"
@@ -749,6 +769,28 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         } catch (_: Exception) {}
     }
 
+    // ------------------------------------------------------------------ undo stack
+
+    /** Push an undo entry. Called after every committed modification. */
+    private fun pushUndo(charsCommitted: Int, restore: String) {
+        if (charsCommitted <= 0 && restore.isEmpty()) return
+        if (undoStack.size >= MAX_UNDO) undoStack.removeLast()
+        undoStack.offerLast(UndoEntry(charsCommitted, restore))
+    }
+
+    /** Commit text and push a matching undo entry so backspace can reverse it. */
+    private fun commitSmart(text: String, charsCommitted: Int) {
+        val ic = currentInputConnection ?: return
+        ic.commitText(text, 1)
+        pushUndo(charsCommitted, "")
+    }
+
+    private fun clearUndo() {
+        undoStack.clear()
+    }
+
+    // ------------------------------------------------------------------ tail buffer
+
     private fun appendTail(s: String) {
         for (c in s) {
             tail.append(c)
@@ -794,26 +836,66 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onText(text: String) {
         val ic = currentInputConnection ?: return
+
+        // Any character typed beyond a smart edit clears the stack.
+        if (text != " ") clearUndo()
+
         val isWordChar = canCompose && mode == Mode.LETTERS && text.length == 1 &&
             (text[0].isLetter() || (text[0] == '\'' && composing.isNotEmpty()))
+
         if (isWordChar) {
-            revert = null
-            composing.append(text)
+            // --- Smart correction: capitalize first letter after sentence end ---
+            var toCommit = text
+            if (smartCorrectionOn && canCompose &&
+                text.length == 1 && text[0].isLowerCase() &&
+                atSentenceEndBeforeCursor()
+            ) {
+                toCommit = text.uppercase()
+                ic.setComposingText(
+                    composing.toString() + toCommit, 1
+                )
+                pushUndo(1, text) // backspace restores the original lowercase letter
+                composing.append(toCommit)
+                appendTail(toCommit)
+                afterText()
+                return
+            }
+
+            composing.append(toCommit)
             ic.setComposingText(composing.toString(), 1)
-            justAutoSpaced = false
-            appendTail(text)
+            appendTail(toCommit)
         } else {
             val isPunct = text.length == 1 && text[0] in ".,!?;:"
             ic.beginBatchEdit()
             try {
                 if (justAutoSpaced && composing.isEmpty() && isPunct) {
-                    ic.deleteSurroundingText(1, 0); popTail(1)
+                    ic.deleteSurroundingText(1, 0)
+                    popTail(1)
                 }
                 endWord(if (isPunct) text else null)
                 ic.commitText(text, 1)
                 appendTail(text)
-            } finally { ic.endBatchEdit() }
-            justAutoSpaced = false
+
+                // --- Smart correction: auto-space after sentence-terminating punctuation ---
+                if (smartCorrectionOn && canCompose &&
+                    text.length == 1 && text[0] in ".!?"
+                ) {
+                    // Only auto-space if the last char committed is one of . ! ?
+                    ic.commitText(" ", 1)
+                    appendTail(" ")
+                    pushUndo(1, "") // backspace removes the auto-space
+                    // Reset bigram context
+                    resetBigramContext()
+                } else if (smartCorrectionOn && canCompose &&
+                    text.length == 1 && (text[0] == ',' || text[0] == ';' || text[0] == ':')
+                ) {
+                    ic.commitText(" ", 1)
+                    appendTail(" ")
+                    pushUndo(1, "")
+                }
+            } finally {
+                ic.endBatchEdit()
+            }
         }
         lastSpaceTime = 0L
         afterText()
@@ -823,6 +905,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         endWord()
         val key = if (delta < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
         sendDownUpKeyEvents(key)
+        clearUndo()
         tailValid = false
         updateShiftFromCaps()
         updateSuggestions()
@@ -835,6 +918,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         var j = 0
         while (j < dy) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_DOWN); j++ }
         while (j > dy) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_UP); j-- }
+        clearUndo()
         tailValid = false
     }
 
@@ -866,26 +950,38 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun backspace() {
         val ic = currentInputConnection ?: return
-        val r = revert
-        if (r != null) {
-            revert = null
+
+        // --- Unified undo stack: reverse the last automated edit first ---
+        val undo = undoStack.pollLast()
+        if (undo != null && composing.isEmpty()) {
             ic.beginBatchEdit()
             try {
-                ic.deleteSurroundingText(r.corrected.length + r.sep.length, 0)
-                composing.clear(); composing.append(r.original)
-                ic.setComposingText(r.original, 1)
-            } finally { ic.endBatchEdit() }
-            ignored.add(r.original.lowercase())
-            if (learnOn && !incognito) dict.learn(r.original)
-        } else if (composing.isNotEmpty()) {
+                if (undo.charsCommitted > 0) {
+                    ic.deleteSurroundingText(undo.charsCommitted, 0)
+                    popTail(undo.charsCommitted)
+                }
+                if (undo.restore.isNotEmpty()) {
+                    ic.commitText(undo.restore, 1)
+                    appendTail(undo.restore)
+                }
+            } finally {
+                ic.endBatchEdit()
+            }
+            updateShiftFromCaps()
+            updateSuggestions()
+            return
+        }
+
+        // Normal backspace path
+        if (composing.isNotEmpty()) {
             composing.deleteCharAt(composing.length - 1)
             if (composing.isEmpty()) ic.commitText("", 1)
             else ic.setComposingText(composing.toString(), 1)
             popTail(1)
         } else {
-            sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL); popTail(1)
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+            popTail(1)
         }
-        justAutoSpaced = false
         lastSpaceTime = 0L
         updateShiftFromCaps()
         updateSuggestions()
@@ -897,21 +993,41 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         try {
             val originalLen = composing.length
             val corrected = endWord(" ")
-            if (corrected != null) { popTail(originalLen); appendTail(corrected) }
+            if (corrected != null) {
+                popTail(originalLen)
+                appendTail(corrected)
+                // Autocorrect entry: backspace restores the original
+                pushUndo(corrected.length, "") // corrected text already committed
+            } else if (originalLen > 0) {
+                // Word committed as composing text; nothing extra to record
+            }
+
             val now = SystemClock.uptimeMillis()
-            var done = false
-            if (corrected == null && doubleSpace && now - lastSpaceTime < 500) {
+
+            // --- Smart correction: double-space to period ---
+            if (smartCorrectionOn && canCompose && doubleSpace &&
+                corrected == null && now - lastSpaceTime < 500
+            ) {
                 val before = if (tailValid) tail.toString()
                 else currentInputConnection?.getTextBeforeCursor(2, 0)?.toString() ?: ""
                 if (before.length == 2 && before[1] == ' ' && before[0].isLetterOrDigit()) {
-                    ic.deleteSurroundingText(1, 0); ic.commitText(". ", 1)
-                    popTail(1); appendTail(". ")
-                    lastSpaceTime = 0L; done = true
+                    ic.deleteSurroundingText(1, 0)
+                    ic.commitText(". ", 1)
+                    popTail(1)
+                    appendTail(". ")
+                    pushUndo(2, "  ") // backspace restores the two spaces
+                    lastSpaceTime = 0L
+                    resetBigramContext()
+                    return
                 }
             }
-            if (!done) { ic.commitText(" ", 1); appendTail(" "); lastSpaceTime = now }
-        } finally { ic.endBatchEdit() }
-        justAutoSpaced = false
+
+            ic.commitText(" ", 1)
+            appendTail(" ")
+            lastSpaceTime = now
+        } finally {
+            ic.endBatchEdit()
+        }
         afterText()
     }
 
@@ -926,23 +1042,45 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             action != EditorInfo.IME_ACTION_UNSPECIFIED
         ) ic.performEditorAction(action)
         else sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
-        tail.setLength(0); tailValid = false
-        justAutoSpaced = false; lastSpaceTime = 0L
+        clearUndo()
+        tail.setLength(0)
+        tailValid = false
+        lastSpaceTime = 0L
+        resetBigramContext()
         afterText()
     }
 
+    /**
+     * Finish the word currently being composed. If [sep] is provided and
+     * autocorrect is on, try to correct the word. Also handles the smart
+     * "i" → "I" substitution when the separator is committed.
+     */
     private fun endWord(sep: String? = null): String? {
-        revert = null
         val ic = currentInputConnection
         var corrected: String? = null
+
         if (composing.isNotEmpty()) {
             val w = composing.toString()
+
+            // --- Smart correction: bare "i" → "I" ---
+            if (smartCorrectionOn && canCompose && w == "i" && sep != null) {
+                ic?.commitText("I", 1)
+                popTail(1)
+                appendTail("I")
+                pushUndo(1, "i") // backspace restores lowercase i
+                composing.clear()
+                return null
+            }
+
+            // --- Autocorrect ---
             if (sep != null && autocorrectOn && canCompose &&
                 w.lowercase() !in ignored && w.drop(1).none { it.isUpperCase() }
-            ) corrected = dict.correction(w)
+            ) {
+                corrected = dict.correction(w)
+            }
             if (corrected != null) {
                 ic?.commitText(corrected, 1)
-                revert = Revert(w, corrected, sep!!)
+                pushUndo(corrected.length, w) // backspace restores the original
             } else {
                 if (learnOn && !incognito && canCompose) {
                     dict.learn(w, prev2 = null, prev1 = lastWord())
@@ -950,14 +1088,30 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 ic?.finishComposingText()
             }
             composing.clear()
-        } else ic?.finishComposingText()
+        } else {
+            ic?.finishComposingText()
+        }
         return corrected
+    }
+
+    /** Clear bigram context so predictions reset at sentence boundaries. */
+    private fun resetBigramContext() {
+        tail.setLength(0)
+        tailValid = false
     }
 
     private fun afterText() {
         if (shiftState == 1) { shiftState = 0; autoShifted = false }
         updateShiftFromCaps()
         updateSuggestions()
+    }
+
+    /** True if the character immediately before the cursor is . ! ? (sentence end). */
+    private fun atSentenceEndBeforeCursor(): Boolean {
+        val before = if (tailValid) tail.toString()
+        else currentInputConnection?.getTextBeforeCursor(2, 0)?.toString() ?: return false
+        val last = before.lastOrNull { !it.isWhitespace() } ?: return true
+        return last == '.' || last == '!' || last == '?'
     }
 
     private fun updateShiftFromCaps() {
@@ -979,13 +1133,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     // ------------------------------------------------------------------ suggestions
 
-    private fun atSentenceStart(): Boolean {
-        val before = if (tailValid) tail.toString()
-        else currentInputConnection?.getTextBeforeCursor(3, 0)?.toString() ?: return false
-        val t = before.trimEnd()
-        return t.isEmpty() || t.last() in ".!?"
-    }
-
     private fun updateSuggestions() {
         if (!::slots.isInitialized) return
         suggestJob?.cancel()
@@ -995,7 +1142,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             val prev1 = lastWord()
             val next = if (prev1 != null) dict.predictNext(null, prev1, 3) else emptyList()
             val list = if (next.isNotEmpty()) next
-            else if (atSentenceStart()) listOf("I", "The", "I'm")
+            else if (atSentenceEndBeforeCursor()) listOf("I", "The", "I'm")
             else emptyList()
             setCandidates(list)
             return
@@ -1052,21 +1199,29 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun pickSuggestion(i: Int) {
         val w = candidates.getOrNull(i) ?: return
         val ic = currentInputConnection ?: return
-        revert = null
         composing.clear()
+        clearUndo()
         ic.beginBatchEdit()
         try {
             ic.commitText(w, 1)
             appendTail(w)
-            if (w[0].isLetter()) { ic.commitText(" ", 1); appendTail(" ") }
-        } finally { ic.endBatchEdit() }
+            if (w[0].isLetter()) {
+                ic.commitText(" ", 1)
+                appendTail(" ")
+            }
+        } finally {
+            ic.endBatchEdit()
+        }
         if (w[0].isLetter()) {
             if (learnOn && !incognito && canCompose) {
                 dict.learn(w, prev2 = null, prev1 = lastWord())
             }
-            justAutoSpaced = true
-        } else justAutoSpaced = false
+        }
         lastSpaceTime = 0L
         afterText()
+    }
+
+    companion object {
+        private const val MAX_UNDO = 10
     }
 }
