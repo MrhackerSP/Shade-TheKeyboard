@@ -2,22 +2,21 @@ package com.noircipher.shade
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.darkrockstudios.symspellkt.api.SymSpell
-import com.darkrockstudios.symspellkt.common.SymSpellConfig
-import com.darkrockstudios.symspellkt.exception.SymSpellException
-import com.darkrockstudios.symspellkt.impl.SymSpellImpl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * In-memory dictionary with:
- *  - Prefix index for O(k) suggestions
- *  - SymSpellKt for O(1) fuzzy correction (deletion-index)
- *  - User-learned words with their own prefix index
+ * In-memory dictionary with a prefix index for O(k) suggestions and
+ * a prefix-bucket fuzzy scan for O(k) corrections.
  *
- * SymSpell handles misspelling lookups; the prefix index handles
- * prefix completion. They're separate fast paths and neither blocks
- * the other.
+ * The prefix index maps 1- and 2-character prefixes to words starting
+ * with them, sorted by frequency descending. Suggestions for a prefix
+ * `p` become `index[p.take(2)].filter { it.startsWith(p) }`, which is
+ * far cheaper than scanning the entire word set on every keystroke.
+ *
+ * Correction uses the same 2-char bucket as a filter, then checks edit
+ * distance 1 within that bucket. Fast enough for a 50k-word dictionary
+ * on mid-range devices.
  */
 class WordDictionary(private val ctx: Context) {
 
@@ -32,9 +31,6 @@ class WordDictionary(private val ctx: Context) {
     private val userPrefix2: MutableMap<String, MutableList<String>> = HashMap()
 
     var bigramModel: BigramModel? = null
-
-    /** SymSpell instance, built once after the dictionary loads. */
-    @Volatile private var symSpell: SymSpell? = null
 
     private val contractions: Map<String, String> = mapOf(
         "dont" to "don't", "cant" to "can't", "wont" to "won't",
@@ -73,36 +69,9 @@ class WordDictionary(private val ctx: Context) {
                 words.clear()
                 words.putAll(w)
                 rebuildPrefixIndex()
-                buildSymSpell()
             } catch (_: Exception) {
                 // No dictionary file
             }
-        }
-    }
-
-    /**
-     * Build the SymSpell deletion index over the loaded dictionary plus
-     * the user's learned words. Runs once per locale load.
-     */
-    private fun buildSymSpell() {
-        try {
-            val config = SymSpellConfig(
-                language = "en",
-                maxDictionaryEditDistance = 2,
-                prefixLength = 7,
-                countThreshold = 1
-            )
-            val ss = SymSpellImpl(config)
-            // Bulk-load dictionary terms. Frequency is used for tiebreaks.
-            val dictionary = words.map { (word, freq) ->
-                com.darkrockstudios.symspellkt.common.Suggestions(word, freq.toDouble())
-            }
-            ss.loadDictionary(dictionary)
-            symSpell = ss
-        } catch (_: SymSpellException) {
-            symSpell = null
-        } catch (_: Exception) {
-            symSpell = null
         }
     }
 
@@ -172,10 +141,6 @@ class WordDictionary(private val ctx: Context) {
         bigramModel?.observe(prev2, prev1, w)
     }
 
-    /**
-     * Prefix completion. Uses the 2-char index when possible; falls back
-     * to 1-char for very short input.
-     */
     fun suggest(prefix: String, max: Int): List<String> {
         if (prefix.isEmpty()) return emptyList()
         val p = prefix.lowercase()
@@ -205,35 +170,20 @@ class WordDictionary(private val ctx: Context) {
         return out.take(max).map { match(prefix, it) }
     }
 
-    /**
-     * Correction via SymSpell. Falls back to the old prefix-bucket scan
-     * if SymSpell isn't available (empty dictionary, or init failure).
-     */
     fun correction(word: String): String? {
         val w = word.lowercase()
 
         contractions[w]?.let { return match(word, it) }
+
         if (w.length < 3 || !w.all { it.isLetter() || it == '\'' }) return null
         if (contains(w)) return null
 
-        val ss = symSpell
-        if (ss != null) {
-            try {
-                val suggestions = ss.lookup(w, 2)
-                val best = suggestions.firstOrNull()?.term
-                if (best != null && best != w) return match(word, best)
-                return null
-            } catch (_: Exception) {
-                // Fall through to prefix-bucket scan.
-            }
-        }
-
-        // Fallback: prefix-bucket scan for edit distance 1.
         val candidates: Iterable<String> = if (w.length >= 2) {
             prefix2[w.substring(0, 2)] ?: emptyList()
         } else {
             words.keys
         }
+
         var best: String? = null
         var bestFreq = 0L
         for (cand in candidates) {
