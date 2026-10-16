@@ -33,6 +33,10 @@ import android.widget.TextView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.dynamicanimation.animation.DynamicAnimation
+import androidx.dynamicanimation.animation.FloatValueHolder
+import androidx.dynamicanimation.animation.SpringAnimation
+import androidx.dynamicanimation.animation.SpringForce
 import androidx.preference.PreferenceManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +44,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.ArrayDeque
 
@@ -69,8 +74,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private lateinit var root: LinearLayout
     private lateinit var strip: LinearLayout
     private lateinit var toggle: TextView
+    private lateinit var slotFrame: FrameLayout
     private lateinit var slotRow: LinearLayout
+    private lateinit var slotOldRow: LinearLayout
     private lateinit var slots: List<TextView>
+    private lateinit var slotOlds: List<TextView>
     private lateinit var toolScroll: HorizontalScrollView
     private lateinit var toolRow: LinearLayout
     private lateinit var kb: KeyboardView
@@ -118,10 +126,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private val serviceJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Main.immediate + serviceJob)
     private var suggestJob: Job? = null
-    private var slotFadeAnimator: ValueAnimator? = null
-
-    private var panelTransitionAnimator: ValueAnimator? = null
-    private var currentTransition: String? = null
+    private var correctionJob: Job? = null
+    private var slotAnimator: ValueAnimator? = null
+    private var panelSpringX: SpringAnimation? = null
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
@@ -148,8 +155,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         try { cm.removePrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
         dict.bigramModel?.save()
         suggestJob?.cancel()
-        slotFadeAnimator?.cancel()
-        panelTransitionAnimator?.cancel()
+        correctionJob?.cancel()
+        slotAnimator?.cancel()
+        panelSpringX?.cancel()
         serviceJob.cancel()
 
         if (this::kb.isInitialized) kb.release()
@@ -172,6 +180,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun buildInputView(): View {
         kb = KeyboardView(this).also { it.listener = this }
+        // Cache the static keyboard as a GPU layer. Only pressed keys get
+        // re-rasterized each frame. Real 120fps win on high-refresh panels.
+        kb.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         toggle = TextView(this).apply {
             gravity = Gravity.CENTER
@@ -182,6 +193,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 refreshStrip()
             }
         }
+
+        // Two layers per slot: the "old" layer holds the previous word and
+        // fades out; the "new" layer holds the incoming word and fades in.
+        // Only slots whose text changed animate.
         slots = List(3) { i ->
             TextView(this).apply {
                 gravity = Gravity.CENTER
@@ -192,10 +207,32 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 setOnClickListener { pickSuggestion(it.tag as Int) }
             }
         }
+        slotOlds = List(3) {
+            TextView(this).apply {
+                gravity = Gravity.CENTER
+                maxLines = 1
+                textSize = 17f
+                setPadding(dp(6f).toInt(), 0, dp(6f).toInt(), 0)
+                alpha = 0f
+                isClickable = false
+                isFocusable = false
+            }
+        }
         slotRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             for (tv in slots) addView(tv, LinearLayout.LayoutParams(0, MATCH, 1f))
         }
+        slotOldRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            isClickable = false
+            isFocusable = false
+            for (tv in slotOlds) addView(tv, LinearLayout.LayoutParams(0, MATCH, 1f))
+        }
+        slotFrame = FrameLayout(this).apply {
+            addView(slotOldRow, FrameLayout.LayoutParams(MATCH, MATCH))
+            addView(slotRow, FrameLayout.LayoutParams(MATCH, MATCH))
+        }
+
         toolRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -205,7 +242,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             addView(toolRow, FrameLayout.LayoutParams(WRAP, MATCH))
         }
         val frame = FrameLayout(this).apply {
-            addView(slotRow, FrameLayout.LayoutParams(MATCH, MATCH))
+            addView(slotFrame, FrameLayout.LayoutParams(MATCH, MATCH))
             addView(toolScroll, FrameLayout.LayoutParams(MATCH, MATCH))
         }
         strip = LinearLayout(this).apply {
@@ -376,6 +413,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
         suggestJob?.cancel()
+        correctionJob?.cancel()
         info = null
         candidates = emptyList()
         composing.clear()
@@ -489,6 +527,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         root.setBackgroundColor(kbTheme.bg)
         toggle.setTextColor(kbTheme.hint)
         for (tv in slots) tv.setTextColor(kbTheme.text)
+        for (tv in slotOlds) tv.setTextColor(kbTheme.text)
         rebuildToolbar()
         refreshStrip()
         root.post { applyOneHandedToStrip() }
@@ -570,27 +609,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             .start()
     }
 
-    /**
-     * Swap which pane (suggestions vs toolbar) is active.
-     *
-     * Uses GONE rather than alpha-0 so the hidden pane is removed from touch
-     * dispatch entirely. Previously it stayed VISIBLE with alpha 0, letting
-     * the hidden toolbar keys silently intercept taps intended for the
-     * suggestion strip underneath.
-     */
     private fun refreshStrip() {
         if (this::strip.isInitialized == false) return
         val suggestionsActive = suggestionsOn && suggestionsAllowed
         val showTools = toolbarOpen || (suggestionsActive == false)
 
-        slotRow.visibility = if (showTools) View.GONE else View.VISIBLE
+        slotFrame.visibility = if (showTools) View.GONE else View.VISIBLE
         toolScroll.visibility = if (showTools) View.VISIBLE else View.GONE
 
-        // Fade the freshly-shown pane in. The hidden pane is GONE, so it
-        // cannot receive touches.
-        slotRow.alpha = if (showTools) 0f else 0f
-        toolScroll.alpha = if (showTools) 0f else 0f
-        val target = if (showTools) toolScroll else slotRow
+        slotFrame.alpha = 0f
+        toolScroll.alpha = 0f
+        val target = if (showTools) toolScroll else slotFrame
         target.animate()
             .alpha(1f)
             .setDuration(140L)
@@ -602,11 +631,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         strip.visibility = if (panel == Panel.NONE) View.VISIBLE else View.GONE
     }
 
-    /**
-     * Shrink and align the suggestion strip to match the keyboard's
-     * one-handed position. Called whenever `kb.oneHanded` changes or on
-     * layout / rotation.
-     */
     private fun applyOneHandedToStrip() {
         if (this::strip.isInitialized == false) return
         val w = root.width.toFloat()
@@ -661,87 +685,78 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return if (this::kb.isInitialized && kb.width > 0) kb.width / 10f else dp(24f)
     }
 
-    // ------------------------------------------------------------------ panel transitions
+    // ------------------------------------------------------------------ panel transitions (spring)
 
-    private fun runPanelTransition(tag: String, apply: () -> Unit) {
-        if (currentTransition == tag) { apply(); return }
-        panelTransitionAnimator?.cancel()
-        currentTransition = tag
-        panelTransitionAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
-            duration = 80L
-            interpolator = DecelerateInterpolator()
-            addUpdateListener { root.alpha = it.animatedValue as Float }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    apply()
-                    panelTransitionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-                        duration = 120L
-                        interpolator = DecelerateInterpolator()
-                        addUpdateListener { root.alpha = it.animatedValue as Float }
-                        addListener(object : AnimatorListenerAdapter() {
-                            override fun onAnimationEnd(animation: Animator) {
-                                currentTransition = null
-                            }
-                        })
-                        start()
-                    }
-                }
-            })
-            start()
-        }
-    }
-
+    /**
+     * Gboard-style panel transition. The outgoing panel slides left and
+     * fades out while the incoming panel slides in from the right, using
+     * a non-bouncy spring for a settled, physical feel.
+     */
     private fun transitionToPanel(p: Panel, animate: Boolean = true) {
         if (this::emoji.isInitialized == false) return
         if (p != Panel.NONE) endWord()
-        if (animate && panel != p) {
-            runPanelTransition("panel:${p.name}") { applyPanelState(p) }
-        } else {
-            applyPanelState(p)
-        }
-    }
+        if (panel == p) return
 
-    private fun applyPanelState(p: Panel) {
+        val outgoing = when (panel) {
+            Panel.EMOJI -> emoji
+            Panel.CLIP -> clipPanel
+            Panel.NONE -> null
+        }
+        val incoming = when (p) {
+            Panel.EMOJI -> emoji
+            Panel.CLIP -> clipPanel
+            Panel.NONE -> null
+        }
+
         panel = p
-        when (p) {
-            Panel.NONE -> {
-                crossfadePanel(emoji, false)
-                crossfadePanel(clipPanel, false)
-                kb.visibility = View.VISIBLE
-            }
-            Panel.EMOJI -> {
-                kb.visibility = View.GONE
-                crossfadePanel(clipPanel, false)
-                crossfadePanel(emoji, true)
-            }
-            Panel.CLIP -> {
-                kb.visibility = View.GONE
-                crossfadePanel(emoji, false)
-                crossfadePanel(clipPanel, true)
-                clipPanel.refresh()
-            }
-        }
-        refreshStrip()
-    }
 
-    private fun crossfadePanel(v: View, show: Boolean) {
-        val targetAlpha = if (show) 1f else 0f
-        if (v.alpha == targetAlpha) {
-            v.visibility = if (show) View.VISIBLE else View.GONE
+        if (!animate) {
+            outgoing?.visibility = View.GONE
+            incoming?.visibility = View.GONE
+            kb.visibility = if (p == Panel.NONE) View.VISIBLE else View.GONE
+            refreshStrip()
             return
         }
-        v.visibility = View.VISIBLE
-        ValueAnimator.ofFloat(v.alpha, targetAlpha).apply {
-            duration = 120L
-            interpolator = DecelerateInterpolator()
-            addUpdateListener { v.alpha = it.animatedValue as Float }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    if (show == false) v.visibility = View.GONE
+
+        val w = root.width.toFloat().coerceAtLeast(1f)
+        val slideDist = w * 0.15f
+
+        // Incoming slides in from the right.
+        incoming?.let { v ->
+            v.visibility = View.VISIBLE
+            v.translationX = slideDist
+            v.alpha = 0f
+            val spring = SpringAnimation(v, DynamicAnimation.TRANSLATION_X, 0f).apply {
+                spring = SpringForce(0f).apply {
+                    dampingRatio = SpringForce.DAMPING_RATIO_NO_BOUNCY
+                    stiffness = SpringForce.STIFFNESS_MEDIUM
                 }
-            })
-            start()
+            }
+            spring.start()
+            v.animate().alpha(1f).setDuration(180L).start()
         }
+
+        // Outgoing slides left and fades out.
+        outgoing?.let { v ->
+            val spring = SpringAnimation(v, DynamicAnimation.TRANSLATION_X, -slideDist).apply {
+                spring = SpringForce(-slideDist).apply {
+                    dampingRatio = SpringForce.DAMPING_RATIO_NO_BOUNCY
+                    stiffness = SpringForce.STIFFNESS_MEDIUM
+                }
+            }
+            spring.start()
+            v.animate().alpha(0f).setDuration(180L)
+                .withEndAction {
+                    v.visibility = View.GONE
+                    v.translationX = 0f
+                    v.alpha = 1f
+                }
+                .start()
+        }
+
+        kb.visibility = if (p == Panel.NONE) View.VISIBLE else View.GONE
+        if (p == Panel.CLIP) clipPanel.refresh()
+        refreshStrip()
     }
 
     // ------------------------------------------------------------------ toolbar
@@ -781,10 +796,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         updateSuggestions()
     }
 
-    /**
-     * Cycle the one-handed side: off → left → right → off.
-     * The keyboard slides and shrinks over 200ms; the strip follows.
-     */
     private fun cycleOneHanded() {
         val next = when (prefs.getString("one_handed", "off")) {
             "off" -> "left"
@@ -797,10 +808,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         applyOneHandedToStrip()
     }
 
-    /**
-     * Gboard-style one-handed menu, triggered by long-pressing Enter.
-     * Lets the user pick Left / Right / Off directly instead of cycling.
-     */
     private fun showOneHandedMenu() {
         val popup = PopupMenu(this, toggle)
         popup.menu.add(0, 1, 0, "One-handed: Left")
@@ -1257,6 +1264,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         afterText()
     }
 
+    /**
+     * Commit the current composed word. Autocorrect now runs on a worker
+     * thread — the un-corrected word is committed optimistically, and if
+     * a correction is found we replace it in place. This keeps the UI
+     * thread free during fast typing, matching Gboard's latency profile.
+     *
+     * Returns null immediately; corrections are applied asynchronously.
+     * Callers that need the corrected string synchronously (e.g. space's
+     * undo stack) should not depend on the return value.
+     */
     private fun endWord(sep: String? = null): String? {
         val ic = currentInputConnection
         var corrected: String? = null
@@ -1273,21 +1290,49 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 return null
             }
 
-            if (sep != null && autocorrectOn && canCompose &&
+            val shouldCorrect = sep != null && autocorrectOn && canCompose &&
                 w.drop(1).none { it.isUpperCase() }
-            ) {
-                corrected = dict.correction(w)
-            }
-            if (corrected != null) {
-                ic?.commitText(corrected, 1)
-                pushUndo(corrected.length, w)
+
+            if (shouldCorrect) {
+                // Commit the composed word as-is right now, then run
+                // correction off-thread. If a correction is found, replace
+                // the committed text in place.
+                ic?.commitText(w, 1)
+                composing.clear()
+                val prev1 = lastWord()
+                correctionJob?.cancel()
+                correctionJob = scope.launch {
+                    val c = dict.correctionAsync(w)
+                    if (c != null && c != w) {
+                        withContext(Dispatchers.Main) {
+                            val ic2 = currentInputConnection ?: return@withContext
+                            ic2.beginBatchEdit()
+                            try {
+                                ic2.deleteSurroundingText(w.length, 0)
+                                ic2.commitText(c, 1)
+                            } finally {
+                                ic2.endBatchEdit()
+                            }
+                            pushUndo(c.length, w)
+                            appendTail(c)
+                            updateShiftFromCaps()
+                            updateSuggestions()
+                        }
+                    } else {
+                        if (learnOn && incognito == false && canCompose) {
+                            dict.learn(w, prev2 = null, prev1 = prev1)
+                        }
+                    }
+                }
+                // Suppress the sync correction path below.
+                return null
             } else {
                 if (learnOn && incognito == false && canCompose) {
                     dict.learn(w, prev2 = null, prev1 = lastWord())
                 }
-                ic?.finishComposingText()
+                ic?.commitText(w, 1)
+                composing.clear()
             }
-            composing.clear()
         } else {
             ic?.finishComposingText()
         }
@@ -1406,30 +1451,59 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    /**
+     * Per-slot crossfade. Slots whose text is unchanged do not animate.
+     * The primary (index 0) slot gets a subtle scale-fade to match Gboard.
+     */
     private fun setCandidates(list: List<String>) {
         if (list == candidates) return
+        val old = candidates
         candidates = list
-        slotFadeAnimator?.cancel()
-        renderSlots()
-        slotFadeAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 180L
+        slotAnimator?.cancel()
+
+        var anyChanged = false
+        for (i in 0 until 3) {
+            val newWord = list.getOrNull(i) ?: ""
+            val oldWord = old.getOrNull(i) ?: ""
+            if (newWord == oldWord) continue
+            anyChanged = true
+
+            slotOlds[i].text = oldWord
+            slotOlds[i].alpha = 1f
+            slotOlds[i].visibility = if (oldWord.isEmpty()) View.GONE else View.VISIBLE
+
+            slots[i].text = newWord
+            slots[i].alpha = 0f
+            slots[i].scaleX = if (i == 0) 0.95f else 1f
+            slots[i].scaleY = if (i == 0) 0.95f else 1f
+            slots[i].setTypeface(null, if (i == 0) Typeface.BOLD else Typeface.NORMAL)
+        }
+        if (!anyChanged) return
+
+        slotAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 140L
             interpolator = DecelerateInterpolator(1.6f)
             addUpdateListener {
                 val t = it.animatedValue as Float
-                val alpha = 0.55f + 0.45f * t
-                val dy = (1f - t) * dp(3f)
-                slotRow.alpha = alpha
-                slotRow.translationY = dy
-                slots.forEachIndexed { i, tv ->
-                    val slotT = ((t - i * 0.08f) / (1f - i * 0.08f)).coerceIn(0f, 1f)
-                    tv.alpha = 0.55f + 0.45f * slotT
+                for (i in 0 until 3) {
+                    slotOlds[i].alpha = 1f - t
+                    slots[i].alpha = t
+                    if (i == 0) {
+                        val s = 0.95f + 0.05f * t
+                        slots[i].scaleX = s
+                        slots[i].scaleY = s
+                    }
                 }
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    slotRow.alpha = 1f
-                    slotRow.translationY = 0f
-                    for (tv in slots) tv.alpha = 1f
+                    for (i in 0 until 3) {
+                        slotOlds[i].alpha = 0f
+                        slotOlds[i].visibility = View.GONE
+                        slots[i].alpha = 1f
+                        slots[i].scaleX = 1f
+                        slots[i].scaleY = 1f
+                    }
                 }
             })
             start()
@@ -1438,9 +1512,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun renderSlots() {
         if (this::slots.isInitialized == false) return
-        slots.forEachIndexed { i, tv ->
-            tv.text = candidates.getOrNull(i) ?: ""
-            tv.setTypeface(null, if (i == 0) Typeface.BOLD else Typeface.NORMAL)
+        for (i in 0 until 3) {
+            val w = candidates.getOrNull(i) ?: ""
+            slots[i].text = w
+            slots[i].setTypeface(null, if (i == 0) Typeface.BOLD else Typeface.NORMAL)
         }
     }
 
