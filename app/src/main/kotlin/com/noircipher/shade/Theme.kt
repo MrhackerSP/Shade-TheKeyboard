@@ -22,19 +22,44 @@ class KbTheme(
 
 object Themes {
     val LIGHT = KbTheme(
-        bg = 0xFFE9ECF1.toInt(), key = 0xFFFFFFFF.toInt(), keyFn = 0xFFCDD2DA.toInt(),
-        pressed = 0xFFB7C3DA.toInt(), text = 0xFF1B1B1F.toInt(), hint = 0xFF6B6F76.toInt(),
-        accent = 0xFF3B6FD4.toInt(), accentText = 0xFFFFFFFF.toInt(), popupBg = 0xFFFFFFFF.toInt()
+        bg = 0xFFE9ECF1.toInt(),
+        key = 0xFFFFFFFF.toInt(),
+        keyFn = 0xFFCDD2DA.toInt(),
+        pressed = 0xFFB7C3DA.toInt(),
+        text = 0xFF1B1B1F.toInt(),
+        hint = 0xFF6B6F76.toInt(),
+        accent = 0xFF3B6FD4.toInt(),
+        accentText = 0xFFFFFFFF.toInt(),
+        popupBg = 0xFFFFFFFF.toInt()
     )
+
+    /**
+     * Dark theme tuned to match Gboard's contrast on a modern Pixel:
+     * keys are noticeably lighter than the keyboard background so they
+     * read as distinct surfaces, matching the reference screenshot.
+     */
     val DARK = KbTheme(
-        bg = 0xFF1E1F22.toInt(), key = 0xFF3A3C41.toInt(), keyFn = 0xFF2B2D31.toInt(),
-        pressed = 0xFF565962.toInt(), text = 0xFFE8EAED.toInt(), hint = 0xFF9AA0A6.toInt(),
-        accent = 0xFF8AB4F8.toInt(), accentText = 0xFF0B1B3A.toInt(), popupBg = 0xFF45474D.toInt()
+        bg = 0xFF1C1C1E.toInt(),
+        key = 0xFF3C3C40.toInt(),
+        keyFn = 0xFF2C2C2E.toInt(),
+        pressed = 0xFF5A5A60.toInt(),
+        text = 0xFFFFFFFF.toInt(),
+        hint = 0xFF8E8E93.toInt(),
+        accent = 0xFF8AB4F8.toInt(),
+        accentText = 0xFF0B1B3A.toInt(),
+        popupBg = 0xFF48484A.toInt()
     )
+
     val AMOLED = KbTheme(
-        bg = 0xFF000000.toInt(), key = 0xFF1C1C1E.toInt(), keyFn = 0xFF111112.toInt(),
-        pressed = 0xFF3A3A3F.toInt(), text = 0xFFEDEDED.toInt(), hint = 0xFF8E9096.toInt(),
-        accent = 0xFF8AB4F8.toInt(), accentText = 0xFF0B1B3A.toInt(), popupBg = 0xFF2A2A2D.toInt()
+        bg = 0xFF000000.toInt(),
+        key = 0xFF1C1C1E.toInt(),
+        keyFn = 0xFF111112.toInt(),
+        pressed = 0xFF3A3A3F.toInt(),
+        text = 0xFFEDEDED.toInt(),
+        hint = 0xFF8E9096.toInt(),
+        accent = 0xFF8AB4F8.toInt(),
+        accentText = 0xFF0B1B3A.toInt(),
+        popupBg = 0xFF2A2A2D.toInt()
     )
 
     fun isNight(ctx: Context): Boolean =
