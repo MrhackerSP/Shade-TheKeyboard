@@ -10,7 +10,6 @@ import androidx.preference.EditTextPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
-import androidx.preference.PreferenceManager
 import androidx.preference.PreferenceScreen
 import java.io.File
 import java.io.FileOutputStream
@@ -34,7 +33,9 @@ class SettingsActivity : AppCompatActivity(),
         pref: PreferenceScreen
     ): Boolean {
         val f = SettingsFragment().apply {
-            arguments = Bundle().apply { putString(PreferenceFragmentCompat.ARG_PREFERENCE_ROOT, pref.key) }
+            arguments = Bundle().apply {
+                putString(PreferenceFragmentCompat.ARG_PREFERENCE_ROOT, pref.key)
+            }
         }
         supportFragmentManager.beginTransaction()
             .replace(R.id.settings_container, f)
@@ -45,47 +46,71 @@ class SettingsActivity : AppCompatActivity(),
 
     class SettingsFragment : PreferenceFragmentCompat() {
 
-        private val importDict = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) importDictionary(uri)
-        }
-        private val pickBg = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        private val pickBg = registerForActivityResult(
+            ActivityResultContracts.OpenDocument()
+        ) { uri ->
             if (uri != null) saveBackground(uri)
         }
         private val exportBackup = registerForActivityResult(
             ActivityResultContracts.CreateDocument("application/json")
         ) { uri ->
-            if (uri != null) toast(if (Backup.export(requireContext(), uri)) R.string.backup_done else R.string.backup_failed)
+            if (uri != null) {
+                toast(
+                    if (Backup.export(requireContext(), uri)) R.string.backup_done
+                    else R.string.backup_failed
+                )
+            }
         }
-        private val importBackup = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) toast(if (Backup.import(requireContext(), uri)) R.string.restore_done else R.string.backup_failed)
+        private val importBackup = registerForActivityResult(
+            ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            if (uri != null) {
+                toast(
+                    if (Backup.import(requireContext(), uri)) R.string.restore_done
+                    else R.string.backup_failed
+                )
+            }
         }
 
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.preferences, rootKey)
             val ctx = requireContext()
-            refreshDictPref()
+            refreshLanguagePref()
 
-            click("clear_learned") { confirm(R.string.pref_clear_confirm) { WordDictionary.clearLearned(ctx) } }
-            click("clear_clipboard") { ClipboardStore(ctx).clearAll(); toast(R.string.done_toast) }
-            click("import_dictionary") { importDict.launch(arrayOf("*/*")) }
-            click("delete_dictionary") { showDeleteDictionary() }
+            click("clear_learned") {
+                confirm(R.string.pref_clear_confirm) {
+                    WordDictionary.clearLearned(ctx)
+                }
+            }
+            click("clear_clipboard") {
+                ClipboardStore(ctx).clearAll()
+                toast(R.string.done_toast)
+            }
             click("bg_pick") { pickBg.launch(arrayOf("image/*")) }
-            click("bg_clear") { File(ctx.filesDir, "bg.jpg").delete(); toast(R.string.done_toast) }
+            click("bg_clear") {
+                File(ctx.filesDir, "bg.jpg").delete()
+                toast(R.string.done_toast)
+            }
             click("backup_export") { exportBackup.launch("shade-backup.json") }
             click("backup_import") { importBackup.launch(arrayOf("*/*")) }
 
-            findPreference<EditTextPreference>("custom_layout")?.setOnBindEditTextListener {
-                it.setSingleLine(false)
-                it.minLines = 5
-                it.setHorizontallyScrolling(false)
-                it.hint = "q w e r t y u i o p\na|àá s d f g h j k l\nz x c v b n m"
-            }
-            findPreference<EditTextPreference>("custom_layout")?.setOnPreferenceChangeListener { _, v ->
-                if (Layouts.parseCustom(v?.toString() ?: "") == null) toast(R.string.layout_invalid)
-                true
-            }
+            findPreference<EditTextPreference>("custom_layout")
+                ?.setOnBindEditTextListener {
+                    it.setSingleLine(false)
+                    it.minLines = 5
+                    it.setHorizontallyScrolling(false)
+                    it.hint = "q w e r t y u i o p\na|àá s d f g h j k l\nz x c v b n m"
+                }
+            findPreference<EditTextPreference>("custom_layout")
+                ?.setOnPreferenceChangeListener { _, v ->
+                    if (Layouts.parseCustom(v?.toString() ?: "") == null) {
+                        toast(R.string.layout_invalid)
+                    }
+                    true
+                }
             for (k in listOf("color_bg", "color_key", "color_keyfn", "color_text", "color_accent")) {
-                findPreference<EditTextPreference>(k)?.setOnBindEditTextListener { it.hint = "#RRGGBB" }
+                findPreference<EditTextPreference>(k)
+                    ?.setOnBindEditTextListener { it.hint = "#RRGGBB" }
             }
         }
 
@@ -96,10 +121,14 @@ class SettingsActivity : AppCompatActivity(),
         }
 
         private fun click(key: String, action: () -> Unit) {
-            findPreference<Preference>(key)?.setOnPreferenceClickListener { action(); true }
+            findPreference<Preference>(key)?.setOnPreferenceClickListener {
+                action()
+                true
+            }
         }
 
-        private fun toast(res: Int) = Toast.makeText(requireContext(), res, Toast.LENGTH_SHORT).show()
+        private fun toast(res: Int) =
+            Toast.makeText(requireContext(), res, Toast.LENGTH_SHORT).show()
 
         private fun confirm(msg: Int, ok: () -> Unit) {
             AlertDialog.Builder(requireContext())
@@ -109,52 +138,38 @@ class SettingsActivity : AppCompatActivity(),
                 .show()
         }
 
-        private fun refreshDictPref() {
-            val pref = findPreference<MultiSelectListPreference>("dictionaries") ?: return
-            val ids = mutableListOf("en", "es", "de", "fr")
-            val names = mutableListOf("English", "Español", "Deutsch", "Français")
-            for (n in WordDictionary.listImported(requireContext())) {
-                ids.add("file:$n")
-                names.add(n)
+        /**
+         * Populate the language multi-select from bundled assets.
+         * Only locales present in assets/wordlists/ are listed.
+         */
+        private fun refreshLanguagePref() {
+            val pref = findPreference<MultiSelectListPreference>("active_languages") ?: return
+            val ctx = requireContext()
+            val available = try {
+                ctx.assets.list("wordlists")
+                    ?.filter { it.endsWith(".txt") }
+                    ?.map { it.removeSuffix(".txt") }
+                    ?.sorted()
+                    ?: emptyList()
+            } catch (_: Exception) {
+                emptyList()
             }
+            if (available.isEmpty()) return
+
+            val names = available.map { localeName(it) }
             pref.entries = names.toTypedArray()
-            pref.entryValues = ids.toTypedArray()
+            pref.entryValues = available.toTypedArray()
         }
 
-        private fun importDictionary(uri: Uri) {
-            val ctx = requireContext()
-            val name = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "dictionary"
-            val id = WordDictionary.importFile(ctx, uri, name)
-            if (id == null) {
-                toast(R.string.dict_import_failed)
-                return
-            }
-            val p = PreferenceManager.getDefaultSharedPreferences(ctx)
-            val set = (p.getStringSet("dictionaries", setOf("en")) ?: setOf("en")).toMutableSet()
-            set.add(id)
-            p.edit().putStringSet("dictionaries", set).apply()
-            findPreference<MultiSelectListPreference>("dictionaries")?.values = set
-            refreshDictPref()
-            toast(R.string.dict_imported)
-        }
-
-        private fun showDeleteDictionary() {
-            val ctx = requireContext()
-            val names = WordDictionary.listImported(ctx)
-            if (names.isEmpty()) { toast(R.string.dict_none); return }
-            AlertDialog.Builder(ctx)
-                .setTitle(R.string.pref_delete_dict)
-                .setItems(names.toTypedArray()) { _, which ->
-                    val n = names[which]
-                    WordDictionary.deleteImported(ctx, n)
-                    val p = PreferenceManager.getDefaultSharedPreferences(ctx)
-                    val set = (p.getStringSet("dictionaries", setOf("en")) ?: setOf("en")).toMutableSet()
-                    set.remove("file:$n")
-                    p.edit().putStringSet("dictionaries", set).apply()
-                    findPreference<MultiSelectListPreference>("dictionaries")?.values = set
-                    refreshDictPref()
-                }
-                .show()
+        private fun localeName(code: String): String = when (code) {
+            "en" -> "English"
+            "de" -> "Deutsch"
+            "fr" -> "Français"
+            "es" -> "Español"
+            "it" -> "Italiano"
+            "pt" -> "Português"
+            "ru" -> "Русский"
+            else -> code.uppercase()
         }
 
         private fun saveBackground(uri: Uri) {
