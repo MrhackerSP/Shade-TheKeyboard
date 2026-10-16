@@ -60,8 +60,8 @@ class KeyboardView(context: Context) : View(context) {
     var showHints = true
 
     var longPressMs = 300L
-    var repeatDelayMs = 400L
-    var repeatIntervalMs = 50L
+    var repeatDelayMs = 350L
+    var repeatIntervalMs = 40L
 
     var typingBurstEnabled = false
 
@@ -76,11 +76,9 @@ class KeyboardView(context: Context) : View(context) {
     private var trackpadLastSentY = 0f
     private val trackpadStep = 22f
 
-    // SwiftKey-style backspace slide-to-delete state
     private var deleteSlideActive = false
     private var deleteSlideStartX = 0f
     private var deleteSlideWordCount = 0
-    private var deleteSlideDeleteRunnable: Runnable? = null
 
     private var splitProgress = if (splitKeyboard) 1f else 0f
     private var splitAnimator: ValueAnimator? = null
@@ -438,7 +436,6 @@ class KeyboardView(context: Context) : View(context) {
             }
             drawContent(c, k, combinedAlpha)
 
-            // Draw the delete word-count badge while sliding
             if (k.code == Codes.DELETE && deleteSlideActive && deleteSlideWordCount > 0) {
                 drawDeleteSlideBadge(c, k)
             }
@@ -453,15 +450,14 @@ class KeyboardView(context: Context) : View(context) {
     private fun drawDeleteSlideBadge(c: Canvas, k: Key) {
         val cx = k.centerX
         val cy = k.centerY - dp(6f)
-        val text = deleteSlideWordCount.toString()
+        val badge = deleteSlideWordCount.toString()
         val r = dp(9f)
+        val badgeY = cy - r - dp(12f)
         fill.color = kbTheme.accent
-        c.drawCircle(cx, cy - r - dp(12f), r, fill)
+        c.drawCircle(cx, badgeY, r, fill)
         textPaint.color = kbTheme.accentText
         textPaint.textSize = dp(11f)
-        textPaint.typeface = android.graphics.Typeface.DEFAULT_BOLD
-        c.drawText(text, cx, cy - r - dp(12f) - (textPaint.ascent() + textPaint.descent()) / 2f, textPaint)
-        textPaint.typeface = android.graphics.Typeface.DEFAULT
+        c.drawText(badge, cx, badgeY - (textPaint.ascent() + textPaint.descent()) / 2f, textPaint)
     }
 
     private fun drawOuterRoundedKey(
@@ -981,8 +977,6 @@ class KeyboardView(context: Context) : View(context) {
             animateShiftTap()
         }
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
-            // Do not fire delete on down. Wait to see if the user slides left
-            // (SwiftKey-style word deletion) or taps (single character).
             return
         }
         val longable = k.kind == KeyKind.SPACE ||
@@ -1021,8 +1015,6 @@ class KeyboardView(context: Context) : View(context) {
             return
         }
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
-            // SwiftKey-style slide-to-delete. Each 40dp of leftward travel
-            // selects one more word. Rightward travel deselects.
             val dx = x - p.downX
             if (!deleteSlideActive && dx < -dp(20f)) {
                 deleteSlideActive = true
@@ -1066,7 +1058,6 @@ class KeyboardView(context: Context) : View(context) {
         val k = p.key
         if (k != null && k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             if (deleteSlideActive) {
-                // Commit the multi-word deletion
                 if (!cancel && deleteSlideWordCount > 0) {
                     listener?.onDeleteWords(deleteSlideWordCount)
                 }
@@ -1074,7 +1065,6 @@ class KeyboardView(context: Context) : View(context) {
                 deleteSlideWordCount = 0
                 invalidate(k)
             } else if (!cancel && !p.consumed) {
-                // A simple tap on delete: single character
                 listener?.onKey(Codes.DELETE)
             }
         } else if (altShown) {
@@ -1114,9 +1104,6 @@ class KeyboardView(context: Context) : View(context) {
         p.longRunnable = null
         hapticHeavy()
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
-            // Long-press delete falls through to SwiftKey behavior: the
-            // system will handle repeat, but we don't fire anything here
-            // because the slide gesture takes over.
             p.consumed = true
             return
         }
@@ -1214,7 +1201,6 @@ class KeyboardView(context: Context) : View(context) {
         trailAnimator?.cancel()
         splitAnimator?.cancel()
         shiftTapAnimator?.cancel()
-        deleteSlideDeleteRunnable?.let { handler.removeCallbacks(it) }
         val n = pointers.size()
         for (i in 0 until n) {
             val p = pointers.valueAt(i)
@@ -1241,7 +1227,6 @@ class KeyboardView(context: Context) : View(context) {
         trailAnimator?.cancel()
         splitAnimator?.cancel()
         shiftTapAnimator?.cancel()
-        deleteSlideDeleteRunnable?.let { handler.removeCallbacks(it) }
         pointers.clear()
         pointerPool.clear()
         previewKey = null
