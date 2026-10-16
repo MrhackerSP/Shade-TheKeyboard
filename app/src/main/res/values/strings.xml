@@ -33,7 +33,7 @@
     <string name="scr_colors">Custom colors</string>
     <string name="scr_colors_sum">Pick your own colors (use theme “Custom”)</string>
     <string name="scr_typing">Text correction</string>
-    <string name="scr_typing_sum">Suggestions, autocorrect, learning, incognito</string>
+    <string name="scr_typing_sum">Suggestions, autocorrect, smart correction, learning, incognito</string>
     <string name="scr_toolbar">Toolbar &amp; clipboard</string>
     <string name="scr_toolbar_sum">Toolbar keys and clipboard history</string>
     <string name="scr_feedback">Feedback</string>
@@ -81,7 +81,9 @@
     <string name="pref_suggestions">Word suggestions</string>
     <string name="pref_suggestions_sum">Offline suggestions while you type</string>
     <string name="pref_autocorrect">Autocorrect</string>
-    <string name="pref_autocorrect_sum">Fix single-letter typos when you press space. Backspace right after undoes it.</string>
+    <string name="pref_autocorrect_sum">Fix typos in words when you press space. Backspace right after undoes it.</string>
+    <string name="pref_smart_correction">Smart correction</string>
+    <string name="pref_smart_correction_sum">Auto-space after punctuation, capitalize new sentences, fix “i” to “I”, and double-space for period</string>
     <string name="pref_emoji_sugg">Emoji suggestions</string>
     <string name="pref_emoji_sugg_sum">Suggest an emoji for words like “love” or “pizza”</string>
     <string name="pref_learn">Learn new words</string>
