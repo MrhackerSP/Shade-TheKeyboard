@@ -7,13 +7,12 @@ import com.darkrockstudios.symspellkt.api.loadUnigramTxtFile
 import com.darkrockstudios.symspellkt.common.DamerauLevenshteinDistance
 import com.darkrockstudios.symspellkt.common.Murmur3HashFunction
 import com.darkrockstudios.symspellkt.common.SpellCheckSettings
-import com.darkrockstudios.symspellkt.common.Suggestion
+import com.darkrockstudios.symspellkt.common.SuggestItem
 import com.darkrockstudios.symspellkt.common.Verbosity
 import com.darkrockstudios.symspellkt.impl.InMemoryDictionaryHolder
 import com.darkrockstudios.symspellkt.impl.SymSpell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
  * Offline dictionaries backed by SymSpellKt (Symmetric Delete algorithm).
@@ -44,8 +43,7 @@ class WordDictionary(private val ctx: Context) {
         loadedId = localeId
 
         val settings = SpellCheckSettings(
-            maxEditDistance = 2,
-            maxDictionaryEditDistance = 2,
+            maxEditDistance = 2.0,
             prefixLength = 7,
             countThreshold = 1
         )
@@ -53,10 +51,10 @@ class WordDictionary(private val ctx: Context) {
         val holder = InMemoryDictionaryHolder(settings, Murmur3HashFunction())
 
         try {
-            // Load Norvig's plain-text dictionary directly from assets.
-            // The extension is suspend and reads "word frequency" lines.
-            val bytes = ctx.assets.open("wordlists/${localeId}.txt").use { it.readBytes() }
-            holder.loadUnigramTxtFile(bytes)
+            val text = ctx.assets.open("wordlists/${localeId}.txt")
+                .bufferedReader()
+                .use { it.readText() }
+            holder.loadUnigramTxtFile(text)
         } catch (_: Exception) {
             // Dictionary failed to load; spell checker will be unavailable.
         }
@@ -122,7 +120,7 @@ class WordDictionary(private val ctx: Context) {
             val suggestions = sc.lookup(p, Verbosity.All, 0)
             for (s in suggestions) {
                 if (out.size >= max) break
-                if (s.term.startsWith(p)) out.add(s.term)
+                if (s.item.startsWith(p)) out.add(s.item)
             }
         }
 
@@ -142,10 +140,10 @@ class WordDictionary(private val ctx: Context) {
         val suggestions = sc.lookup(w, Verbosity.Closest, 1)
         if (suggestions.isEmpty()) return null
 
-        val best: Suggestion = suggestions[0]
+        val best: SuggestItem = suggestions[0]
         if (best.distance == 0) return null
 
-        return match(word, best.term)
+        return match(word, best.item)
     }
 
     /**
@@ -156,7 +154,7 @@ class WordDictionary(private val ctx: Context) {
         val sc = spellChecker ?: return null
         return try {
             val result = sc.lookupCompound(input, 2)
-            result.term.takeIf { it.isNotEmpty() && it != input }
+            result.joinToString(" ").takeIf { it.isNotEmpty() && it != input }
         } catch (_: Exception) {
             null
         }
@@ -192,17 +190,8 @@ class WordDictionary(private val ctx: Context) {
     companion object {
         private const val DECAY = 0.99f
 
-        fun dictDir(ctx: Context): File = File(ctx.filesDir, "dicts").apply { mkdirs() }
-
         fun clearLearned(ctx: Context) {
             ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE).edit().clear().apply()
-        }
-
-        fun listImported(ctx: Context): List<String> =
-            dictDir(ctx).listFiles()?.map { it.name }?.sorted() ?: emptyList()
-
-        fun deleteImported(ctx: Context, name: String) {
-            File(dictDir(ctx), name).delete()
         }
     }
 }
