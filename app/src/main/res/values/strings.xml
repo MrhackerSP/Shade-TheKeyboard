@@ -115,10 +115,6 @@
     <string name="pref_repeat_interval">Key repeat interval</string>
     <string name="pref_repeat_interval_sum">Interval between backspace repeats (ms)</string>
 
-    <!-- Floating keyboard -->
-    <string name="pref_floating">Floating keyboard</string>
-    <string name="pref_floating_sum">Draggable, resizable keyboard window. Requires overlay permission.</string>
-
     <!-- Backup -->
     <string name="pref_backup_export">Back up</string>
     <string name="pref_backup_sum">Saves settings and learned words to a file you choose</string>
@@ -211,7 +207,6 @@
         <item>Undo</item>
         <item>Incognito</item>
         <item>One-handed</item>
-        <item>Floating</item>
         <item>Settings</item>
     </string-array>
     <string-array name="tool_values">
@@ -227,7 +222,6 @@
         <item>undo</item>
         <item>incognito</item>
         <item>onehand</item>
-        <item>floating</item>
         <item>settings</item>
     </string-array>
 </resources>
