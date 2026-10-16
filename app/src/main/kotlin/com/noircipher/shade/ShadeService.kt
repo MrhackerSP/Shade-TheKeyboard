@@ -18,10 +18,12 @@ import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
@@ -106,7 +108,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var suggestJob: Job? = null
     private var slotFadeAnimator: ValueAnimator? = null
 
-    // Unified transition controller
     private var modeTransitionAnimator: ValueAnimator? = null
     private var currentTransition: String? = null
 
@@ -162,6 +163,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             textSize = 22f
             setOnClickListener {
                 toolbarOpen = !toolbarOpen
+                animateToggle()
                 refreshStrip()
             }
         }
@@ -229,7 +231,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             addView(clipPanel, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
         }
 
-        // Insets: apply padding and register animation callbacks.
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val b = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
             v.setPadding(0, 0, 0, b)
@@ -241,12 +242,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return root
     }
 
-    /**
-     * Register the appropriate insets animation listener:
-     *  - API 37.2+: ViewTreeObserver.WindowInsetsAnimationListener runs the
-     *    animation on a dedicated thread, so the main thread isn't touched.
-     *  - Otherwise: WindowInsetsAnimationCompat.Callback on the root view.
-     */
     private fun registerInsetAnimationCallback() {
         if (Build.VERSION.SDK_INT >= 37 && hasWindowInsetsAnimationListener()) {
             try {
@@ -270,11 +265,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     }
                 )
                 return
-            } catch (_: Throwable) {
-                // Fall through to compat
-            }
+            } catch (_: Throwable) {}
         }
-        // Compat fallback
         ViewCompat.setWindowInsetsAnimationCallback(root,
             object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
                 override fun onProgress(
@@ -289,7 +281,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     }
                     return insets
                 }
-
                 override fun onEnd(animation: WindowInsetsAnimationCompat) {
                     kb.translationY = 0f
                 }
@@ -303,9 +294,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             ViewTreeObserver.OnWindowInsetsAnimationListener::class.java
         )
         true
-    } catch (_: Throwable) {
-        false
-    }
+    } catch (_: Throwable) { false }
 
     override fun onStartInputView(editorInfo: EditorInfo, restarting: Boolean) {
         super.onStartInputView(editorInfo, restarting)
@@ -417,16 +406,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         layoutName = prefs.getString("layout", "qwerty") ?: "qwerty"
         kb.trackpadEnabled = prefs.getBoolean("trackpad_mode", true)
         kb.typingBurstEnabled = prefs.getBoolean("typing_burst", false)
-
-        // Split delays
         kb.longPressMs = prefs.getInt("longpress_delay", 300).toLong()
         kb.repeatDelayMs = prefs.getInt("repeat_delay", 400).toLong()
         kb.repeatIntervalMs = prefs.getInt("repeat_interval", 50).toLong()
 
         val locale = prefs.getString("locale", "en") ?: "en"
-        scope.launch(Dispatchers.Default) {
-            dict.configure(locale)
-        }
+        scope.launch(Dispatchers.Default) { dict.configure(locale) }
 
         val keyH = prefs.getInt("key_height", 50)
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -442,11 +427,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.kbTheme = kbTheme
         kb.contentHeightPx = contentH
         kb.oneHanded = when (prefs.getString("one_handed", "off")) {
-            "left" -> 1
-            "right" -> 2
-            else -> 0
+            "left" -> 1; "right" -> 2; else -> 0
         }
-        kb.splitKeyboard = split
+        kb.setSplitAnimated(split)
         kb.keyBorders = prefs.getBoolean("key_borders", true)
         kb.showHints = prefs.getBoolean("show_hints", true)
         kb.haptic = prefs.getBoolean("haptic", true)
@@ -472,11 +455,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun loadBackground() {
         val f = File(filesDir, "bg.jpg")
-        if (!f.exists()) {
-            bgBmp = null
-            bgStamp = -1L
-            return
-        }
+        if (!f.exists()) { bgBmp = null; bgStamp = -1L; return }
         if (f.lastModified() == bgStamp && bgBmp != null) return
         try {
             val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -486,11 +465,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             val o2 = BitmapFactory.Options().apply { inSampleSize = sample }
             bgBmp = BitmapFactory.decodeFile(f.path, o2)
             bgStamp = f.lastModified()
-        } catch (_: Exception) {
-            bgBmp = null
-        }
+        } catch (_: Exception) { bgBmp = null }
     }
 
+    /**
+     * Toolbar buttons are now attached with spring press feedback: a scale-down
+     * on ACTION_DOWN and an overshoot-back scale on ACTION_UP.
+     */
     private fun rebuildToolbar() {
         toolRow.removeAllViews()
         val enabled = prefs.getStringSet("toolbar_keys", null) ?: toolDefs.map { it.first }.toSet()
@@ -502,6 +483,27 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 gravity = Gravity.CENTER
                 setTextColor(kbTheme.text)
                 setPadding(dp(12f).toInt(), 0, dp(12f).toInt(), 0)
+                isClickable = true
+                isFocusable = false
+                setOnTouchListener { v, event ->
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            v.animate().cancel()
+                            v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(60L).start()
+                            false
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            v.animate().cancel()
+                            v.animate()
+                                .scaleX(1f).scaleY(1f)
+                                .setDuration(180L)
+                                .setInterpolator(OvershootInterpolator(2.5f))
+                                .start()
+                            false
+                        }
+                        else -> false
+                    }
+                }
                 setOnClickListener { onTool(id) }
             }
             if (id == "incognito" && incognito) {
@@ -512,6 +514,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
             toolRow.addView(tv, LinearLayout.LayoutParams(WRAP, MATCH))
         }
+    }
+
+    /** Spring the toggle arrow when tapped. */
+    private fun animateToggle() {
+        toggle.animate().cancel()
+        toggle.animate()
+            .scaleX(1.3f).scaleY(1.3f)
+            .setDuration(90L)
+            .withEndAction {
+                toggle.animate()
+                    .scaleX(1f).scaleY(1f)
+                    .setDuration(180L)
+                    .setInterpolator(OvershootInterpolator(2.5f))
+                    .start()
+            }
+            .start()
     }
 
     private fun refreshStrip() {
@@ -539,18 +557,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    // ------------------------------------------------------------------ unified transition controller
+    // ------------------------------------------------------------------ transition controller
 
-    /**
-     * All visual state changes (mode, panel, resize) funnel through this method so that
-     * overlapping animations don't fight. Each transition cancels the previous one and
-     * choreographs a fade-out / state-swap / fade-in over 200ms total.
-     */
     private fun runTransition(tag: String, apply: () -> Unit) {
-        if (currentTransition == tag) {
-            apply()
-            return
-        }
+        if (currentTransition == tag) { apply(); return }
         modeTransitionAnimator?.cancel()
         currentTransition = tag
         modeTransitionAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
@@ -672,9 +682,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 }
                 prefs.edit().putString("one_handed", next).apply()
                 runTransition("onehand:$next") {
-                    kb.oneHanded = when (next) {
-                        "left" -> 1; "right" -> 2; else -> 0
-                    }
+                    kb.oneHanded = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
                     kb.relayout()
                 }
             }
@@ -701,8 +709,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         } catch (_: Exception) {}
     }
 
-    // ------------------------------------------------------------------ cached tail
-
     private fun appendTail(s: String) {
         for (c in s) {
             tail.append(c)
@@ -717,9 +723,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun lastWord(): String? {
         if (!tailValid) {
             val before = currentInputConnection?.getTextBeforeCursor(16, 0)?.toString() ?: return null
-            tail.setLength(0)
-            tail.append(before)
-            tailValid = true
+            tail.setLength(0); tail.append(before); tailValid = true
         }
         val s = tail.toString().trimEnd()
         if (s.isEmpty()) return null
@@ -763,15 +767,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             ic.beginBatchEdit()
             try {
                 if (justAutoSpaced && composing.isEmpty() && isPunct) {
-                    ic.deleteSurroundingText(1, 0)
-                    popTail(1)
+                    ic.deleteSurroundingText(1, 0); popTail(1)
                 }
                 endWord(if (isPunct) text else null)
                 ic.commitText(text, 1)
                 appendTail(text)
-            } finally {
-                ic.endBatchEdit()
-            }
+            } finally { ic.endBatchEdit() }
             justAutoSpaced = false
         }
         lastSpaceTime = 0L
@@ -831,12 +832,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             ic.beginBatchEdit()
             try {
                 ic.deleteSurroundingText(r.corrected.length + r.sep.length, 0)
-                composing.clear()
-                composing.append(r.original)
+                composing.clear(); composing.append(r.original)
                 ic.setComposingText(r.original, 1)
-            } finally {
-                ic.endBatchEdit()
-            }
+            } finally { ic.endBatchEdit() }
             ignored.add(r.original.lowercase())
             if (learnOn && !incognito) dict.learn(r.original)
         } else if (composing.isNotEmpty()) {
@@ -845,8 +843,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             else ic.setComposingText(composing.toString(), 1)
             popTail(1)
         } else {
-            sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
-            popTail(1)
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL); popTail(1)
         }
         justAutoSpaced = false
         lastSpaceTime = 0L
@@ -860,32 +857,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         try {
             val originalLen = composing.length
             val corrected = endWord(" ")
-            if (corrected != null) {
-                popTail(originalLen)
-                appendTail(corrected)
-            }
+            if (corrected != null) { popTail(originalLen); appendTail(corrected) }
             val now = SystemClock.uptimeMillis()
             var done = false
             if (corrected == null && doubleSpace && now - lastSpaceTime < 500) {
                 val before = if (tailValid) tail.toString()
                 else currentInputConnection?.getTextBeforeCursor(2, 0)?.toString() ?: ""
                 if (before.length == 2 && before[1] == ' ' && before[0].isLetterOrDigit()) {
-                    ic.deleteSurroundingText(1, 0)
-                    ic.commitText(". ", 1)
-                    popTail(1)
-                    appendTail(". ")
-                    lastSpaceTime = 0L
-                    done = true
+                    ic.deleteSurroundingText(1, 0); ic.commitText(". ", 1)
+                    popTail(1); appendTail(". ")
+                    lastSpaceTime = 0L; done = true
                 }
             }
-            if (!done) {
-                ic.commitText(" ", 1)
-                appendTail(" ")
-                lastSpaceTime = now
-            }
-        } finally {
-            ic.endBatchEdit()
-        }
+            if (!done) { ic.commitText(" ", 1); appendTail(" "); lastSpaceTime = now }
+        } finally { ic.endBatchEdit() }
         justAutoSpaced = false
         afterText()
     }
@@ -899,15 +884,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (!noEnterAction &&
             action != EditorInfo.IME_ACTION_NONE &&
             action != EditorInfo.IME_ACTION_UNSPECIFIED
-        ) {
-            ic.performEditorAction(action)
-        } else {
-            sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
-        }
-        tail.setLength(0)
-        tailValid = false
-        justAutoSpaced = false
-        lastSpaceTime = 0L
+        ) ic.performEditorAction(action)
+        else sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
+        tail.setLength(0); tailValid = false
+        justAutoSpaced = false; lastSpaceTime = 0L
         afterText()
     }
 
@@ -918,11 +898,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (composing.isNotEmpty()) {
             val w = composing.toString()
             if (sep != null && autocorrectOn && canCompose &&
-                w.lowercase() !in ignored &&
-                w.drop(1).none { it.isUpperCase() }
-            ) {
-                corrected = dict.correction(w)
-            }
+                w.lowercase() !in ignored && w.drop(1).none { it.isUpperCase() }
+            ) corrected = dict.correction(w)
             if (corrected != null) {
                 ic?.commitText(corrected, 1)
                 revert = Revert(w, corrected, sep!!)
@@ -933,17 +910,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 ic?.finishComposingText()
             }
             composing.clear()
-        } else {
-            ic?.finishComposingText()
-        }
+        } else ic?.finishComposingText()
         return corrected
     }
 
     private fun afterText() {
-        if (shiftState == 1) {
-            shiftState = 0
-            autoShifted = false
-        }
+        if (shiftState == 1) { shiftState = 0; autoShifted = false }
         updateShiftFromCaps()
         updateSuggestions()
     }
@@ -958,13 +930,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 (ei.inputType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT
             ) {
                 val caps = ic.getCursorCapsMode(ei.inputType)
-                if (caps != 0 && shiftState == 0) {
-                    shiftState = 1
-                    autoShifted = true
-                } else if (caps == 0 && autoShifted && shiftState == 1) {
-                    shiftState = 0
-                    autoShifted = false
-                }
+                if (caps != 0 && shiftState == 0) { shiftState = 1; autoShifted = true }
+                else if (caps == 0 && autoShifted && shiftState == 1) { shiftState = 0; autoShifted = false }
             }
         }
         kb.shiftState = shiftState
@@ -982,10 +949,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun updateSuggestions() {
         if (!::slots.isInitialized) return
         suggestJob?.cancel()
-        if (!suggestionsOn || !canCompose) {
-            setCandidates(emptyList())
-            return
-        }
+        if (!suggestionsOn || !canCompose) { setCandidates(emptyList()); return }
         val prefix = composing.toString()
         if (prefix.isEmpty()) {
             val prev1 = lastWord()
@@ -1007,20 +971,41 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    /**
+     * Unified suggestion strip choreography: opacity, vertical translation, and
+     * per-slot stagger all animate together so the strip doesn't feel like a
+     * disjoint set of independent views.
+     */
     private fun setCandidates(list: List<String>) {
         if (list == candidates) return
         candidates = list
         slotFadeAnimator?.cancel()
-        slotFadeAnimator = ValueAnimator.ofFloat(1f, 0.4f, 1f).apply {
-            duration = 140L
-            interpolator = DecelerateInterpolator()
+
+        // Pre-render text so the animation operates on the final content.
+        renderSlots()
+
+        slotFadeAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 180L
+            interpolator = DecelerateInterpolator(1.6f)
             addUpdateListener {
-                val a = it.animatedValue as Float
-                for (tv in slots) tv.alpha = a
+                val t = it.animatedValue as Float
+                // Global opacity dip and rise
+                val alpha = 0.55f + 0.45f * t
+                // Global translation: strip eases down 4dp then back
+                val dy = (1f - t) * dp(3f)
+                slotRow.alpha = alpha
+                slotRow.translationY = dy
+                // Per-slot stagger
+                slots.forEachIndexed { i, tv ->
+                    val slotT = ((t - i * 0.08f) / (1f - i * 0.08f)).coerceIn(0f, 1f)
+                    tv.alpha = 0.55f + 0.45f * slotT
+                }
             }
             addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationStart(animation: Animator) {
-                    renderSlots()
+                override fun onAnimationEnd(animation: Animator) {
+                    slotRow.alpha = 1f
+                    slotRow.translationY = 0f
+                    for (tv in slots) tv.alpha = 1f
                 }
             })
             start()
@@ -1044,21 +1029,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         try {
             ic.commitText(w, 1)
             appendTail(w)
-            if (w[0].isLetter()) {
-                ic.commitText(" ", 1)
-                appendTail(" ")
-            }
-        } finally {
-            ic.endBatchEdit()
-        }
+            if (w[0].isLetter()) { ic.commitText(" ", 1); appendTail(" ") }
+        } finally { ic.endBatchEdit() }
         if (w[0].isLetter()) {
             if (learnOn && !incognito && canCompose) {
                 dict.learn(w, prev2 = null, prev1 = lastWord())
             }
             justAutoSpaced = true
-        } else {
-            justAutoSpaced = false
-        }
+        } else justAutoSpaced = false
         lastSpaceTime = 0L
         afterText()
     }
