@@ -1077,14 +1077,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun atSentenceEndBeforeCursor(): Boolean {
         val before = if (tailValid) tail.toString()
         else currentInputConnection?.getTextBeforeCursor(2, 0)?.toString() ?: return false
-        // Walk backwards to skip whitespace without using a lambda.
-        var i = before.length - 1
-        while (i >= 0) {
+        if (before.isEmpty()) return true
+        for (i in before.length - 1 downTo 0) {
             val ch = before[i]
-            if (ch != ' ' && ch != '\n' && ch != '\t') {
-                return ch == '.' || ch == '!' || ch == '?'
-            }
-            i--
+            if (ch == ' ' || ch == '\n' || ch == '\t') continue
+            return ch == '.' || ch == '!' || ch == '?'
         }
         return true
     }
