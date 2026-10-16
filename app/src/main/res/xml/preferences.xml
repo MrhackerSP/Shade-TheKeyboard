@@ -161,6 +161,12 @@
             app:iconSpaceReserved="false" />
         <SwitchPreferenceCompat
             android:defaultValue="true"
+            android:key="smart_correction"
+            android:title="@string/pref_smart_correction"
+            android:summary="@string/pref_smart_correction_sum"
+            app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
             android:key="emoji_suggestions"
             android:title="@string/pref_emoji_sugg"
             android:summary="@string/pref_emoji_sugg_sum"
