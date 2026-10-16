@@ -12,10 +12,10 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.SparseArray
-import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
@@ -24,8 +24,9 @@ import androidx.core.graphics.ColorUtils
 import java.util.ArrayDeque
 import kotlin.math.abs
 import kotlin.math.min
+import kotlin.random.Random
 
-/** Canvas-drawn keyboard with Gboard-style animated popups, haptics, and smooth press feedback. */
+/** Canvas-drawn keyboard with Gboard-style animated circular popups, haptics, and smooth press feedback. */
 class KeyboardView(context: Context) : View(context) {
 
     interface Listener {
@@ -56,7 +57,15 @@ class KeyboardView(context: Context) : View(context) {
     var keyBorders = true
     var splitKeyboard = false
     var showHints = true
-    var longPressMs = 380L
+
+    // Split delays for long-press vs key repeat
+    var longPressMs = 300L
+    var repeatDelayMs = 400L
+    var repeatIntervalMs = 50L
+
+    // Typing speed animation (off by default)
+    var typingBurstEnabled = false
+
     var bgBitmap: Bitmap? = null
         set(v) { field = v; invalidate() }
 
@@ -99,16 +108,16 @@ class KeyboardView(context: Context) : View(context) {
     private var pressProgress = 1f
     private var pressAnimator: ValueAnimator? = null
 
-    // ---- Canvas key preview (Gboard-style bubble above the key) ----
+    // Circular key preview (Gboard-style)
     private var previewKey: Key? = null
     private var previewProgress = 0f
     private var previewAnimator: ValueAnimator? = null
     private val previewBg = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val previewHue = Paint(Paint.ANTI_ALIAS_FLAG)
     private val previewText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
-    private val previewRect = RectF()
     private val previewShadow = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    // ---- Canvas accent strip (Gboard-style rounded strip) ----
+    // Accent strip
     private var altShown = false
     private var altItems: List<String> = emptyList()
     private var altSel = 0
@@ -122,6 +131,17 @@ class KeyboardView(context: Context) : View(context) {
     private val altText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val altRect = RectF()
     private val altShadow = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    // Typing speed animation
+    private var lastKeyTime = 0L
+    private var burstCount = 0
+    private var burstActive = false
+    private var burstProgress = 0f
+    private var burstAnimator: ValueAnimator? = null
+    private val burstPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
 
     private val vibrator: Vibrator? by lazy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -328,7 +348,10 @@ class KeyboardView(context: Context) : View(context) {
             drawContent(c, k, combinedAlpha)
         }
 
-        // Popups are drawn on top, in the keyboard's canvas.
+        // Typing burst overlay (behind popups, above keys)
+        if (burstActive && typingBurstEnabled) drawTypingBurst(c)
+
+        // Popups on top
         if (altShown && altItems.isNotEmpty()) drawAltStrip(c)
         previewKey?.let { if (previewProgress > 0f) drawKeyPreview(c, it) }
     }
@@ -439,42 +462,38 @@ class KeyboardView(context: Context) : View(context) {
         c.drawArc(rect, 20f, 140f, false, stroke)
     }
 
-    // ------------------------------------------------------------------ Gboard-style preview bubble
+    // ------------------------------------------------------------------ Gboard-style circular preview
 
     private fun drawKeyPreview(c: Canvas, k: Key) {
         val label = display(k.label)
-        // Bubble geometry: slightly wider than the key, sits above the top edge.
-        val baseW = (k.right - k.left) + dp(22f)
-        val baseH = (k.bottom - k.top) + dp(18f)
-        val scale = 0.6f + 0.4f * previewProgress
-        val pw = baseW * scale
-        val ph = baseH * scale
+        // Circular bubble: diameter larger than key width for visual weight
+        val baseDiameter = maxOf(k.right - k.left, k.bottom - k.top) * 1.45f
+        val diameter = baseDiameter * (0.65f + 0.35f * previewProgress)
+        val radius = diameter / 2f
         val cx = k.centerX
-        val cy = k.top - dp(6f) - ph / 2f
+        val cy = k.top - dp(8f) - radius
 
-        // Clamp inside the keyboard bounds.
-        val left = (cx - pw / 2f).coerceIn(dp(2f), width - pw - dp(2f))
-        val top = (cy - ph / 2f).coerceIn(dp(2f), height - ph - dp(2f))
+        // Clamp inside keyboard bounds
+        val cl = cx.coerceIn(radius + dp(2f), width - radius - dp(2f))
+        val ct = cy.coerceIn(radius + dp(2f), height - radius - dp(2f))
 
-        previewRect.set(left, top, left + pw, top + ph)
+        // Shadow
+        previewShadow.color = 0x55000000
+        c.drawCircle(cl, ct + dp(2f), radius, previewShadow)
 
-        // Shadow (drawn as a soft offset rounded rect)
-        previewShadow.color = 0x44000000
-        val shadowRect = RectF(previewRect)
-        shadowRect.offset(0f, dp(2f))
-        val r = dp(12f) * scale
-        c.drawRoundRect(shadowRect, r, r, previewShadow)
-
-        // Bubble
+        // Bubble base
         previewBg.color = kbTheme.popupBg
-        c.drawRoundRect(previewRect, r, r, previewBg)
+        c.drawCircle(cl, ct, radius, previewBg)
 
-        // Label
+        // Hue accent (Material You style inner ring)
+        previewHue.color = ColorUtils.setAlphaComponent(kbTheme.accent, 0x33)
+        c.drawCircle(cl, ct, radius * 0.82f, previewHue)
+
+        // Character
         previewText.color = kbTheme.text
-        previewText.textSize = min(baseH * 0.5f, dp(28f)) * scale
-        val tx = previewRect.centerX()
-        val ty = previewRect.centerY() - (previewText.ascent() + previewText.descent()) / 2f
-        c.drawText(label, tx, ty, previewText)
+        previewText.textSize = min(radius * 1.1f, dp(34f))
+        val ty = ct - (previewText.ascent() + previewText.descent()) / 2f
+        c.drawText(label, cl, ty, previewText)
     }
 
     private fun showPreviewFor(k: Key) {
@@ -482,8 +501,8 @@ class KeyboardView(context: Context) : View(context) {
         previewKey = k
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 90L
-            interpolator = DecelerateInterpolator(1.8f)
+            duration = 95L
+            interpolator = DecelerateInterpolator(2f)
             addUpdateListener {
                 previewProgress = it.animatedValue as Float
                 invalidate()
@@ -512,38 +531,33 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    // ------------------------------------------------------------------ Gboard-style accent strip
+    // ------------------------------------------------------------------ accent strip
 
     private fun drawAltStrip(c: Canvas) {
         val n = altItems.size
         if (n == 0) return
-        val scale = 0.7f + 0.3f * altProgress
+        val scale = 0.75f + 0.25f * altProgress
         val cell = altCell
-        val stripH = dp(50f) * scale
+        val stripH = dp(52f) * scale
         val stripW = cell * n
         val left = altOriginX
-        val top = altTop + (dp(50f) - stripH)
+        val top = altTop + (dp(52f) - stripH)
 
-        // Shadow
-        altRect.set(left, top + dp(2f), left + stripW, top + dp(2f) + stripH)
-        altShadow.color = 0x44000000
-        val shadowR = dp(14f) * scale
-        c.drawRoundRect(altRect, shadowR, shadowR, altShadow)
+        altRect.set(left, top + dp(3f), left + stripW, top + dp(3f) + stripH)
+        altShadow.color = 0x55000000
+        val r = dp(16f) * scale
+        c.drawRoundRect(altRect, r, r, altShadow)
 
-        // Background
         altRect.set(left, top, left + stripW, top + stripH)
         altBg.color = kbTheme.popupBg
-        val r = dp(14f) * scale
         c.drawRoundRect(altRect, r, r, altBg)
 
-        // Selected cell
         val selLeft = left + altSel * cell + dp(4f)
         val selRight = left + (altSel + 1) * cell - dp(4f)
         altRect.set(selLeft, top + dp(4f), selRight, top + stripH - dp(4f))
         altSelPaint.color = kbTheme.accent
-        c.drawRoundRect(altRect, r * 0.7f, r * 0.7f, altSelPaint)
+        c.drawRoundRect(altRect, r * 0.75f, r * 0.75f, altSelPaint)
 
-        // Characters
         altText.textSize = min(stripH * 0.55f, dp(22f))
         for (i in 0 until n) {
             altText.color = if (i == altSel) kbTheme.accentText else kbTheme.text
@@ -566,14 +580,14 @@ class KeyboardView(context: Context) : View(context) {
         altItems = if (leftMode) chars else chars.reversed()
         altOriginX = origin
         altCell = cell
-        altTop = (k.top - dp(56f)).coerceAtLeast(dp(2f))
+        altTop = (k.top - dp(58f)).coerceAtLeast(dp(2f))
         altShown = true
         altSel = ((p.lastX - origin) / cell).toInt().coerceIn(0, n - 1)
 
         altAnimator?.cancel()
         altAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 100L
-            interpolator = DecelerateInterpolator(1.8f)
+            interpolator = DecelerateInterpolator(2f)
             addUpdateListener {
                 altProgress = it.animatedValue as Float
                 invalidate()
@@ -613,6 +627,52 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    // ------------------------------------------------------------------ typing burst
+
+    private fun drawTypingBurst(c: Canvas) {
+        val intensity = burstProgress
+        if (intensity <= 0f) return
+        val cx = width / 2f
+        val cy = height / 2f
+        val maxR = maxOf(width, height) * 0.6f
+        val r = maxR * (1f - intensity)
+        burstPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (intensity * 0x60).toInt())
+        burstPaint.strokeWidth = dp(2f) + dp(3f) * intensity
+        c.drawCircle(cx, cy, r, burstPaint)
+    }
+
+    private fun onKeyBurst() {
+        if (!typingBurstEnabled) return
+        val now = SystemClock.uptimeMillis()
+        if (now - lastKeyTime < 120L) {
+            burstCount++
+        } else {
+            burstCount = 1
+        }
+        lastKeyTime = now
+        if (burstCount >= 6 && !burstActive) {
+            burstActive = true
+            burstAnimator?.cancel()
+            burstAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 450L
+                interpolator = DecelerateInterpolator()
+                addUpdateListener {
+                    burstProgress = it.animatedValue as Float
+                    invalidate()
+                }
+                addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        burstActive = false
+                        burstProgress = 0f
+                        burstCount = 0
+                        invalidate()
+                    }
+                })
+                start()
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ touch
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -643,10 +703,8 @@ class KeyboardView(context: Context) : View(context) {
     private fun handleTrackpad(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                trackpadStartX = e.x
-                trackpadStartY = e.y
-                trackpadLastSentX = 0f
-                trackpadLastSentY = 0f
+                trackpadStartX = e.x; trackpadStartY = e.y
+                trackpadLastSentX = 0f; trackpadLastSentY = 0f
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = e.x - trackpadStartX
@@ -691,6 +749,7 @@ class KeyboardView(context: Context) : View(context) {
         val p = obtainPointer(k, x, y)
         pointers.put(id, p)
         feedback(k)
+        onKeyBurst()
         startPressAnimation()
         pressKey(p)
         invalidate(k)
@@ -732,11 +791,11 @@ class KeyboardView(context: Context) : View(context) {
                 override fun run() {
                     listener?.onKey(Codes.DELETE)
                     n++
-                    handler.postDelayed(this, if (n > 10) 35L else 60L)
+                    handler.postDelayed(this, repeatIntervalMs)
                 }
             }
             p.repeatRunnable = r
-            handler.postDelayed(r, 400L)
+            handler.postDelayed(r, repeatDelayMs)
             return
         }
         val longable = k.kind == KeyKind.SPACE ||
@@ -790,7 +849,8 @@ class KeyboardView(context: Context) : View(context) {
         pointers.remove(id)
         cancelLong(p)
         p.repeatRunnable?.let { handler.removeCallbacks(it) }
-        p.repeatRunnable = null        hidePreview()
+        p.repeatRunnable = null
+        hidePreview()
         val k = p.key
 
         if (altShown) {
@@ -862,9 +922,7 @@ class KeyboardView(context: Context) : View(context) {
                     k.kind == KeyKind.FUNC -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
                     else -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
                 }
-                try { vibrator?.vibrate(effect) } catch (_: Exception) {
-                    fallbackTap()
-                }
+                try { vibrator?.vibrate(effect) } catch (_: Exception) { fallbackTap() }
             } else {
                 fallbackTap()
             }
@@ -919,6 +977,7 @@ class KeyboardView(context: Context) : View(context) {
         layoutAnimator?.cancel()
         previewAnimator?.cancel()
         altAnimator?.cancel()
+        burstAnimator?.cancel()
         val n = pointers.size()
         for (i in 0 until n) {
             val p = pointers.valueAt(i)
@@ -939,6 +998,7 @@ class KeyboardView(context: Context) : View(context) {
         layoutAnimator?.cancel()
         previewAnimator?.cancel()
         altAnimator?.cancel()
+        burstAnimator?.cancel()
         pointers.clear()
         pointerPool.clear()
         previewKey = null
