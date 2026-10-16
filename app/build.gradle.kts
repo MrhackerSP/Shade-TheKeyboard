@@ -8,7 +8,8 @@ android {
 
     defaultConfig {
         applicationId = "com.noircipher.shade"
-        minSdk = 23
+        // SymSpellKt 3.4.0 declares minSdk 26 in its own manifest
+        minSdk = 26
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
@@ -53,7 +54,6 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    // SymSpellKt: Kotlin Multiplatform SymSpell port
+    // SymSpellKt: Kotlin Multiplatform SymSpell port (plain-text loading, no Fdic)
     implementation("com.darkrockstudios:symspellkt:3.4.0")
-    // No Fdic dependency — loading plain text directly
 }
