@@ -23,14 +23,17 @@ import java.util.ArrayDeque
 import kotlin.math.abs
 import kotlin.math.min
 
-/** Canvas-drawn keyboard: multi-touch, key previews, long-press accents, space-bar cursor swipe. */
+/** Canvas-drawn keyboard: multi-touch, key previews, long-press accents, space-bar cursor swipe, trackpad mode. */
 class KeyboardView(context: Context) : View(context) {
 
     interface Listener {
         fun onKey(code: Int)
         fun onText(text: String)
         fun onCursor(delta: Int)
+        fun onCursorMove(dx: Int, dy: Int)
         fun onLongPressSpecial()
+        fun onTrackpadEnter()
+        fun onTrackpadExit()
     }
 
     var listener: Listener? = null
@@ -55,6 +58,15 @@ class KeyboardView(context: Context) : View(context) {
     var bgBitmap: Bitmap? = null
         set(v) { field = v; invalidate() }
 
+    // Trackpad
+    var trackpadEnabled = true
+    private var trackpadActive = false
+    private var trackpadStartX = 0f
+    private var trackpadStartY = 0f
+    private var trackpadLastSentX = 0f
+    private var trackpadLastSentY = 0f
+    private val trackpadStep = 22f // px per cursor step
+
     private val handler = Handler(Looper.getMainLooper())
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -67,7 +79,6 @@ class KeyboardView(context: Context) : View(context) {
         strokeJoin = Paint.Join.ROUND
     }
 
-    // --- Pre-allocated hot-path objects (zero allocation in onDraw/onTouchEvent) ---
     private val rect = RectF()
     private val dst = RectF()
     private val path = Path()
@@ -75,10 +86,7 @@ class KeyboardView(context: Context) : View(context) {
     private val pressedKeys = HashSet<Key>(16)
     private val cancelIds = IntArray(20)
     private var cancelCount = 0
-
-    // --- Pointer pool to avoid Pointer allocations on every touch-down ---
     private val pointerPool = ArrayDeque<Pointer>(8)
-
     private var rowHeight = 0f
 
     private class Pointer {
@@ -121,8 +129,6 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun dp(v: Float) = v * resources.displayMetrics.density
-
-    // ------------------------------------------------------------------ layout
 
     fun setRows(r: List<List<Key>>) {
         rows = r
@@ -204,8 +210,6 @@ class KeyboardView(context: Context) : View(context) {
         return s
     }
 
-    // ------------------------------------------------------------------ drawing
-
     override fun onDraw(c: Canvas) {
         c.drawColor(kbTheme.bg)
         val bmp = bgBitmap
@@ -233,6 +237,9 @@ class KeyboardView(context: Context) : View(context) {
         val gy = dp(3f)
         val radius = dp(7f)
 
+        // Dim the whole surface slightly in trackpad mode
+        val alpha = if (trackpadActive) 0x88 else 0xFF
+
         for (row in rows) for (k in row) {
             if (k.kind == KeyKind.SPACER) continue
             if (k.right < clipL || k.left > clipR || k.bottom < clipT || k.top > clipB) continue
@@ -251,6 +258,7 @@ class KeyboardView(context: Context) : View(context) {
                 else -> kbTheme.key
             }
             if (bmp != null && !isPressed) col = ColorUtils.setAlphaComponent(col, 0xCC)
+            col = ColorUtils.setAlphaComponent(col, alpha)
             fill.color = col
             c.drawRoundRect(rect, radius, radius, fill)
             drawContent(c, k)
@@ -363,9 +371,8 @@ class KeyboardView(context: Context) : View(context) {
         c.drawArc(rect, 20f, 140f, false, stroke)
     }
 
-    // ------------------------------------------------------------------ touch
-
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (trackpadActive) return handleTrackpad(e)
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val i = e.actionIndex
@@ -387,6 +394,47 @@ class KeyboardView(context: Context) : View(context) {
             }
         }
         return true
+    }
+
+    private fun handleTrackpad(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                trackpadStartX = e.x
+                trackpadStartY = e.y
+                trackpadLastSentX = 0f
+                trackpadLastSentY = 0f
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = e.x - trackpadStartX
+                val dy = e.y - trackpadStartY
+                val stepX = ((dx - trackpadLastSentX) / trackpadStep).toInt()
+                val stepY = ((dy - trackpadLastSentY) / trackpadStep).toInt()
+                if (stepX != 0 || stepY != 0) {
+                    listener?.onCursorMove(-stepX, -stepY)
+                    trackpadLastSentX += stepX * trackpadStep
+                    trackpadLastSentY += stepY * trackpadStep
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                exitTrackpad()
+            }
+        }
+        return true
+    }
+
+    private fun enterTrackpad() {
+        if (trackpadActive) return
+        trackpadActive = true
+        if (haptic) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        listener?.onTrackpadEnter()
+        invalidate()
+    }
+
+    private fun exitTrackpad() {
+        if (!trackpadActive) return
+        trackpadActive = false
+        listener?.onTrackpadExit()
+        invalidate()
     }
 
     private fun cancelAllSlow(): Boolean {
@@ -487,7 +535,6 @@ class KeyboardView(context: Context) : View(context) {
         recyclePointer(p)
     }
 
-    /** Invalidate only the bounds of a single key using its cached rect. */
     private fun invalidate(k: Key) {
         val r = k.invalidateRect
         if (r != null) invalidate(r) else invalidate()
@@ -512,7 +559,17 @@ class KeyboardView(context: Context) : View(context) {
         val k = p.key ?: return
         p.longRunnable = null
         if (haptic) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-        if (k.kind == KeyKind.SPACE || (k.kind == KeyKind.FUNC && k.code == Codes.EMOJI)) {
+        if (k.kind == KeyKind.SPACE) {
+            if (trackpadEnabled) {
+                p.consumed = true
+                enterTrackpad()
+            } else {
+                p.consumed = true
+                listener?.onLongPressSpecial()
+            }
+            return
+        }
+        if (k.kind == KeyKind.FUNC && k.code == Codes.EMOJI) {
             p.consumed = true
             listener?.onLongPressSpecial()
             return
@@ -544,8 +601,6 @@ class KeyboardView(context: Context) : View(context) {
             )
         }
     }
-
-    // ------------------------------------------------------------------ popups
 
     private val previewText = TextView(context).apply {
         gravity = Gravity.CENTER
