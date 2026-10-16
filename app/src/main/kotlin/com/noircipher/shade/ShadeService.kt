@@ -323,7 +323,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
             variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS ||
             variation == InputType.TYPE_TEXT_VARIATION_URI
-        canCompose = cls == InputType.TYPE_TEXT_CLASS_TEXT && !noSuggest && !blocked
+        canCompose = cls == InputType.TYPE_CLASS_TEXT && !noSuggest && !blocked
 
         applyPrefs()
         val m = when (cls) {
@@ -845,25 +845,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         if (isWordChar) {
             // --- Smart correction: capitalize first letter after sentence end ---
-            var toCommit = text
             if (smartCorrectionOn && canCompose &&
                 text.length == 1 && text[0].isLowerCase() &&
-                atSentenceEndBeforeCursor()
+                atSentenceEndBeforeCursor() && composing.isEmpty()
             ) {
-                toCommit = text.uppercase()
-                ic.setComposingText(
-                    composing.toString() + toCommit, 1
-                )
-                pushUndo(1, text) // backspace restores the original lowercase letter
-                composing.append(toCommit)
-                appendTail(toCommit)
+                val upper = text.uppercase()
+                composing.append(upper)
+                ic.setComposingText(composing.toString(), 1)
+                pushUndo(upper.length, text)
+                appendTail(upper)
                 afterText()
                 return
             }
 
-            composing.append(toCommit)
+            composing.append(text)
             ic.setComposingText(composing.toString(), 1)
-            appendTail(toCommit)
+            appendTail(text)
         } else {
             val isPunct = text.length == 1 && text[0] in ".,!?;:"
             ic.beginBatchEdit()
@@ -876,22 +873,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 ic.commitText(text, 1)
                 appendTail(text)
 
-                // --- Smart correction: auto-space after sentence-terminating punctuation ---
-                if (smartCorrectionOn && canCompose &&
-                    text.length == 1 && text[0] in ".!?"
-                ) {
-                    // Only auto-space if the last char committed is one of . ! ?
-                    ic.commitText(" ", 1)
-                    appendTail(" ")
-                    pushUndo(1, "") // backspace removes the auto-space
-                    // Reset bigram context
-                    resetBigramContext()
-                } else if (smartCorrectionOn && canCompose &&
-                    text.length == 1 && (text[0] == ',' || text[0] == ';' || text[0] == ':')
-                ) {
-                    ic.commitText(" ", 1)
-                    appendTail(" ")
-                    pushUndo(1, "")
+                // --- Smart correction: auto-space after punctuation ---
+                if (smartCorrectionOn && canCompose && text.length == 1) {
+                    val c = text[0]
+                    val autoSpace = c == '.' || c == '!' || c == '?' || c == ',' || c == ';' || c == ':'
+                    if (autoSpace) {
+                        ic.commitText(" ", 1)
+                        appendTail(" ")
+                        pushUndo(1, "")
+                        if (c == '.' || c == '!' || c == '?') {
+                            resetBigramContext()
+                        }
+                    }
                 }
             } finally {
                 ic.endBatchEdit()
@@ -951,25 +944,27 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun backspace() {
         val ic = currentInputConnection ?: return
 
-        // --- Unified undo stack: reverse the last automated edit first ---
-        val undo = undoStack.pollLast()
-        if (undo != null && composing.isEmpty()) {
-            ic.beginBatchEdit()
-            try {
-                if (undo.charsCommitted > 0) {
-                    ic.deleteSurroundingText(undo.charsCommitted, 0)
-                    popTail(undo.charsCommitted)
+        // Unified undo stack: reverse the last automated edit first.
+        if (undoStack.isNotEmpty() && composing.isEmpty()) {
+            val undo = undoStack.pollLast()
+            if (undo != null) {
+                ic.beginBatchEdit()
+                try {
+                    if (undo.charsCommitted > 0) {
+                        ic.deleteSurroundingText(undo.charsCommitted, 0)
+                        popTail(undo.charsCommitted)
+                    }
+                    if (undo.restore.isNotEmpty()) {
+                        ic.commitText(undo.restore, 1)
+                        appendTail(undo.restore)
+                    }
+                } finally {
+                    ic.endBatchEdit()
                 }
-                if (undo.restore.isNotEmpty()) {
-                    ic.commitText(undo.restore, 1)
-                    appendTail(undo.restore)
-                }
-            } finally {
-                ic.endBatchEdit()
+                updateShiftFromCaps()
+                updateSuggestions()
+                return
             }
-            updateShiftFromCaps()
-            updateSuggestions()
-            return
         }
 
         // Normal backspace path
@@ -996,10 +991,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             if (corrected != null) {
                 popTail(originalLen)
                 appendTail(corrected)
-                // Autocorrect entry: backspace restores the original
-                pushUndo(corrected.length, "") // corrected text already committed
-            } else if (originalLen > 0) {
-                // Word committed as composing text; nothing extra to record
+                pushUndo(corrected.length, "")
             }
 
             val now = SystemClock.uptimeMillis()
@@ -1015,7 +1007,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     ic.commitText(". ", 1)
                     popTail(1)
                     appendTail(". ")
-                    pushUndo(2, "  ") // backspace restores the two spaces
+                    pushUndo(2, "  ")
                     lastSpaceTime = 0L
                     resetBigramContext()
                     return
@@ -1067,20 +1059,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 ic?.commitText("I", 1)
                 popTail(1)
                 appendTail("I")
-                pushUndo(1, "i") // backspace restores lowercase i
+                pushUndo(1, "i")
                 composing.clear()
                 return null
             }
 
             // --- Autocorrect ---
             if (sep != null && autocorrectOn && canCompose &&
-                w.lowercase() !in ignored && w.drop(1).none { it.isUpperCase() }
+                w.drop(1).none { it.isUpperCase() }
             ) {
                 corrected = dict.correction(w)
             }
             if (corrected != null) {
                 ic?.commitText(corrected, 1)
-                pushUndo(corrected.length, w) // backspace restores the original
+                pushUndo(corrected.length, w)
             } else {
                 if (learnOn && !incognito && canCompose) {
                     dict.learn(w, prev2 = null, prev1 = lastWord())
