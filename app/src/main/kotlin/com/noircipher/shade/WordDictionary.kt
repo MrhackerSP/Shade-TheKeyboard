@@ -7,8 +7,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Simple in-memory dictionary. Loads Norvig's plain-text frequency list
- * from assets. Temporarily does not depend on SymSpellKt; swap in a
- * SymSpell-backed lookup once the API is confirmed.
+ * from assets. Includes a small contraction map for common typos.
  */
 class WordDictionary(private val ctx: Context) {
 
@@ -19,6 +18,27 @@ class WordDictionary(private val ctx: Context) {
     private var user: MutableMap<String, Float> = HashMap()
 
     var bigramModel: BigramModel? = null
+
+    /**
+     * Common contraction fixes. Applied before the dictionary lookup, so
+     * "dont" resolves to "don't" even though the frequency list has no
+     * apostrophes. Also handles short words like "im", "id", "ill" that
+     * would otherwise be rejected by the length filter.
+     */
+    private val contractions: Map<String, String> = mapOf(
+        "dont" to "don't", "cant" to "can't", "wont" to "won't",
+        "isnt" to "isn't", "arent" to "aren't", "wasnt" to "wasn't",
+        "werent" to "weren't", "hasnt" to "hasn't", "havent" to "haven't",
+        "hadnt" to "hadn't", "didnt" to "didn't", "doesnt" to "doesn't",
+        "couldnt" to "couldn't", "wouldnt" to "wouldn't", "shouldnt" to "shouldn't",
+        "im" to "I'm", "ive" to "I've", "ill" to "I'll", "id" to "I'd",
+        "youre" to "you're", "youve" to "you've", "youll" to "you'll",
+        "theyre" to "they're", "theyve" to "they've", "theyll" to "they'll",
+        "weve" to "we've",
+        "its" to "it's", "thats" to "that's", "whats" to "what's",
+        "heres" to "here's", "theres" to "there's", "wheres" to "where's",
+        "hes" to "he's", "shes" to "she's", "lets" to "let's"
+    )
 
     init { reloadUser() }
 
@@ -92,11 +112,20 @@ class WordDictionary(private val ctx: Context) {
         return out.take(max).map { match(prefix, it) }
     }
 
+    /**
+     * Contraction-aware correction. Checks the contraction map first (so
+     * short entries like "im" and "id" are handled before the length filter),
+     * then falls back to a bounded edit-distance-1 scan over the dictionary.
+     */
     fun correction(word: String): String? {
         val w = word.lowercase()
-        if (w.length < 3 || contains(w) || !w.all { it.isLetter() || it == '\'' }) return null
 
-        // Simple bounded edit-distance-1 scan. Replace with SymSpellKt when wired up.
+        // Contraction map: exact match, short-circuits the rest.
+        contractions[w]?.let { return match(word, it) }
+
+        if (w.length < 3 || !w.all { it.isLetter() || it == '\'' }) return null
+        if (contains(w)) return null
+
         var best: String? = null
         var bestFreq = 0L
         for ((cand, freq) in words) {
