@@ -13,7 +13,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
-import android.os.Build
 import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
@@ -21,7 +20,6 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewTreeObserver
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.view.inputmethod.EditorInfo
@@ -242,59 +240,44 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return root
     }
 
+    /**
+     * Register the IME insets animation callback using the stable
+     * WindowInsetsAnimationCompat API. This runs on all API levels and
+     * gives frame-by-frame progress updates that we use to slide the
+     * keyboard with the IME inset.
+     */
     private fun registerInsetAnimationCallback() {
-        if (Build.VERSION.SDK_INT >= 37 && hasWindowInsetsAnimationListener()) {
-            try {
-                root.viewTreeObserver.addOnWindowInsetsAnimationListener(
-                    object : ViewTreeObserver.OnWindowInsetsAnimationListener {
-                        override fun onPrepare(animation: android.view.WindowInsetsAnimation) {}
-                        override fun onProgress(
-                            insets: android.view.WindowInsets,
-                            runningAnimations: MutableList<android.view.WindowInsetsAnimation>
-                        ) {
-                            for (a in runningAnimations) {
-                                if (a.typeMask and android.view.WindowInsets.Type.ime() != 0) {
-                                    kb.translationY =
-                                        insets.getInsets(android.view.WindowInsets.Type.ime()).bottom.toFloat()
-                                }
-                            }
-                        }
-                        override fun onEnd(animation: android.view.WindowInsetsAnimation) {
-                            kb.translationY = 0f
-                        }
-                    }
-                )
-                return
-            } catch (_: Throwable) {}
-        }
-        ViewCompat.setWindowInsetsAnimationCallback(root,
-            object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+        ViewCompat.setWindowInsetsAnimationCallback(
+            root,
+            object : WindowInsetsAnimationCompat.Callback(
+                DISPATCH_MODE_CONTINUE_ON_SUBTREE
+            ) {
                 override fun onProgress(
                     insets: WindowInsetsCompat,
                     runningAnimations: MutableList<WindowInsetsAnimationCompat>
                 ): WindowInsetsCompat {
+                    var imeVisible = false
                     for (anim in runningAnimations) {
                         if (anim.typeMask and WindowInsetsCompat.Type.ime() != 0) {
-                            val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-                            kb.translationY = imeBottom.toFloat()
+                            imeVisible = true
+                            break
                         }
+                    }
+                    if (imeVisible) {
+                        val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+                        kb.translationY = imeBottom.toFloat()
                     }
                     return insets
                 }
+
                 override fun onEnd(animation: WindowInsetsAnimationCompat) {
-                    kb.translationY = 0f
+                    if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0) {
+                        kb.translationY = 0f
+                    }
                 }
             }
         )
     }
-
-    private fun hasWindowInsetsAnimationListener(): Boolean = try {
-        ViewTreeObserver::class.java.getMethod(
-            "addOnWindowInsetsAnimationListener",
-            ViewTreeObserver.OnWindowInsetsAnimationListener::class.java
-        )
-        true
-    } catch (_: Throwable) { false }
 
     override fun onStartInputView(editorInfo: EditorInfo, restarting: Boolean) {
         super.onStartInputView(editorInfo, restarting)
@@ -468,10 +451,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         } catch (_: Exception) { bgBmp = null }
     }
 
-    /**
-     * Toolbar buttons are now attached with spring press feedback: a scale-down
-     * on ACTION_DOWN and an overshoot-back scale on ACTION_UP.
-     */
     private fun rebuildToolbar() {
         toolRow.removeAllViews()
         val enabled = prefs.getStringSet("toolbar_keys", null) ?: toolDefs.map { it.first }.toSet()
@@ -516,7 +495,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    /** Spring the toggle arrow when tapped. */
     private fun animateToggle() {
         toggle.animate().cancel()
         toggle.animate()
@@ -971,31 +949,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    /**
-     * Unified suggestion strip choreography: opacity, vertical translation, and
-     * per-slot stagger all animate together so the strip doesn't feel like a
-     * disjoint set of independent views.
-     */
     private fun setCandidates(list: List<String>) {
         if (list == candidates) return
         candidates = list
         slotFadeAnimator?.cancel()
-
-        // Pre-render text so the animation operates on the final content.
         renderSlots()
-
         slotFadeAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 180L
             interpolator = DecelerateInterpolator(1.6f)
             addUpdateListener {
                 val t = it.animatedValue as Float
-                // Global opacity dip and rise
                 val alpha = 0.55f + 0.45f * t
-                // Global translation: strip eases down 4dp then back
                 val dy = (1f - t) * dp(3f)
                 slotRow.alpha = alpha
                 slotRow.translationY = dy
-                // Per-slot stagger
                 slots.forEachIndexed { i, tv ->
                     val slotT = ((t - i * 0.08f) / (1f - i * 0.08f)).coerceIn(0f, 1f)
                     tv.alpha = 0.55f + 0.45f * slotT
