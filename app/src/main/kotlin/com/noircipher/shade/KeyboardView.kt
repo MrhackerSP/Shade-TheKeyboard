@@ -15,20 +15,17 @@ import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.SparseArray
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
-import android.widget.PopupWindow
-import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 import java.util.ArrayDeque
 import kotlin.math.abs
 import kotlin.math.min
 
-/** Canvas-drawn keyboard with animated press feedback, haptics, and layout crossfade. */
+/** Canvas-drawn keyboard with Gboard-style animated popups, haptics, and smooth press feedback. */
 class KeyboardView(context: Context) : View(context) {
 
     interface Listener {
@@ -98,9 +95,33 @@ class KeyboardView(context: Context) : View(context) {
     private val pointerPool = ArrayDeque<Pointer>(8)
     private var rowHeight = 0f
 
-    // Global press animation state — a single float drives all pressed-key color blending.
+    // Global press animation
     private var pressProgress = 1f
     private var pressAnimator: ValueAnimator? = null
+
+    // ---- Canvas key preview (Gboard-style bubble above the key) ----
+    private var previewKey: Key? = null
+    private var previewProgress = 0f
+    private var previewAnimator: ValueAnimator? = null
+    private val previewBg = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val previewText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val previewRect = RectF()
+    private val previewShadow = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    // ---- Canvas accent strip (Gboard-style rounded strip) ----
+    private var altShown = false
+    private var altItems: List<String> = emptyList()
+    private var altSel = 0
+    private var altCell = 0f
+    private var altOriginX = 0f
+    private var altTop = 0f
+    private var altProgress = 0f
+    private var altAnimator: ValueAnimator? = null
+    private val altBg = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val altSelPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val altText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val altRect = RectF()
+    private val altShadow = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private val vibrator: Vibrator? by lazy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -121,17 +142,11 @@ class KeyboardView(context: Context) : View(context) {
         var repeatRunnable: Runnable? = null
         var consumed = false
         var swiping = false
-        var altShown = false
-        var altSel = 0
-        var altItems: List<String> = emptyList()
-        var altOrigin = 0f
-        var altCell = 0f
 
         fun reset(k: Key?, x: Float, y: Float) {
             key = k; downX = x; downY = y; lastX = x
             longRunnable = null; repeatRunnable = null
-            consumed = false; swiping = false; altShown = false
-            altSel = 0; altItems = emptyList(); altOrigin = 0f; altCell = 0f
+            consumed = false; swiping = false
         }
     }
 
@@ -147,11 +162,12 @@ class KeyboardView(context: Context) : View(context) {
         p.key = null
         p.longRunnable = null
         p.repeatRunnable = null
-        p.altItems = emptyList()
         if (pointerPool.size < 8) pointerPool.offerLast(p)
     }
 
     private fun dp(v: Float) = v * resources.displayMetrics.density
+
+    // ------------------------------------------------------------------ layout
 
     fun setRows(r: List<List<Key>>) {
         rows = r
@@ -159,19 +175,12 @@ class KeyboardView(context: Context) : View(context) {
         invalidate()
     }
 
-    /**
-     * Swap layouts with a quick fade-out / fade-in crossfade.
-     * Called from the service when the user switches modes.
-     */
     fun setRowsAnimated(r: List<List<Key>>) {
         layoutAnimator?.cancel()
         layoutAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
             duration = 80L
             interpolator = DecelerateInterpolator()
-            addUpdateListener {
-                layoutAlpha = it.animatedValue as Float
-                invalidate()
-            }
+            addUpdateListener { layoutAlpha = it.animatedValue as Float; invalidate() }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
                     rows = r
@@ -179,10 +188,7 @@ class KeyboardView(context: Context) : View(context) {
                     layoutAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
                         duration = 120L
                         interpolator = DecelerateInterpolator()
-                        addUpdateListener {
-                            layoutAlpha = it.animatedValue as Float
-                            invalidate()
-                        }
+                        addUpdateListener { layoutAlpha = it.animatedValue as Float; invalidate() }
                         start()
                     }
                 }
@@ -265,6 +271,8 @@ class KeyboardView(context: Context) : View(context) {
         return s
     }
 
+    // ------------------------------------------------------------------ drawing
+
     override fun onDraw(c: Canvas) {
         c.drawColor(kbTheme.bg)
         val bmp = bgBitmap
@@ -291,9 +299,7 @@ class KeyboardView(context: Context) : View(context) {
         val gx = dp(2.5f)
         val gy = dp(3f)
         val radius = dp(7f)
-        val trackpadAlpha = if (trackpadActive) 0x88 else 0xFF
-        val baseAlpha = ((layoutAlpha * 255f).toInt().coerceIn(0, 255) shl 24) or 0xFFFFFF
-        val combinedAlpha = (trackpadAlpha * layoutAlpha).toInt().coerceIn(0, 255)
+        val combinedAlpha = ((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255)
 
         for (row in rows) for (k in row) {
             if (k.kind == KeyKind.SPACER) continue
@@ -312,8 +318,6 @@ class KeyboardView(context: Context) : View(context) {
                 else -> kbTheme.key
             }
             if (bmp != null && !isPressed) baseCol = ColorUtils.setAlphaComponent(baseCol, 0xCC)
-
-            // Smooth press blend using the global pressProgress (1 = fully pressed).
             val col = if (isPressed) {
                 ColorUtils.blendARGB(baseCol, kbTheme.pressed, pressProgress)
             } else {
@@ -323,6 +327,10 @@ class KeyboardView(context: Context) : View(context) {
             c.drawRoundRect(rect, radius, radius, fill)
             drawContent(c, k, combinedAlpha)
         }
+
+        // Popups are drawn on top, in the keyboard's canvas.
+        if (altShown && altItems.isNotEmpty()) drawAltStrip(c)
+        previewKey?.let { if (previewProgress > 0f) drawKeyPreview(c, it) }
     }
 
     private fun textY(p: Paint, cy: Float) = cy - (p.ascent() + p.descent()) / 2f
@@ -427,9 +435,185 @@ class KeyboardView(context: Context) : View(context) {
         fill.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
         c.drawCircle(cx - s * 0.35f, cy - s * 0.25f, s * 0.11f, fill)
         c.drawCircle(cx + s * 0.35f, cy - s * 0.25f, s * 0.11f, fill)
-        rect.set(cx - s * 0.5f, cy - s * 0.45f, cx + s * 0.5f, cy + s * 0.5f)
+        rect.set(cx - s * 0.5f, cy - s * 0.45f, cx + s * 0.5f, cy + s * 0.45f)
         c.drawArc(rect, 20f, 140f, false, stroke)
     }
+
+    // ------------------------------------------------------------------ Gboard-style preview bubble
+
+    private fun drawKeyPreview(c: Canvas, k: Key) {
+        val label = display(k.label)
+        // Bubble geometry: slightly wider than the key, sits above the top edge.
+        val baseW = (k.right - k.left) + dp(22f)
+        val baseH = (k.bottom - k.top) + dp(18f)
+        val scale = 0.6f + 0.4f * previewProgress
+        val pw = baseW * scale
+        val ph = baseH * scale
+        val cx = k.centerX
+        val cy = k.top - dp(6f) - ph / 2f
+
+        // Clamp inside the keyboard bounds.
+        val left = (cx - pw / 2f).coerceIn(dp(2f), width - pw - dp(2f))
+        val top = (cy - ph / 2f).coerceIn(dp(2f), height - ph - dp(2f))
+
+        previewRect.set(left, top, left + pw, top + ph)
+
+        // Shadow (drawn as a soft offset rounded rect)
+        previewShadow.color = 0x44000000
+        val shadowRect = RectF(previewRect)
+        shadowRect.offset(0f, dp(2f))
+        val r = dp(12f) * scale
+        c.drawRoundRect(shadowRect, r, r, previewShadow)
+
+        // Bubble
+        previewBg.color = kbTheme.popupBg
+        c.drawRoundRect(previewRect, r, r, previewBg)
+
+        // Label
+        previewText.color = kbTheme.text
+        previewText.textSize = min(baseH * 0.5f, dp(28f)) * scale
+        val tx = previewRect.centerX()
+        val ty = previewRect.centerY() - (previewText.ascent() + previewText.descent()) / 2f
+        c.drawText(label, tx, ty, previewText)
+    }
+
+    private fun showPreviewFor(k: Key) {
+        if (!showPreview) return
+        previewKey = k
+        previewAnimator?.cancel()
+        previewAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 90L
+            interpolator = DecelerateInterpolator(1.8f)
+            addUpdateListener {
+                previewProgress = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    private fun hidePreview() {
+        if (previewKey == null) return
+        previewAnimator?.cancel()
+        previewAnimator = ValueAnimator.ofFloat(previewProgress, 0f).apply {
+            duration = 70L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                previewProgress = it.animatedValue as Float
+                invalidate()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    previewKey = null
+                    invalidate()
+                }
+            })
+            start()
+        }
+    }
+
+    // ------------------------------------------------------------------ Gboard-style accent strip
+
+    private fun drawAltStrip(c: Canvas) {
+        val n = altItems.size
+        if (n == 0) return
+        val scale = 0.7f + 0.3f * altProgress
+        val cell = altCell
+        val stripH = dp(50f) * scale
+        val stripW = cell * n
+        val left = altOriginX
+        val top = altTop + (dp(50f) - stripH)
+
+        // Shadow
+        altRect.set(left, top + dp(2f), left + stripW, top + dp(2f) + stripH)
+        altShadow.color = 0x44000000
+        val shadowR = dp(14f) * scale
+        c.drawRoundRect(altRect, shadowR, shadowR, altShadow)
+
+        // Background
+        altRect.set(left, top, left + stripW, top + stripH)
+        altBg.color = kbTheme.popupBg
+        val r = dp(14f) * scale
+        c.drawRoundRect(altRect, r, r, altBg)
+
+        // Selected cell
+        val selLeft = left + altSel * cell + dp(4f)
+        val selRight = left + (altSel + 1) * cell - dp(4f)
+        altRect.set(selLeft, top + dp(4f), selRight, top + stripH - dp(4f))
+        altSelPaint.color = kbTheme.accent
+        c.drawRoundRect(altRect, r * 0.7f, r * 0.7f, altSelPaint)
+
+        // Characters
+        altText.textSize = min(stripH * 0.55f, dp(22f))
+        for (i in 0 until n) {
+            altText.color = if (i == altSel) kbTheme.accentText else kbTheme.text
+            val cx = left + i * cell + cell / 2f
+            val cy = top + stripH / 2f - (altText.ascent() + altText.descent()) / 2f
+            c.drawText(altItems[i], cx, cy, altText)
+        }
+    }
+
+    private fun showAlt(p: Pointer, k: Key) {
+        val chars = k.alts.map { display(it.toString()) }.distinct()
+        if (chars.isEmpty()) return
+        val n = chars.size
+        val cell = min(dp(46f), (width - dp(8f)) / n)
+        val pw = cell * n
+        val leftMode = k.centerX < width / 2f
+        val origin = (if (leftMode) k.left else k.right - pw)
+            .coerceIn(0f, maxOf(0f, (width - pw).toFloat()))
+
+        altItems = if (leftMode) chars else chars.reversed()
+        altOriginX = origin
+        altCell = cell
+        altTop = (k.top - dp(56f)).coerceAtLeast(dp(2f))
+        altShown = true
+        altSel = ((p.lastX - origin) / cell).toInt().coerceIn(0, n - 1)
+
+        altAnimator?.cancel()
+        altAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 100L
+            interpolator = DecelerateInterpolator(1.8f)
+            addUpdateListener {
+                altProgress = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    private fun updateAlt(p: Pointer, x: Float) {
+        if (!altShown || altItems.isEmpty()) return
+        val idx = ((x - altOriginX) / altCell).toInt().coerceIn(0, altItems.size - 1)
+        if (idx != altSel) {
+            altSel = idx
+            hapticTick()
+            invalidate()
+        }
+    }
+
+    private fun dismissAlt() {
+        if (!altShown) return
+        altAnimator?.cancel()
+        altAnimator = ValueAnimator.ofFloat(altProgress, 0f).apply {
+            duration = 80L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                altProgress = it.animatedValue as Float
+                invalidate()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    altShown = false
+                    altItems = emptyList()
+                    invalidate()
+                }
+            })
+            start()
+        }
+    }
+
+    // ------------------------------------------------------------------ touch
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
         if (trackpadActive) return handleTrackpad(e)
@@ -448,7 +632,7 @@ class KeyboardView(context: Context) : View(context) {
             MotionEvent.ACTION_CANCEL -> {
                 cancelCount = 0
                 val n = pointers.size()
-                if (cancelIds.size < n) return cancelAllSlow()
+                if (cancelIds.size < n) { cancelAllSlow(); return true }
                 for (i in 0 until n) cancelIds[cancelCount++] = pointers.keyAt(i)
                 for (i in 0 until cancelCount) up(cancelIds[i], true)
             }
@@ -483,7 +667,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun enterTrackpad() {
         if (trackpadActive) return
         trackpadActive = true
-        hapticLong()
+        hapticHeavy()
         listener?.onTrackpadEnter()
         invalidate()
     }
@@ -495,12 +679,11 @@ class KeyboardView(context: Context) : View(context) {
         invalidate()
     }
 
-    private fun cancelAllSlow(): Boolean {
+    private fun cancelAllSlow() {
         val n = pointers.size()
         val ids = IntArray(n)
         for (i in 0 until n) ids[i] = pointers.keyAt(i)
         for (id in ids) up(id, true)
-        return true
     }
 
     private fun down(id: Int, x: Float, y: Float) {
@@ -513,11 +696,10 @@ class KeyboardView(context: Context) : View(context) {
         invalidate(k)
     }
 
-    /** Animate the global pressProgress 0→1 with a fast decelerate curve. */
     private fun startPressAnimation() {
         pressAnimator?.cancel()
         pressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 60L
+            duration = 55L
             interpolator = DecelerateInterpolator(2f)
             addUpdateListener {
                 pressProgress = it.animatedValue as Float
@@ -527,11 +709,10 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    /** Animate pressProgress 1→0 on release with a slightly slower ease-out. */
     private fun stopPressAnimation() {
         pressAnimator?.cancel()
         pressAnimator = ValueAnimator.ofFloat(pressProgress, 0f).apply {
-            duration = 120L
+            duration = 110L
             interpolator = DecelerateInterpolator(1.5f)
             addUpdateListener {
                 pressProgress = it.animatedValue as Float
@@ -571,7 +752,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun move(id: Int, x: Float, y: Float) {
         val p = pointers.get(id) ?: return
         val k = p.key ?: return
-        if (p.altShown) {
+        if (altShown) {
             p.lastX = x
             updateAlt(p, x)
             return
@@ -581,6 +762,7 @@ class KeyboardView(context: Context) : View(context) {
             if (!p.swiping && abs(x - p.downX) > dp(14f)) {
                 p.swiping = true
                 cancelLong(p)
+                hidePreview()
                 p.lastX = x
             }
             if (p.swiping) {
@@ -608,11 +790,11 @@ class KeyboardView(context: Context) : View(context) {
         pointers.remove(id)
         cancelLong(p)
         p.repeatRunnable?.let { handler.removeCallbacks(it) }
-        p.repeatRunnable = null
-        hidePreview()
+        p.repeatRunnable = null        hidePreview()
         val k = p.key
-        if (p.altShown) {
-            val s = p.altItems.getOrNull(p.altSel)
+
+        if (altShown) {
+            val s = altItems.getOrNull(altSel)
             dismissAlt()
             if (!cancel && s != null) listener?.onText(s)
         } else if (!cancel && k != null && !p.consumed && !p.swiping) {
@@ -646,7 +828,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun longPress(p: Pointer) {
         val k = p.key ?: return
         p.longRunnable = null
-        hapticLong()
+        hapticHeavy()
         if (k.kind == KeyKind.SPACE) {
             if (trackpadEnabled) {
                 p.consumed = true
@@ -669,30 +851,22 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    // ------------------------------------------------------------------ haptics
+
     private fun feedback(k: Key) {
         if (haptic) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val effect = when (k.kind) {
-                    KeyKind.SPACE -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
-                    KeyKind.ENTER -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
-                    KeyKind.FUNC -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
+                val effect = when {
+                    k.kind == KeyKind.SPACE -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+                    k.kind == KeyKind.ENTER -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+                    k.kind == KeyKind.FUNC -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
                     else -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
                 }
-                try {
-                    vibrator?.vibrate(effect)
-                } catch (_: Exception) {
-                    @Suppress("DEPRECATION")
-                    performHapticFeedback(
-                        HapticFeedbackConstants.KEYBOARD_TAP,
-                        HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
-                    )
+                try { vibrator?.vibrate(effect) } catch (_: Exception) {
+                    fallbackTap()
                 }
             } else {
-                @Suppress("DEPRECATION")
-                performHapticFeedback(
-                    HapticFeedbackConstants.KEYBOARD_TAP,
-                    HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
-                )
+                fallbackTap()
             }
         }
         if (sound) {
@@ -708,7 +882,18 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    private fun hapticLong() {
+    private fun hapticTick() {
+        if (!haptic) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
+                return
+            } catch (_: Exception) {}
+        }
+        fallbackTap()
+    }
+
+    private fun hapticHeavy() {
         if (!haptic) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
@@ -720,126 +905,20 @@ class KeyboardView(context: Context) : View(context) {
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     }
 
-    private val previewText = TextView(context).apply {
-        gravity = Gravity.CENTER
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
-    }
-    private var previewWindow: PopupWindow? = null
-    private val loc = IntArray(2)
-
-    private inner class AltView(ctx: Context) : View(ctx) {
-        var items: List<String> = emptyList()
-        var sel = 0
-        var cell = 0f
-        private val bg = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
-
-        override fun onDraw(canvas: Canvas) {
-            val r = dp(10f)
-            bg.color = kbTheme.popupBg
-            canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, bg)
-            items.forEachIndexed { i, s ->
-                val l = i * cell
-                if (i == sel) {
-                    bg.color = kbTheme.accent
-                    canvas.drawRoundRect(l + dp(3f), dp(3f), l + cell - dp(3f), height - dp(3f), r, r, bg)
-                }
-                tp.color = if (i == sel) kbTheme.accentText else kbTheme.text
-                tp.textSize = dp(22f)
-                canvas.drawText(s, l + cell / 2f, height / 2f - (tp.ascent() + tp.descent()) / 2f, tp)
-            }
-        }
-    }
-
-    private val altView = AltView(context)
-    private var altWindow: PopupWindow? = null
-
-    private fun showPreviewFor(k: Key) {
-        if (!showPreview) return
-        previewText.background = GradientDrawableCache.forKey(kbTheme.popupBg, dp(10f))
-        previewText.setTextColor(kbTheme.text)
-        previewText.text = display(k.label)
-        val pw = (k.right - k.left + dp(18f)).toInt()
-        val ph = dp(58f).toInt()
-        getLocationOnScreen(loc)
-        val screenW = resources.displayMetrics.widthPixels
-        val x = (loc[0] + k.centerX - pw / 2f).toInt().coerceIn(0, maxOf(0, screenW - pw))
-        val y = (loc[1] + k.top - ph - dp(2f)).toInt()
-        try {
-            val w = previewWindow
-            if (w == null) {
-                previewWindow = PopupWindow(previewText, pw, ph).apply {
-                    isTouchable = false
-                    isFocusable = false
-                    isClippingEnabled = false
-                    inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-                    showAtLocation(this@KeyboardView, Gravity.NO_GRAVITY, x, y)
-                }
-            } else {
-                w.update(x, y, pw, ph)
-            }
-        } catch (_: Exception) {
-            previewWindow = null
-        }
-    }
-
-    private fun hidePreview() {
-        try { previewWindow?.dismiss() } catch (_: Exception) {}
-        previewWindow = null
-    }
-
-    private fun showAlt(p: Pointer, k: Key) {
-        val chars = k.alts.map { display(it.toString()) }.distinct()
-        val n = chars.size
-        val cell = min(dp(44f), (width - dp(8f)) / n)
-        val pw = (cell * n).toInt()
-        val ph = dp(54f).toInt()
-        val leftMode = k.centerX < width / 2f
-        val origin = (if (leftMode) k.left else k.right - pw)
-            .coerceIn(0f, maxOf(0f, (width - pw).toFloat()))
-        p.altItems = if (leftMode) chars else chars.reversed()
-        p.altOrigin = origin
-        p.altCell = cell
-        p.altShown = true
-        p.altSel = ((p.lastX - origin) / cell).toInt().coerceIn(0, n - 1)
-        altView.items = p.altItems
-        altView.sel = p.altSel
-        altView.cell = cell
-        getLocationOnScreen(loc)
-        val px = loc[0] + origin.toInt()
-        val py = (loc[1] + k.top - ph - dp(6f)).toInt()
-        try {
-            altWindow = PopupWindow(altView, pw, ph).apply {
-                isTouchable = false
-                isFocusable = false
-                isClippingEnabled = false
-                inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-                showAtLocation(this@KeyboardView, Gravity.NO_GRAVITY, px, py)
-            }
-        } catch (_: Exception) {
-            altWindow = null
-        }
-        altView.invalidate()
-    }
-
-    private fun updateAlt(p: Pointer, x: Float) {
-        val idx = ((x - p.altOrigin) / p.altCell).toInt().coerceIn(0, p.altItems.size - 1)
-        if (idx != p.altSel) {
-            p.altSel = idx
-            altView.sel = idx
-            altView.invalidate()
-        }
-    }
-
-    private fun dismissAlt() {
-        try { altWindow?.dismiss() } catch (_: Exception) {}
-        altWindow = null
+    @Suppress("DEPRECATION")
+    private fun fallbackTap() {
+        performHapticFeedback(
+            HapticFeedbackConstants.KEYBOARD_TAP,
+            HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+        )
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         pressAnimator?.cancel()
         layoutAnimator?.cancel()
+        previewAnimator?.cancel()
+        altAnimator?.cancel()
         val n = pointers.size()
         for (i in 0 until n) {
             val p = pointers.valueAt(i)
@@ -848,8 +927,9 @@ class KeyboardView(context: Context) : View(context) {
             recyclePointer(p)
         }
         pointers.clear()
-        hidePreview()
-        dismissAlt()
+        previewKey = null
+        altShown = false
+        altItems = emptyList()
     }
 
     fun release() {
@@ -857,11 +937,12 @@ class KeyboardView(context: Context) : View(context) {
         bgBitmap = null
         pressAnimator?.cancel()
         layoutAnimator?.cancel()
+        previewAnimator?.cancel()
+        altAnimator?.cancel()
         pointers.clear()
         pointerPool.clear()
-        previewWindow?.let { try { it.dismiss() } catch (_: Exception) {} }
-        altWindow?.let { try { it.dismiss() } catch (_: Exception) {} }
-        previewWindow = null
-        altWindow = null
+        previewKey = null
+        altShown = false
+        altItems = emptyList()
     }
 }
