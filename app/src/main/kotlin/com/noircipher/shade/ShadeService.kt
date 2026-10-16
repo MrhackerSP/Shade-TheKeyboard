@@ -41,8 +41,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private val toolDefs = listOf(
         "clip" to "📋", "emoji" to "😀", "numpad" to "123", "left" to "◀", "right" to "▶",
-        "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste", "undo" to "Undo",
-        "incognito" to "🕶", "onehand" to "1-hand", "settings" to "⚙"
+        "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste",
+        "undo" to "Undo", "incognito" to "🕶", "onehand" to "1-hand", "settings" to "⚙"
     )
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -89,13 +89,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var bgBmp: Bitmap? = null
     private var bgStamp = -1L
 
-    // --- Cached surrounding-text / cursor state (avoids InputConnection on every keystroke) ---
-    private val tail = StringBuilder(16)   // last ~16 chars we know are before the cursor
+    // Cached tail of recently committed characters
+    private val tail = StringBuilder(16)
     private var cursorPos = -1
     private var selectionEnd = -1
     private var tailValid = false
 
-    // --- Coroutines ---
+    // Coroutines
     private val serviceJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Main.immediate + serviceJob)
     private var suggestJob: Job? = null
@@ -109,24 +109,27 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onCreate() {
         super.onCreate()
-        // Eagerly restore state so a process restart is invisible to the user
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         dict = WordDictionary(this)
+        dict.bigramModel = BigramModel(this)
         clips = ClipboardStore(this)
         cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         try { cm.addPrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
+
         // Warm the dictionary cache off the main thread
-        val ids = prefs.getStringSet("dictionaries", null) ?: setOf("en")
-        scope.launch(Dispatchers.Default) { dict.configure(ids) }
+        val locale = prefs.getString("locale", "en") ?: "en"
+        scope.launch(Dispatchers.Default) {
+            dict.configure(locale)
+        }
     }
 
     override fun onDestroy() {
         try { cm.removePrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
+        dict.bigramModel?.save()
         suggestJob?.cancel()
         correctJob?.cancel()
         serviceJob.cancel()
 
-        // Release heavy references explicitly
         if (::kb.isInitialized) kb.release()
         bgBmp = null
         candidates = emptyList()
@@ -148,7 +151,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         toggle = TextView(this).apply {
             gravity = Gravity.CENTER
             textSize = 22f
-            setOnClickListener { toolbarOpen = !toolbarOpen; refreshStrip() }
+            setOnClickListener {
+                toolbarOpen = !toolbarOpen
+                refreshStrip()
+            }
         }
         slots = List(3) { i ->
             TextView(this).apply {
@@ -275,7 +281,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
-        // Drop heavy refs so we don't pin the editor
         suggestJob?.cancel()
         correctJob?.cancel()
         info = null
@@ -300,8 +305,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int,
         candidatesStart: Int, candidatesEnd: Int
     ) {
-        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
-        // Any cursor move invalidates our cached tail
+        super.onUpdateSelection(
+            oldSelStart, oldSelEnd, newSelStart, newSelEnd,
+            candidatesStart, candidatesEnd
+        )
         if (newSelStart != cursorPos || newSelEnd != selectionEnd) {
             cursorPos = newSelStart
             selectionEnd = newSelEnd
@@ -330,7 +337,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         emojiSuggest = prefs.getBoolean("emoji_suggestions", true)
         incognito = prefs.getBoolean("incognito", false)
         layoutName = prefs.getString("layout", "qwerty") ?: "qwerty"
-        dict.configure(prefs.getStringSet("dictionaries", null) ?: setOf("en"))
+
+        // Configure the active locale (suspend, off main thread)
+        val locale = prefs.getString("locale", "en") ?: "en"
+        scope.launch(Dispatchers.Default) {
+            dict.configure(locale)
+        }
 
         val keyH = prefs.getInt("key_height", 50)
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -345,7 +357,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         kb.kbTheme = kbTheme
         kb.contentHeightPx = contentH
-        kb.oneHanded = when (prefs.getString("one_handed", "off")) { "left" -> 1; "right" -> 2; else -> 0 }
+        kb.oneHanded = when (prefs.getString("one_handed", "off")) {
+            "left" -> 1
+            "right" -> 2
+            else -> 0
+        }
         kb.splitKeyboard = split
         kb.keyBorders = prefs.getBoolean("key_borders", true)
         kb.showHints = prefs.getBoolean("show_hints", true)
@@ -373,7 +389,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun loadBackground() {
         val f = File(filesDir, "bg.jpg")
-        if (!f.exists()) { bgBmp = null; bgStamp = -1L; return }
+        if (!f.exists()) {
+            bgBmp = null
+            bgStamp = -1L
+            return
+        }
         if (f.lastModified() == bgStamp && bgBmp != null) return
         try {
             val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -426,7 +446,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         mode = m
         kb.setRows(
             when (m) {
-                Mode.LETTERS -> Layouts.letters(layoutName, numberRow, prefs.getString("custom_layout", "") ?: "")
+                Mode.LETTERS -> Layouts.letters(
+                    layoutName, numberRow,
+                    prefs.getString("custom_layout", "") ?: ""
+                )
                 Mode.SYM1 -> Layouts.symbols1()
                 Mode.SYM2 -> Layouts.symbols2()
                 Mode.NUMPAD -> Layouts.numpad()
@@ -468,13 +491,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 rebuildToolbar()
             }
             "onehand" -> {
-                val next = when (prefs.getString("one_handed", "off")) { "off" -> "left"; "left" -> "right"; else -> "off" }
+                val next = when (prefs.getString("one_handed", "off")) {
+                    "off" -> "left"; "left" -> "right"; else -> "off"
+                }
                 prefs.edit().putString("one_handed", next).apply()
-                kb.oneHanded = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
+                kb.oneHanded = when (next) {
+                    "left" -> 1; "right" -> 2; else -> 0
+                }
                 kb.relayout()
             }
             "settings" -> startActivity(
-                Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                Intent(this, SettingsActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         }
         updateShiftFromCaps()
@@ -486,20 +514,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         try {
             val clip = cm.primaryClip ?: return
             if (clip.itemCount == 0) return
-            if (clip.description.extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true) return
+            if (clip.description.extras
+                    ?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true
+            ) return
             val t = clip.getItemAt(0).coerceToText(this)?.toString() ?: return
             if (t.isBlank() || t.length > 2000) return
             clips.add(t)
         } catch (_: Exception) {}
     }
 
-    // ------------------------------------------------------------------ cached surrounding text
+    // ------------------------------------------------------------------ cached tail
 
-    /**
-     * Maintain a small tail of recently committed characters so we don't need to
-     * query InputConnection.getTextBeforeCursor on every keystroke.
-     * If the cursor moved for any reason, [tailValid] is false and we resync.
-     */
     private fun appendTail(s: String) {
         for (c in s) {
             tail.append(c)
@@ -572,11 +597,32 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         updateSuggestions()
     }
 
-    override fun onLongPressSpecial() {
-        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
+    override fun onCursorMove(dx: Int, dy: Int) {
+        // Trackpad mode: fire DPAD events for each step
+        var i = 0
+        while (i < dx) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT); i++ }
+        while (i > dx) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT); i-- }
+        var j = 0
+        while (j < dy) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_DOWN); j++ }
+        while (j > dy) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_UP); j-- }
+        tailValid = false
     }
 
-    // ------------------------------------------------------------------ editing actions
+    override fun onTrackpadEnter() {
+        // Optional: could dim the keyboard or show a hint
+    }
+
+    override fun onTrackpadExit() {
+        updateShiftFromCaps()
+        updateSuggestions()
+    }
+
+    override fun onLongPressSpecial() {
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .showInputMethodPicker()
+    }
+
+    // ------------------------------------------------------------------ editing
 
     private fun onShift() {
         val now = SystemClock.uptimeMillis()
@@ -609,7 +655,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             if (learnOn && !incognito) dict.learn(r.original)
         } else if (composing.isNotEmpty()) {
             composing.deleteCharAt(composing.length - 1)
-            if (composing.isEmpty()) ic.commitText("", 1) else ic.setComposingText(composing.toString(), 1)
+            if (composing.isEmpty()) ic.commitText("", 1)
+            else ic.setComposingText(composing.toString(), 1)
             popTail(1)
         } else {
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
@@ -623,20 +670,19 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun space() {
         val ic = currentInputConnection ?: return
-        // Wrap the WHOLE operation in a single batch edit (autocorrect + space + double-space)
         ic.beginBatchEdit()
         try {
+            val originalLen = composing.length
             val corrected = endWord(" ")
             if (corrected != null) {
-                // endWord already committed the correction; account for it in the tail
-                popTail(composing.length) // composing was cleared inside endWord
+                popTail(originalLen)
                 appendTail(corrected)
             }
             val now = SystemClock.uptimeMillis()
             var done = false
             if (corrected == null && doubleSpace && now - lastSpaceTime < 500) {
-                val before = if (tailValid) tail.toString() else
-                    currentInputConnection?.getTextBeforeCursor(2, 0)?.toString() ?: ""
+                val before = if (tailValid) tail.toString()
+                else currentInputConnection?.getTextBeforeCursor(2, 0)?.toString() ?: ""
                 if (before.length == 2 && before[1] == ' ' && before[0].isLetterOrDigit()) {
                     ic.deleteSurroundingText(1, 0)
                     ic.commitText(". ", 1)
@@ -664,7 +710,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val opts = info?.imeOptions ?: 0
         val action = opts and EditorInfo.IME_MASK_ACTION
         val noEnterAction = (opts and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
-        if (!noEnterAction && action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED) {
+        if (!noEnterAction &&
+            action != EditorInfo.IME_ACTION_NONE &&
+            action != EditorInfo.IME_ACTION_UNSPECIFIED
+        ) {
             ic.performEditorAction(action)
         } else {
             sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
@@ -682,17 +731,19 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         var corrected: String? = null
         if (composing.isNotEmpty()) {
             val w = composing.toString()
-            if (sep != null && autocorrectOn && canCompose && w.lowercase() !in ignored &&
+            if (sep != null && autocorrectOn && canCompose &&
+                w.lowercase() !in ignored &&
                 w.drop(1).none { it.isUpperCase() }
             ) {
-                // Async correction: do not block the UI thread
-                corrected = runBlockingCorrection(w)
+                corrected = dict.correction(w)
             }
             if (corrected != null) {
                 ic?.commitText(corrected, 1)
                 revert = Revert(w, corrected, sep!!)
             } else {
-                if (learnOn && !incognito && canCompose) dict.learn(w)
+                if (learnOn && !incognito && canCompose) {
+                    dict.learn(w, prev2 = null, prev1 = lastWord())
+                }
                 ic?.finishComposingText()
             }
             composing.clear()
@@ -702,13 +753,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return corrected
     }
 
-    /**
-     * Small synchronous bridge for the autocorrect path. If a suggestion job is in flight
-     * we prefer its cached result; otherwise we do a cheap synchronous lookup (the Trie +
-     * SymSpell index are O(1)/O(M), so this is microseconds).
-     */
-    private fun runBlockingCorrection(w: String): String? {
-        return dict.correction(w)
+    private fun lastWord(): String? {
+        if (!tailValid && !resync()) return null
+        val s = tail.toString().trimEnd()
+        if (s.isEmpty()) return null
+        val idx = s.lastIndexOfAny(charArrayOf(' ', '\n', '\t'))
+        return if (idx < 0) s else s.substring(idx + 1).takeIf { it.isNotEmpty() }
+    }
+
+    private fun resync(): Boolean {
+        val before = currentInputConnection?.getTextBeforeCursor(16, 0)?.toString() ?: return false
+        tail.setLength(0)
+        tail.append(before)
+        tailValid = true
+        return true
     }
 
     private fun afterText() {
@@ -742,11 +800,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.shiftState = shiftState
     }
 
-    // ------------------------------------------------------------------ suggestions (async)
+    // ------------------------------------------------------------------ suggestions
 
     private fun atSentenceStart(): Boolean {
-        val before = if (tailValid) tail.toString() else
-            currentInputConnection?.getTextBeforeCursor(3, 0)?.toString() ?: return false
+        val before = if (tailValid) tail.toString()
+        else currentInputConnection?.getTextBeforeCursor(3, 0)?.toString() ?: return false
         val t = before.trimEnd()
         return t.isEmpty() || t.last() in ".!?"
     }
@@ -761,7 +819,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
         val prefix = composing.toString()
         if (prefix.isEmpty()) {
-            candidates = if (atSentenceStart()) listOf("I", "The", "I'm") else emptyList()
+            // Next-word prediction via bigram context
+            val prev1 = lastWord()
+            val prev2 = null // only one step back for now
+            val next = if (prev1 != null) dict.predictNext(prev2, prev1, 3) else emptyList()
+            candidates = if (next.isNotEmpty()) next
+            else if (atSentenceStart()) listOf("I", "The", "I'm")
+            else emptyList()
             renderSlots()
             return
         }
@@ -802,7 +866,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             ic.endBatchEdit()
         }
         if (w[0].isLetter()) {
-            if (learnOn && !incognito && canCompose) dict.learn(w)
+            if (learnOn && !incognito && canCompose) {
+                dict.learn(w, prev2 = null, prev1 = lastWord())
+            }
             justAutoSpaced = true
         } else {
             justAutoSpaced = false
