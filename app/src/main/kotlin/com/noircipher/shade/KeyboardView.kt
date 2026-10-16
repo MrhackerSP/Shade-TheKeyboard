@@ -4,12 +4,11 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.Shader
+import android.graphics.Typeface
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -18,6 +17,7 @@ import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.SparseArray
+import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
@@ -53,7 +53,11 @@ class KeyboardView(context: Context) : View(context) {
         set(v) { field = v; invalidate() }
     var enterLabel = ""
         set(v) { field = v; invalidate() }
-    var spaceLabel = ""
+
+    /** True when the Enter key represents the primary action and should be tinted. */
+    var enterIsPrimary = false
+        set(v) { field = v; invalidate() }
+
     var keyBorders = true
     var splitKeyboard = false
     var showHints = true
@@ -67,7 +71,6 @@ class KeyboardView(context: Context) : View(context) {
     var bgBitmap: Bitmap? = null
         set(v) { field = v; invalidate() }
 
-    // Trackpad
     var trackpadEnabled = true
     private var trackpadActive = false
     private var trackpadStartX = 0f
@@ -76,11 +79,9 @@ class KeyboardView(context: Context) : View(context) {
     private var trackpadLastSentY = 0f
     private val trackpadStep = 22f
 
-    // Split animation: 0 = joined, 1 = fully split
     private var splitProgress = if (splitKeyboard) 1f else 0f
     private var splitAnimator: ValueAnimator? = null
 
-    // Layout crossfade
     private var layoutAlpha = 1f
     private var layoutAnimator: ValueAnimator? = null
 
@@ -96,6 +97,13 @@ class KeyboardView(context: Context) : View(context) {
         strokeJoin = Paint.Join.ROUND
     }
 
+    // Shadow render pass — only used when the theme requests it.
+    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x22000000
+    }
+    private val keyShape = Path()
+    private val shadowShape = Path()
+
     private val rect = RectF()
     private val dst = RectF()
     private val path = Path()
@@ -106,11 +114,12 @@ class KeyboardView(context: Context) : View(context) {
     private val pointerPool = ArrayDeque<Pointer>(8)
     private var rowHeight = 0f
 
-    // Global press animation
     private var pressProgress = 1f
     private var pressAnimator: ValueAnimator? = null
 
-    // Circular key preview
+    private var shiftTapProgress = 0f
+    private var shiftTapAnimator: ValueAnimator? = null
+
     private var previewKey: Key? = null
     private var previewProgress = 0f
     private var previewAnimator: ValueAnimator? = null
@@ -119,7 +128,6 @@ class KeyboardView(context: Context) : View(context) {
     private val previewText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val previewShadow = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    // Accent strip
     private var altShown = false
     private var altItems: List<String> = emptyList()
     private var altSel = 0
@@ -134,7 +142,6 @@ class KeyboardView(context: Context) : View(context) {
     private val altRect = RectF()
     private val altShadow = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    // Spacebar swipe trail
     private var trailActive = false
     private var trailStartX = 0f
     private var trailStartY = 0f
@@ -151,7 +158,6 @@ class KeyboardView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
     }
 
-    // Typing burst
     private var lastKeyTime = 0L
     private var burstCount = 0
     private var burstActive = false
@@ -238,7 +244,6 @@ class KeyboardView(context: Context) : View(context) {
 
     fun relayout() { layoutKeys(); invalidate() }
 
-    /** Animate the split keyboard into or out of position. */
     fun setSplitAnimated(split: Boolean) {
         splitKeyboard = split
         val target = if (split) 1f else 0f
@@ -272,21 +277,34 @@ class KeyboardView(context: Context) : View(context) {
         if (w <= 0f || h <= 0f || rows.isEmpty()) return
         val availW = if (oneHanded == 0) w else w * 0.8f
         val offX = if (oneHanded == 2) w - availW else 0f
-        val padX = dp(3f)
         val padTop = dp(5f)
         val padBottom = dp(5f)
+        // Bottom row gets a slightly larger outer margin so the rounded
+        // outer corners sit visually inside the screen edge.
+        val bottomRowPad = dp(6f)
+        val defaultPad = dp(3f)
         rowHeight = (h - padTop - padBottom) / rows.size
         val maxGap = min(dp(72f), w * 0.15f)
         val gap = maxGap * splitProgress
+
         rows.forEachIndexed { r, row ->
+            val isBottom = r == rows.lastIndex
+            val padX = if (isBottom) bottomRowPad else defaultPad
             val eligible = gap > 0.5f && row.size >= 6 && row.none { it.kind == KeyKind.SPACE }
             val rowGap = if (eligible) gap else 0f
             val total = row.sumOf { it.weight.toDouble() }.toFloat()
-            val unit = (availW - 2 * padX - rowGap) / total
+
+            // Bottom row: non-character keys get a wider outer gap than
+            // character keys, so the spacebar and enter read as distinct.
+            // Model: sum of weights = total, but we subtract extra gap widths
+            // from the available width when laying out the bottom row.
+            val bottomExtraGaps = if (isBottom) dp(3f) * (row.size - 1) else 0f
+            val unit = (availW - 2 * padX - rowGap - bottomExtraGaps) / total
+
             var x = offX + padX
             var cum = 0f
             var gapDone = false
-            for (k in row) {
+            for ((idx, k) in row.withIndex()) {
                 if (eligible && !gapDone && cum >= total / 2f - 0.01f) {
                     x += rowGap
                     gapDone = true
@@ -298,7 +316,18 @@ class KeyboardView(context: Context) : View(context) {
                 k.updateInvalidateRect(dp(3f).toInt())
                 x = k.right
                 cum += k.weight
+                // Bottom row extra gap between keys
+                if (isBottom && idx < row.size - 1) x += dp(3f)
             }
+        }
+
+        // Tag the outer keys of the bottom row for screen-corner rounding.
+        val lastRow = rows.lastOrNull() ?: return
+        val visible = lastRow.filter { it.kind != KeyKind.SPACER }
+        for (k in visible) k.outerCorner = KeyOuterCorner.NONE
+        if (visible.isNotEmpty()) {
+            visible.first().outerCorner = KeyOuterCorner.BOTTOM_LEFT
+            visible.last().outerCorner = KeyOuterCorner.BOTTOM_RIGHT
         }
     }
 
@@ -358,20 +387,49 @@ class KeyboardView(context: Context) : View(context) {
         val gy = dp(3f)
         val radius = dp(7f)
         val combinedAlpha = ((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255)
+        val pressDown = dp(0.7f) * pressProgress
 
         for (row in rows) for (k in row) {
             if (k.kind == KeyKind.SPACER) continue
             if (k.right < clipL || k.left > clipR || k.bottom < clipT || k.top > clipB) continue
-            rect.set(k.left + gx, k.top + gy, k.right - gx, k.bottom - gy)
             val isPressed = k in pressedKeys
+            // Press-down shift
+            val topShift = if (isPressed) pressDown else 0f
+            rect.set(
+                k.left + gx,
+                k.top + gy + topShift,
+                k.right - gx,
+                k.bottom - gy + topShift
+            )
+
             val special = k.kind == KeyKind.ENTER || (k.code == Codes.SHIFT && shiftState == 2)
             if (!keyBorders && !isPressed && !special) {
                 drawContent(c, k, combinedAlpha)
                 continue
             }
+
+            // Soft shadow beneath keys (Material You style)
+            if (keyBorders) {
+                shadowPaint.color = 0x18000000
+                rect.set(
+                    k.left + gx,
+                    k.top + gy + dp(1.5f),
+                    k.right - gx,
+                    k.bottom - gy + dp(1.5f)
+                )
+                c.drawRoundRect(rect, radius, radius, shadowPaint)
+                rect.set(
+                    k.left + gx,
+                    k.top + gy + topShift,
+                    k.right - gx,
+                    k.bottom - gy + topShift
+                )
+            }
+
             var baseCol = when {
-                k.kind == KeyKind.ENTER -> kbTheme.accent
-                k.kind == KeyKind.FUNC && k.code == Codes.SHIFT && shiftState == 2 -> kbTheme.accent
+                k.kind == KeyKind.ENTER && enterIsPrimary -> kbTheme.accent
+                k.kind == KeyKind.ENTER -> kbTheme.keyFn
+                k.kind == KeyKind.FUNC && k.code == Codes.SHIFT && shiftState == 2 -> kbTheme.keyFn
                 k.kind == KeyKind.FUNC -> kbTheme.keyFn
                 else -> kbTheme.key
             }
@@ -382,19 +440,56 @@ class KeyboardView(context: Context) : View(context) {
                 baseCol
             }
             fill.color = ColorUtils.setAlphaComponent(col, combinedAlpha)
-            c.drawRoundRect(rect, radius, radius, fill)
+
+            val outer = k.outerCorner
+            if (outer == KeyOuterCorner.NONE) {
+                c.drawRoundRect(rect, radius, radius, fill)
+            } else {
+                drawOuterRoundedKey(c, k, radius, outer)
+            }
             drawContent(c, k, combinedAlpha)
         }
 
-        // Swipe trail under popups
         if (trailActive && trailAlpha > 0f) drawTrail(c)
-
-        // Burst
         if (burstActive && typingBurstEnabled) drawTypingBurst(c)
-
-        // Popups
         if (altShown && altItems.isNotEmpty()) drawAltStrip(c)
         previewKey?.let { if (previewProgress > 0f) drawKeyPreview(c, it) }
+    }
+
+    private fun drawOuterRoundedKey(
+        c: Canvas,
+        k: Key,
+        radius: Float,
+        which: KeyOuterCorner
+    ) {
+        val left = rect.left
+        val top = rect.top
+        val right = rect.right
+        val bottom = rect.bottom
+
+        // Two-pass: rounded rect with uniform radius, then overdraw the
+        // screen-facing bottom corner flush with the keyboard edge.
+        c.drawRoundRect(rect, radius, radius, fill)
+
+        path.reset()
+        if (which == KeyOuterCorner.BOTTOM_LEFT) {
+            // Overdraw only the bottom-left corner area
+            path.addRoundRect(
+                RectF(left, top, left + radius * 2f, bottom),
+                floatArrayOf(0f, 0f, 0f, 0f, radius, radius, 0f, 0f),
+                Path.Direction.CW
+            )
+            // Extend into the bottom-left outer corner so the curve is flush
+            path.addRect(left, top, left + radius, bottom - radius, Path.Direction.CW)
+        } else {
+            path.addRoundRect(
+                RectF(right - radius * 2f, top, right, bottom),
+                floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, radius, radius),
+                Path.Direction.CW
+            )
+            path.addRect(right - radius, top, right, bottom - radius, Path.Direction.CW)
+        }
+        c.drawPath(path, fill)
     }
 
     private fun textY(p: Paint, cy: Float) = cy - (p.ascent() + p.descent()) / 2f
@@ -414,18 +509,20 @@ class KeyboardView(context: Context) : View(context) {
                     c.drawText(k.alts.substring(0, 1), rect.right - dp(7f), rect.top + dp(12f), textPaint)
                 }
             }
-            KeyKind.SPACE -> if (spaceLabel.isNotEmpty()) {
-                textPaint.color = ColorUtils.setAlphaComponent(kbTheme.hint, alpha)
-                textPaint.textSize = dp(12f)
-                c.drawText(spaceLabel, cx, textY(textPaint, cy), textPaint)
+            KeyKind.SPACE -> {
+                // Spacebar has no label anymore. Draw nothing.
             }
             KeyKind.ENTER -> {
                 if (enterLabel.isNotEmpty()) {
-                    textPaint.color = ColorUtils.setAlphaComponent(kbTheme.accentText, alpha)
+                    textPaint.color = ColorUtils.setAlphaComponent(
+                        if (enterIsPrimary) kbTheme.accentText else kbTheme.text, alpha
+                    )
                     textPaint.textSize = dp(14f)
                     c.drawText(enterLabel, cx, textY(textPaint, cy), textPaint)
                 } else {
-                    stroke.color = ColorUtils.setAlphaComponent(kbTheme.accentText, alpha)
+                    stroke.color = ColorUtils.setAlphaComponent(
+                        if (enterIsPrimary) kbTheme.accentText else kbTheme.text, alpha
+                    )
                     stroke.strokeWidth = dp(2f)
                     stroke.style = Paint.Style.STROKE
                     path.reset()
@@ -452,10 +549,16 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    private fun drawShift(c: Canvas, cx: Float, cy0: Float, s: Float, alpha: Int) {
+    private fun drawShift(c: Canvas, cx: Float, cy0: Float, s0: Float, alpha: Int) {
         val caps = shiftState == 2
-        val cy = if (caps) cy0 - s * 0.15f else cy0
-        val col = if (caps) kbTheme.accentText else kbTheme.text
+        val shiftBoost = 1f + 0.18f * shiftTapProgress
+        val s = s0 * shiftBoost
+        val cy = if (caps) cy0 - s * 0.1f else cy0
+
+        // Shift glyph is always drawn in theme text color now — no accent
+        // fill on caps lock. The state is signalled by a small dot below.
+        val col = kbTheme.text
+
         path.reset()
         path.moveTo(cx, cy - s)
         path.lineTo(cx + s, cy)
@@ -469,9 +572,13 @@ class KeyboardView(context: Context) : View(context) {
         stroke.strokeWidth = dp(2f)
         stroke.style = if (shiftState > 0) Paint.Style.FILL_AND_STROKE else Paint.Style.STROKE
         c.drawPath(path, stroke)
+
         if (caps) {
+            // Small dot underneath to indicate caps lock
+            stroke.style = Paint.Style.FILL
+            stroke.color = ColorUtils.setAlphaComponent(kbTheme.accent, alpha)
+            c.drawCircle(cx, cy + s * 1.35f, dp(2.5f), stroke)
             stroke.style = Paint.Style.STROKE
-            c.drawLine(cx - s * 0.45f, cy + s * 1.3f, cx + s * 0.45f, cy + s * 1.3f, stroke)
         }
     }
 
@@ -503,7 +610,7 @@ class KeyboardView(context: Context) : View(context) {
         c.drawArc(rect, 20f, 140f, false, stroke)
     }
 
-    // ------------------------------------------------------------------ spacebar swipe trail
+    // ------------------------------------------------------------------ spacebar trail
 
     private fun drawTrail(c: Canvas) {
         val a = trailAlpha
@@ -513,17 +620,14 @@ class KeyboardView(context: Context) : View(context) {
         val x1 = trailEndX
         val y1 = trailEndY
 
-        // Outer glow: wider, softer
         trailGlowPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0x22).toInt())
         trailGlowPaint.strokeWidth = dp(10f)
         c.drawLine(x0, y0, x1, y1, trailGlowPaint)
 
-        // Core line
         trailPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xAA).toInt())
         trailPaint.strokeWidth = dp(3f)
         c.drawLine(x0, y0, x1, y1, trailPaint)
 
-        // End cap: small circle at the current cursor position
         fill.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xCC).toInt())
         c.drawCircle(x1, y1, dp(5f), fill)
     }
@@ -574,7 +678,11 @@ class KeyboardView(context: Context) : View(context) {
         val diameter = baseDiameter * (0.65f + 0.35f * previewProgress)
         val radius = diameter / 2f
         val cx = k.centerX
-        val cy = k.top - dp(8f) - radius
+        // Prefer above the key, but fall back below if there's no room.
+        var cy = k.top - dp(8f) - radius
+        if (cy - radius < dp(2f)) {
+            cy = k.bottom + dp(8f) + radius
+        }
         val cl = cx.coerceIn(radius + dp(2f), width - radius - dp(2f))
         val ct = cy.coerceIn(radius + dp(2f), height - radius - dp(2f))
 
@@ -706,7 +814,7 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    // ------------------------------------------------------------------ burst
+    // ------------------------------------------------------------------ typing burst
 
     private fun drawTypingBurst(c: Canvas) {
         val intensity = burstProgress
@@ -844,9 +952,37 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    private fun animateShiftTap() {
+        shiftTapAnimator?.cancel()
+        shiftTapAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 90L
+            interpolator = DecelerateInterpolator(2f)
+            addUpdateListener {
+                shiftTapProgress = it.animatedValue as Float
+                invalidate()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    shiftTapAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
+                        duration = 140L
+                        addUpdateListener {
+                            shiftTapProgress = it.animatedValue as Float
+                            invalidate()
+                        }
+                        start()
+                    }
+                }
+            })
+            start()
+        }
+    }
+
     private fun pressKey(p: Pointer) {
         val k = p.key ?: return
         if (k.kind == KeyKind.CHAR) showPreviewFor(k)
+        if (k.kind == KeyKind.FUNC && k.code == Codes.SHIFT) {
+            animateShiftTap()
+        }
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             listener?.onKey(Codes.DELETE)
             val r = object : Runnable {
@@ -1044,6 +1180,7 @@ class KeyboardView(context: Context) : View(context) {
         burstAnimator?.cancel()
         trailAnimator?.cancel()
         splitAnimator?.cancel()
+        shiftTapAnimator?.cancel()
         val n = pointers.size()
         for (i in 0 until n) {
             val p = pointers.valueAt(i)
@@ -1068,6 +1205,7 @@ class KeyboardView(context: Context) : View(context) {
         burstAnimator?.cancel()
         trailAnimator?.cancel()
         splitAnimator?.cancel()
+        shiftTapAnimator?.cancel()
         pointers.clear()
         pointerPool.clear()
         previewKey = null
