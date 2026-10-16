@@ -21,7 +21,6 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
-import android.view.animation.OvershootInterpolator
 import androidx.core.graphics.ColorUtils
 import java.util.ArrayDeque
 import kotlin.math.abs
@@ -122,7 +121,6 @@ class KeyboardView(context: Context) : View(context) {
     private var rowHeight = 0f
 
     private var pressProgress = 1f
-    private var pressScale = 1f
     private var pressAnimator: ValueAnimator? = null
 
     private var shiftTapProgress = 0f
@@ -309,16 +307,14 @@ class KeyboardView(context: Context) : View(context) {
             else -> 0f
         }
 
-        // Gboard spec: 4-6dp outer margins, 6dp vertical row gap,
-        // 0dp bottom margin so the outer corners hug the screen edge.
-        val padTop = dp(4f)
+        // Reduced top and bottom padding so the bottom row hugs the edge.
+        // padBottom = 0 lets the outer rounded corners reach the very
+        // bottom of the view, matching Gboard.
+        val padTop = dp(5f)
         val padBottom = dp(0f)
-        val bottomRowPad = dp(3f)
-        val defaultPad = dp(2f)
-        val rowGapV = dp(6f)
-
-        rowHeight = (h - padTop - padBottom - rowGapV * (rows.size - 1)) / rows.size
-
+        val bottomRowPad = dp(1f)
+        val defaultPad = dp(3f)
+        rowHeight = (h - padTop - padBottom) / rows.size
         val maxGap = min(dp(72f), w * 0.15f)
         val gap = maxGap * splitProgress
 
@@ -326,22 +322,22 @@ class KeyboardView(context: Context) : View(context) {
             val isBottom = r == rows.lastIndex
             val padX = if (isBottom) bottomRowPad else defaultPad
             val eligible = gap > 0.5f && row.size >= 6 && row.none { it.kind == KeyKind.SPACE }
-            val rowGapH = if (eligible) gap else 0f
+            val rowGap = if (eligible) gap else 0f
             val total = row.sumOf { it.weight.toDouble() }.toFloat()
             val bottomExtraGaps = if (isBottom) dp(3f) * (row.size - 1) else 0f
-            val unit = (availW - 2 * padX - rowGapH - bottomExtraGaps) / total
+            val unit = (availW - 2 * padX - rowGap - bottomExtraGaps) / total
 
             var x = offX + padX
             var cum = 0f
             var gapDone = false
             for ((idx, k) in row.withIndex()) {
                 if (eligible && !gapDone && cum >= total / 2f - 0.01f) {
-                    x += rowGapH
+                    x += rowGap
                     gapDone = true
                 }
                 k.left = x
                 k.right = x + k.weight * unit
-                k.top = padTop + r * (rowHeight + rowGapV)
+                k.top = padTop + r * rowHeight
                 k.bottom = k.top + rowHeight
                 k.updateInvalidateRect(dp(3f).toInt())
                 x = k.right
@@ -350,8 +346,9 @@ class KeyboardView(context: Context) : View(context) {
             }
         }
 
-        // Bottom-row outer corners: only the first and last functional
-        // keys get a corner treatment so ?123 and Enter hug the screen.
+        // Bottom-row outer corners: only the first and last *functional*
+        // keys (not spacers) get a corner treatment so ?123 and Enter hug
+        // the screen edge, matching Gboard.
         val lastRow = rows.lastOrNull() ?: return
         val visible = lastRow.filter { it.kind != KeyKind.SPACER }
         for (k in visible) k.outerCorner = KeyOuterCorner.NONE
@@ -413,11 +410,11 @@ class KeyboardView(context: Context) : View(context) {
         val clipR = clipBounds.right.toFloat()
         val clipB = clipBounds.bottom.toFloat()
 
-        // Gboard spec: horizontal gap 5dp, inner radius 8dp, outer 22dp.
-        val gx = dp(2.5f)
-        val gy = dp(3f)
-        val radius = dp(8f)
-        val outerRadius = dp(22f)
+        // Widened gap and larger radius to match Gboard's key spacing.
+        val gx = dp(3.5f)
+        val gy = dp(4f)
+        val radius = dp(10f)
+        val outerRadius = dp(24f)
         val combinedAlpha = ((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255)
         val pressDown = dp(0.7f) * pressProgress
 
@@ -426,19 +423,11 @@ class KeyboardView(context: Context) : View(context) {
             if (k.right < clipL || k.left > clipR || k.bottom < clipT || k.top > clipB) continue
             val isPressed = k in pressedKeys
             val topShift = if (isPressed) pressDown else 0f
-
-            // Press compression: scale the pressed key to ~96% around its center.
-            val s = if (isPressed) pressScale else 1f
-            val kx = (k.left + k.right) / 2f
-            val ky = (k.top + k.bottom) / 2f
-            val hw = (k.right - k.left) / 2f * s
-            val hh = (k.bottom - k.top) / 2f * s
-
             rect.set(
-                kx - hw + gx,
-                ky - hh + gy + topShift,
-                kx + hw - gx,
-                ky + hh - gy + topShift
+                k.left + gx,
+                k.top + gy + topShift,
+                k.right - gx,
+                k.bottom - gy + topShift
             )
 
             val special = k.kind == KeyKind.ENTER || (k.code == Codes.SHIFT && shiftState == 2)
@@ -450,10 +439,10 @@ class KeyboardView(context: Context) : View(context) {
             if (keyBorders) {
                 shadowPaint.color = 0x18000000
                 rect.set(
-                    kx - hw + gx,
-                    ky - hh + gy + dp(0.5f),
-                    kx + hw - gx,
-                    ky + hh - gy + dp(0.5f)
+                    k.left + gx,
+                    k.top + gy + dp(1.5f),
+                    k.right - gx,
+                    k.bottom - gy + dp(1.5f)
                 )
                 if (k.outerCorner == KeyOuterCorner.NONE) {
                     c.drawRoundRect(rect, radius, radius, shadowPaint)
@@ -472,10 +461,10 @@ class KeyboardView(context: Context) : View(context) {
                     c.drawPath(path, shadowPaint)
                 }
                 rect.set(
-                    kx - hw + gx,
-                    ky - hh + gy + topShift,
-                    kx + hw - gx,
-                    ky + hh - gy + topShift
+                    k.left + gx,
+                    k.top + gy + topShift,
+                    k.right - gx,
+                    k.bottom - gy + topShift
                 )
             }
 
@@ -494,11 +483,9 @@ class KeyboardView(context: Context) : View(context) {
             }
             fill.color = ColorUtils.setAlphaComponent(col, combinedAlpha)
 
-            // Space bar gets a fully pill-shaped radius (18dp per spec).
-            val keyRadius = if (k.kind == KeyKind.SPACE) dp(18f) else radius
             val outer = k.outerCorner
             if (outer == KeyOuterCorner.NONE) {
-                c.drawRoundRect(rect, keyRadius, keyRadius, fill)
+                c.drawRoundRect(rect, radius, radius, fill)
             } else {
                 drawOuterRoundedKey(c, k, radius, outerRadius, outer)
             }
@@ -531,6 +518,10 @@ class KeyboardView(context: Context) : View(context) {
     /**
      * Draw a key whose outer bottom corner (left or right) is rounded with
      * [outerRadius] while the other three corners use the regular [radius].
+     *
+     * The radii array follows the order expected by Path.addRoundRect:
+     *   [topLeftX, topLeftY, topRightX, topRightY,
+     *    bottomRightX, bottomRightY, bottomLeftX, bottomLeftY]
      */
     private fun drawOuterRoundedKey(
         c: Canvas,
@@ -572,6 +563,7 @@ class KeyboardView(context: Context) : View(context) {
                 textPaint.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
                 textPaint.textSize = min(rowHeight * 0.40f, dp(24f))
                 c.drawText(display(k.label), cx, textY(textPaint, cy), textPaint)
+                // Number hint in the top-left corner, matching Gboard.
                 if (showHints && k.alts.isNotEmpty() && k.alts[0].isDigit()) {
                     textPaint.color = ColorUtils.setAlphaComponent(kbTheme.hint, alpha)
                     textPaint.textSize = dp(11f)
@@ -735,91 +727,28 @@ class KeyboardView(context: Context) : View(context) {
 
     // ------------------------------------------------------------------ preview / alt
 
-    /**
-     * Gboard-style teardrop key preview.
-     *
-     * Geometry per spec:
-     *   Width:  38-42dp (matches key width + a bit)
-     *   Height: 52-58dp (contains the enlarged character)
-     *   Top corners:    16dp (broad round curve for the letter)
-     *   Bottom corners: 6-8dp (tapers down toward the key surface)
-     *   Vertical offset: top of preview sits 20-28dp above the key's top edge
-     *   Character anchored in the upper third of the bubble
-     */
     private fun drawKeyPreview(c: Canvas, k: Key) {
         val label = display(k.label)
-        val keyW = k.right - k.left
-
-        val baseW = min(keyW + dp(4f), dp(42f))
-        val baseH = dp(56f)
-
-        // Animate from 0.8 scale to 1.0 as it pops up.
-        val scale = 0.8f + 0.2f * previewProgress
-        val w = baseW * scale
-        val h = baseH * scale
-
+        val baseDiameter = maxOf(k.right - k.left, k.bottom - k.top) * 1.45f
+        val diameter = baseDiameter * (0.65f + 0.35f * previewProgress)
+        val radius = diameter / 2f
         val cx = k.centerX
+        var cy = k.top - dp(8f) - radius
+        if (cy - radius < dp(2f)) {
+            cy = k.bottom + dp(8f) + radius
+        }
+        val cl = cx.coerceIn(radius + dp(2f), width - radius - dp(2f))
+        val ct = cy.coerceIn(radius + dp(2f), height - radius - dp(2f))
 
-        // Bottom of the teardrop sits ~8dp above the key's top edge, and
-        // continues rising slightly during the pop for a "lift" feel.
-        val bottomY = k.top - dp(8f) - (1f - previewProgress) * dp(10f)
-        val topY = bottomY - h
-        val left = cx - w / 2f
-        val right = cx + w / 2f
-
-        // Clamp horizontally so the teardrop stays on screen.
-        val cxClamped = cx.coerceIn(dp(6f) + w / 2f, width - dp(6f) - w / 2f)
-        val dx = cxClamped - cx
-        val finalLeft = left + dx
-        val finalRight = right + dx
-        val finalTop = topY.coerceAtLeast(dp(4f))
-
-        // Radii array in Path.addRoundRect order:
-        //   [TLx, TLy, TRx, TRy, BRx, BRy, BLx, BLy]
-        val rTop = dp(16f) * scale
-        val rBot = dp(8f) * scale
-        val radii = floatArrayOf(
-            rTop, rTop,
-            rTop, rTop,
-            rBot, rBot,
-            rBot, rBot
-        )
-
-        // Shadow layer — 5dp elevation offset.
-        altRect.set(
-            finalLeft,
-            finalTop + dp(5f),
-            finalRight,
-            bottomY + dp(5f)
-        )
         previewShadow.color = 0x55000000
-        path.reset()
-        path.addRoundRect(altRect, radii, Path.Direction.CW)
-        c.drawPath(path, previewShadow)
-
-        // Bubble background.
-        altRect.set(finalLeft, finalTop, finalRight, bottomY)
+        c.drawCircle(cl, ct + dp(2f), radius, previewShadow)
         previewBg.color = kbTheme.popupBg
-        path.reset()
-        path.addRoundRect(altRect, radii, Path.Direction.CW)
-        c.drawPath(path, previewBg)
-
-        // Subtle accent tint over the bubble.
-        previewHue.color = ColorUtils.setAlphaComponent(kbTheme.accent, 0x22)
-        path.reset()
-        path.addRoundRect(altRect, radii, Path.Direction.CW)
-        c.drawPath(path, previewHue)
-
-        // Character anchored in the UPPER third of the bubble.
-        val charCenterY = finalTop + h / 3f
+        c.drawCircle(cl, ct, radius, previewBg)
+        previewHue.color = ColorUtils.setAlphaComponent(kbTheme.accent, 0x33)
+        c.drawCircle(cl, ct, radius * 0.82f, previewHue)
         previewText.color = kbTheme.text
-        previewText.textSize = min(h * 0.42f, dp(26f))
-        c.drawText(
-            label,
-            (finalLeft + finalRight) / 2f,
-            charCenterY - (previewText.ascent() + previewText.descent()) / 2f,
-            previewText
-        )
+        previewText.textSize = min(radius * 1.1f, dp(34f))
+        c.drawText(label, cl, ct - (previewText.ascent() + previewText.descent()) / 2f, previewText)
     }
 
     private fun showPreviewFor(k: Key) {
@@ -827,8 +756,8 @@ class KeyboardView(context: Context) : View(context) {
         previewKey = k
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 55L
-            interpolator = OvershootInterpolator(1.1f)
+            duration = 95L
+            interpolator = DecelerateInterpolator(2f)
             addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             start()
         }
@@ -838,7 +767,7 @@ class KeyboardView(context: Context) : View(context) {
         if (previewKey == null) return
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(previewProgress, 0f).apply {
-            duration = 45L
+            duration = 70L
             interpolator = DecelerateInterpolator()
             addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             addListener(object : android.animation.AnimatorListenerAdapter() {
@@ -1059,26 +988,20 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun startPressAnimation() {
         pressAnimator?.cancel()
-        pressAnimator = ValueAnimator.ofFloat(1f, 0.96f).apply {
-            duration = 50L
-            interpolator = DecelerateInterpolator(1.5f)
-            addUpdateListener {
-                pressScale = it.animatedValue as Float
-                invalidate()
-            }
+        pressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 55L
+            interpolator = DecelerateInterpolator(2f)
+            addUpdateListener { pressProgress = it.animatedValue as Float; invalidate() }
             start()
         }
     }
 
     private fun stopPressAnimation() {
         pressAnimator?.cancel()
-        pressAnimator = ValueAnimator.ofFloat(pressScale, 1f).apply {
-            duration = 80L
-            interpolator = DecelerateInterpolator(1.2f)
-            addUpdateListener {
-                pressScale = it.animatedValue as Float
-                invalidate()
-            }
+        pressAnimator = ValueAnimator.ofFloat(pressProgress, 0f).apply {
+            duration = 110L
+            interpolator = DecelerateInterpolator(1.5f)
+            addUpdateListener { pressProgress = it.animatedValue as Float; invalidate() }
             start()
         }
     }
