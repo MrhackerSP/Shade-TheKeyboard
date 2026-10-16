@@ -62,12 +62,24 @@ object Layouts {
     private fun spacer(w: Float) = Key("", 0, w, KeyKind.SPACER)
     private fun fn(code: Int, w: Float, label: String = "") = Key(label, code, w, KeyKind.FUNC)
 
+    /**
+     * Gboard-style bottom row.
+     *
+     * Layout left-to-right:
+     *   [?123]  [,]  [emoji]  [    space    ]  [.]  [Enter]
+     *
+     * The comma sits immediately to the right of the mode key, matching
+     * Gboard. The emoji key takes Gboard's former position of the comma,
+     * since Shade has no top toolbar row to host the emoji toggle.
+     * Comma and period are slightly narrower than a full key so the
+     * spacebar grows to Gboard's proportional width.
+     */
     private fun bottomRow(left: Key): List<Key> = listOf(
         left,
-        fn(Codes.EMOJI, 1f),
-        sym(','),
-        Key("", Codes.SPACE, 4f, KeyKind.SPACE),
-        sym('.', ",?!:;'\"-@/"),
+        Key(",", ','.code, 0.9f, KeyKind.CHAR),
+        fn(Codes.EMOJI, 0.9f),
+        Key("", Codes.SPACE, 4.2f, KeyKind.SPACE),
+        Key(".", '.'.code, 0.9f, KeyKind.CHAR, ",?!:;'\"-@/"),
         Key("", Codes.ENTER, 1.5f, KeyKind.ENTER)
     )
 
