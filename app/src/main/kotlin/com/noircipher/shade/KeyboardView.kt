@@ -1,5 +1,6 @@
 package com.noircipher.shade
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -8,14 +9,18 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.media.AudioManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.SparseArray
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.core.graphics.ColorUtils
@@ -23,7 +28,7 @@ import java.util.ArrayDeque
 import kotlin.math.abs
 import kotlin.math.min
 
-/** Canvas-drawn keyboard: multi-touch, key previews, long-press accents, space-bar cursor swipe, trackpad mode. */
+/** Canvas-drawn keyboard with animated press feedback, haptics, and layout crossfade. */
 class KeyboardView(context: Context) : View(context) {
 
     interface Listener {
@@ -65,7 +70,11 @@ class KeyboardView(context: Context) : View(context) {
     private var trackpadStartY = 0f
     private var trackpadLastSentX = 0f
     private var trackpadLastSentY = 0f
-    private val trackpadStep = 22f // px per cursor step
+    private val trackpadStep = 22f
+
+    // Layout crossfade
+    private var layoutAlpha = 1f
+    private var layoutAnimator: ValueAnimator? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -88,6 +97,20 @@ class KeyboardView(context: Context) : View(context) {
     private var cancelCount = 0
     private val pointerPool = ArrayDeque<Pointer>(8)
     private var rowHeight = 0f
+
+    // Global press animation state — a single float drives all pressed-key color blending.
+    private var pressProgress = 1f
+    private var pressAnimator: ValueAnimator? = null
+
+    private val vibrator: Vibrator? by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE)
+            if (vm is android.os.VibratorManager) vm.defaultVibrator else null
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+    }
 
     private class Pointer {
         var key: Key? = null
@@ -134,6 +157,38 @@ class KeyboardView(context: Context) : View(context) {
         rows = r
         layoutKeys()
         invalidate()
+    }
+
+    /**
+     * Swap layouts with a quick fade-out / fade-in crossfade.
+     * Called from the service when the user switches modes.
+     */
+    fun setRowsAnimated(r: List<List<Key>>) {
+        layoutAnimator?.cancel()
+        layoutAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
+            duration = 80L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                layoutAlpha = it.animatedValue as Float
+                invalidate()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    rows = r
+                    layoutKeys()
+                    layoutAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                        duration = 120L
+                        interpolator = DecelerateInterpolator()
+                        addUpdateListener {
+                            layoutAlpha = it.animatedValue as Float
+                            invalidate()
+                        }
+                        start()
+                    }
+                }
+            })
+            start()
+        }
     }
 
     fun relayout() { layoutKeys(); invalidate() }
@@ -236,9 +291,9 @@ class KeyboardView(context: Context) : View(context) {
         val gx = dp(2.5f)
         val gy = dp(3f)
         val radius = dp(7f)
-
-        // Dim the whole surface slightly in trackpad mode
-        val alpha = if (trackpadActive) 0x88 else 0xFF
+        val trackpadAlpha = if (trackpadActive) 0x88 else 0xFF
+        val baseAlpha = ((layoutAlpha * 255f).toInt().coerceIn(0, 255) shl 24) or 0xFFFFFF
+        val combinedAlpha = (trackpadAlpha * layoutAlpha).toInt().coerceIn(0, 255)
 
         for (row in rows) for (k in row) {
             if (k.kind == KeyKind.SPACER) continue
@@ -247,53 +302,58 @@ class KeyboardView(context: Context) : View(context) {
             val isPressed = k in pressedKeys
             val special = k.kind == KeyKind.ENTER || (k.code == Codes.SHIFT && shiftState == 2)
             if (!keyBorders && !isPressed && !special) {
-                drawContent(c, k)
+                drawContent(c, k, combinedAlpha)
                 continue
             }
-            var col = when {
-                isPressed -> kbTheme.pressed
+            var baseCol = when {
                 k.kind == KeyKind.ENTER -> kbTheme.accent
                 k.kind == KeyKind.FUNC && k.code == Codes.SHIFT && shiftState == 2 -> kbTheme.accent
                 k.kind == KeyKind.FUNC -> kbTheme.keyFn
                 else -> kbTheme.key
             }
-            if (bmp != null && !isPressed) col = ColorUtils.setAlphaComponent(col, 0xCC)
-            col = ColorUtils.setAlphaComponent(col, alpha)
-            fill.color = col
+            if (bmp != null && !isPressed) baseCol = ColorUtils.setAlphaComponent(baseCol, 0xCC)
+
+            // Smooth press blend using the global pressProgress (1 = fully pressed).
+            val col = if (isPressed) {
+                ColorUtils.blendARGB(baseCol, kbTheme.pressed, pressProgress)
+            } else {
+                baseCol
+            }
+            fill.color = ColorUtils.setAlphaComponent(col, combinedAlpha)
             c.drawRoundRect(rect, radius, radius, fill)
-            drawContent(c, k)
+            drawContent(c, k, combinedAlpha)
         }
     }
 
     private fun textY(p: Paint, cy: Float) = cy - (p.ascent() + p.descent()) / 2f
 
-    private fun drawContent(c: Canvas, k: Key) {
+    private fun drawContent(c: Canvas, k: Key, alpha: Int) {
         val cx = (rect.left + rect.right) / 2f
         val cy = (rect.top + rect.bottom) / 2f
         val s = min(rect.height(), rect.width()) * 0.22f
         when (k.kind) {
             KeyKind.CHAR -> {
-                textPaint.color = kbTheme.text
+                textPaint.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
                 textPaint.textSize = min(rowHeight * 0.40f, dp(24f))
                 c.drawText(display(k.label), cx, textY(textPaint, cy), textPaint)
                 if (showHints && k.alts.isNotEmpty() && k.alts[0].isDigit()) {
-                    textPaint.color = kbTheme.hint
+                    textPaint.color = ColorUtils.setAlphaComponent(kbTheme.hint, alpha)
                     textPaint.textSize = dp(10f)
                     c.drawText(k.alts.substring(0, 1), rect.right - dp(7f), rect.top + dp(12f), textPaint)
                 }
             }
             KeyKind.SPACE -> if (spaceLabel.isNotEmpty()) {
-                textPaint.color = kbTheme.hint
+                textPaint.color = ColorUtils.setAlphaComponent(kbTheme.hint, alpha)
                 textPaint.textSize = dp(12f)
                 c.drawText(spaceLabel, cx, textY(textPaint, cy), textPaint)
             }
             KeyKind.ENTER -> {
                 if (enterLabel.isNotEmpty()) {
-                    textPaint.color = kbTheme.accentText
+                    textPaint.color = ColorUtils.setAlphaComponent(kbTheme.accentText, alpha)
                     textPaint.textSize = dp(14f)
                     c.drawText(enterLabel, cx, textY(textPaint, cy), textPaint)
                 } else {
-                    stroke.color = kbTheme.accentText
+                    stroke.color = ColorUtils.setAlphaComponent(kbTheme.accentText, alpha)
                     stroke.strokeWidth = dp(2f)
                     stroke.style = Paint.Style.STROKE
                     path.reset()
@@ -307,11 +367,11 @@ class KeyboardView(context: Context) : View(context) {
                 }
             }
             KeyKind.FUNC -> when (k.code) {
-                Codes.SHIFT -> drawShift(c, cx, cy, s)
-                Codes.DELETE -> drawDelete(c, cx, cy, s)
-                Codes.EMOJI -> drawSmiley(c, cx, cy, s)
+                Codes.SHIFT -> drawShift(c, cx, cy, s, alpha)
+                Codes.DELETE -> drawDelete(c, cx, cy, s, alpha)
+                Codes.EMOJI -> drawSmiley(c, cx, cy, s, alpha)
                 else -> {
-                    textPaint.color = kbTheme.text
+                    textPaint.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
                     textPaint.textSize = dp(14f)
                     c.drawText(k.label, cx, textY(textPaint, cy), textPaint)
                 }
@@ -320,7 +380,7 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    private fun drawShift(c: Canvas, cx: Float, cy0: Float, s: Float) {
+    private fun drawShift(c: Canvas, cx: Float, cy0: Float, s: Float, alpha: Int) {
         val caps = shiftState == 2
         val cy = if (caps) cy0 - s * 0.15f else cy0
         val col = if (caps) kbTheme.accentText else kbTheme.text
@@ -333,7 +393,7 @@ class KeyboardView(context: Context) : View(context) {
         path.lineTo(cx - s * 0.45f, cy)
         path.lineTo(cx - s, cy)
         path.close()
-        stroke.color = col
+        stroke.color = ColorUtils.setAlphaComponent(col, alpha)
         stroke.strokeWidth = dp(2f)
         stroke.style = if (shiftState > 0) Paint.Style.FILL_AND_STROKE else Paint.Style.STROKE
         c.drawPath(path, stroke)
@@ -343,8 +403,8 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    private fun drawDelete(c: Canvas, cx: Float, cy: Float, s: Float) {
-        stroke.color = kbTheme.text
+    private fun drawDelete(c: Canvas, cx: Float, cy: Float, s: Float, alpha: Int) {
+        stroke.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
         stroke.strokeWidth = dp(2f)
         stroke.style = Paint.Style.STROKE
         path.reset()
@@ -359,12 +419,12 @@ class KeyboardView(context: Context) : View(context) {
         c.drawLine(cx - s * 0.05f, cy + s * 0.35f, cx + s * 0.65f, cy - s * 0.35f, stroke)
     }
 
-    private fun drawSmiley(c: Canvas, cx: Float, cy: Float, s: Float) {
-        stroke.color = kbTheme.text
+    private fun drawSmiley(c: Canvas, cx: Float, cy: Float, s: Float, alpha: Int) {
+        stroke.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
         stroke.strokeWidth = dp(1.8f)
         stroke.style = Paint.Style.STROKE
         c.drawCircle(cx, cy, s * 0.95f, stroke)
-        fill.color = kbTheme.text
+        fill.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
         c.drawCircle(cx - s * 0.35f, cy - s * 0.25f, s * 0.11f, fill)
         c.drawCircle(cx + s * 0.35f, cy - s * 0.25f, s * 0.11f, fill)
         rect.set(cx - s * 0.5f, cy - s * 0.45f, cx + s * 0.5f, cy + s * 0.5f)
@@ -415,9 +475,7 @@ class KeyboardView(context: Context) : View(context) {
                     trackpadLastSentY += stepY * trackpadStep
                 }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                exitTrackpad()
-            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> exitTrackpad()
         }
         return true
     }
@@ -425,7 +483,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun enterTrackpad() {
         if (trackpadActive) return
         trackpadActive = true
-        if (haptic) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        hapticLong()
         listener?.onTrackpadEnter()
         invalidate()
     }
@@ -450,8 +508,37 @@ class KeyboardView(context: Context) : View(context) {
         val p = obtainPointer(k, x, y)
         pointers.put(id, p)
         feedback(k)
+        startPressAnimation()
         pressKey(p)
         invalidate(k)
+    }
+
+    /** Animate the global pressProgress 0→1 with a fast decelerate curve. */
+    private fun startPressAnimation() {
+        pressAnimator?.cancel()
+        pressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 60L
+            interpolator = DecelerateInterpolator(2f)
+            addUpdateListener {
+                pressProgress = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    /** Animate pressProgress 1→0 on release with a slightly slower ease-out. */
+    private fun stopPressAnimation() {
+        pressAnimator?.cancel()
+        pressAnimator = ValueAnimator.ofFloat(pressProgress, 0f).apply {
+            duration = 120L
+            interpolator = DecelerateInterpolator(1.5f)
+            addUpdateListener {
+                pressProgress = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
     }
 
     private fun pressKey(p: Pointer) {
@@ -533,6 +620,7 @@ class KeyboardView(context: Context) : View(context) {
         }
         if (k != null) invalidate(k)
         recyclePointer(p)
+        if (pointers.size() == 0) stopPressAnimation()
     }
 
     private fun invalidate(k: Key) {
@@ -558,7 +646,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun longPress(p: Pointer) {
         val k = p.key ?: return
         p.longRunnable = null
-        if (haptic) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        hapticLong()
         if (k.kind == KeyKind.SPACE) {
             if (trackpadEnabled) {
                 p.consumed = true
@@ -581,13 +669,31 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    @Suppress("DEPRECATION")
     private fun feedback(k: Key) {
         if (haptic) {
-            performHapticFeedback(
-                HapticFeedbackConstants.KEYBOARD_TAP,
-                HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
-            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val effect = when (k.kind) {
+                    KeyKind.SPACE -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+                    KeyKind.ENTER -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+                    KeyKind.FUNC -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
+                    else -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+                }
+                try {
+                    vibrator?.vibrate(effect)
+                } catch (_: Exception) {
+                    @Suppress("DEPRECATION")
+                    performHapticFeedback(
+                        HapticFeedbackConstants.KEYBOARD_TAP,
+                        HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+                    )
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                performHapticFeedback(
+                    HapticFeedbackConstants.KEYBOARD_TAP,
+                    HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+                )
+            }
         }
         if (sound) {
             val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -600,6 +706,18 @@ class KeyboardView(context: Context) : View(context) {
                 }
             )
         }
+    }
+
+    private fun hapticLong() {
+        if (!haptic) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
+                return
+            } catch (_: Exception) {}
+        }
+        @Suppress("DEPRECATION")
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     }
 
     private val previewText = TextView(context).apply {
@@ -720,6 +838,8 @@ class KeyboardView(context: Context) : View(context) {
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        pressAnimator?.cancel()
+        layoutAnimator?.cancel()
         val n = pointers.size()
         for (i in 0 until n) {
             val p = pointers.valueAt(i)
@@ -735,6 +855,8 @@ class KeyboardView(context: Context) : View(context) {
     fun release() {
         listener = null
         bgBitmap = null
+        pressAnimator?.cancel()
+        layoutAnimator?.cancel()
         pointers.clear()
         pointerPool.clear()
         previewWindow?.let { try { it.dismiss() } catch (_: Exception) {} }
