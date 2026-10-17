@@ -177,11 +177,11 @@
                 android:id="@+id/row_emoji"
                 style="@style/SettingsRowStyle">
 
-                <!-- FIXED: changed from ic_menu_emoticons to ic_menu_smiley -->
+                <!-- Using ic_menu_camera as a safe fallback since ic_menu_smiley doesn't exist -->
                 <ImageView
                     android:layout_width="24dp"
                     android:layout_height="24dp"
-                    android:src="@android:drawable/ic_menu_smiley"
+                    android:src="@android:drawable/ic_menu_camera"
                     app:tint="#A0A0A0" />
 
                 <TextView
