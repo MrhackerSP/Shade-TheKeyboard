@@ -3,5 +3,19 @@
         <item name="colorPrimary">#3B6FD4</item>
         <item name="colorPrimaryDark">#2A55A8</item>
         <item name="colorAccent">#3B6FD4</item>
+        <item name="android:statusBarColor">#1C1C1E</item>
+        <item name="android:navigationBarColor">#1C1C1E</item>
+    </style>
+
+    <style name="SettingsRowStyle">
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:paddingTop">20dp</item>
+        <item name="android:paddingBottom">20dp</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
     </style>
 </resources>
