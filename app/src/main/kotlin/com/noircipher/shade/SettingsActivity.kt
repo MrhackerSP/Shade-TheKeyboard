@@ -3,6 +3,7 @@ package com.noircipher.shade
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -11,71 +12,58 @@ import androidx.preference.EditTextPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
-import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import java.io.File
 import java.io.FileOutputStream
 
-class SettingsActivity : AppCompatActivity(),
-    PreferenceFragmentCompat.OnPreferenceStartScreenCallback {
+class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
-        title = getString(R.string.settings_title)
-        if (savedInstanceState == null) {
-            supportFragmentManager.beginTransaction()
-                .replace(R.id.settings_container, SettingsFragment())
-                .commit()
-        }
+        supportActionBar?.elevation = 0f
+
+        // The main menu is just a set of clickable rows that open
+        // specific preference screens inside a new fragment.
+        findViewById<View>(R.id.row_languages).setOnClickListener { openScreen("screen_layouts") }
+        findViewById<View>(R.id.row_preferences).setOnClickListener { openScreen("screen_toolbar") }
+        findViewById<View>(R.id.row_theme).setOnClickListener { openScreen("screen_appearance") }
+        findViewById<View>(R.id.row_corrections).setOnClickListener { openScreen("screen_typing") }
+        findViewById<View>(R.id.row_voice).setOnClickListener { /* Placeholder */ }
+        findViewById<View>(R.id.row_emoji).setOnClickListener { /* Placeholder */ }
+        findViewById<View>(R.id.row_clipboard).setOnClickListener { openScreen("screen_toolbar") }
+        findViewById<View>(R.id.row_backup).setOnClickListener { openScreen("screen_backup") }
+        findViewById<View>(R.id.row_about).setOnClickListener { openScreen("screen_about") }
     }
 
-    override fun onPreferenceStartScreen(
-        caller: PreferenceFragmentCompat,
-        pref: PreferenceScreen
-    ): Boolean {
-        val f = SettingsFragment().apply {
+    private fun openScreen(rootKey: String) {
+        val fragment = SettingsFragment().apply {
             arguments = Bundle().apply {
-                putString(PreferenceFragmentCompat.ARG_PREFERENCE_ROOT, pref.key)
+                putString(PreferenceFragmentCompat.ARG_PREFERENCE_ROOT, rootKey)
             }
         }
         supportFragmentManager.beginTransaction()
-            .replace(R.id.settings_container, f)
+            .replace(android.R.id.content, fragment)
             .addToBackStack(null)
             .commit()
-        return true
     }
 
     class SettingsFragment : PreferenceFragmentCompat() {
 
-        private val pickBg = registerForActivityResult(
-            ActivityResultContracts.OpenDocument()
-        ) { uri ->
+        private val pickBg = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) saveBackground(uri)
         }
-        private val exportBackup = registerForActivityResult(
-            ActivityResultContracts.CreateDocument("application/json")
-        ) { uri ->
+        private val exportBackup = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
             if (uri != null) {
-                toast(
-                    if (Backup.export(requireContext(), uri)) R.string.backup_done
-                    else R.string.backup_failed
-                )
+                toast(if (Backup.export(requireContext(), uri)) R.string.backup_done else R.string.backup_failed)
             }
         }
-        private val importBackup = registerForActivityResult(
-            ActivityResultContracts.OpenDocument()
-        ) { uri ->
+        private val importBackup = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) {
-                toast(
-                    if (Backup.import(requireContext(), uri)) R.string.restore_done
-                    else R.string.backup_failed
-                )
+                toast(if (Backup.import(requireContext(), uri)) R.string.restore_done else R.string.backup_failed)
             }
         }
-        private val exportTraining = registerForActivityResult(
-            ActivityResultContracts.CreateDocument("application/zip")
-        ) { uri ->
+        private val exportTraining = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
             if (uri != null) {
                 val ok = TrainingExport.exportToUri(requireContext(), uri)
                 toast(if (ok) R.string.export_training_done else R.string.export_training_failed)
@@ -87,11 +75,7 @@ class SettingsActivity : AppCompatActivity(),
             val ctx = requireContext()
             refreshLanguagePref()
 
-            click("clear_learned") {
-                confirm(R.string.pref_clear_confirm) {
-                    WordDictionary.clearLearned(ctx)
-                }
-            }
+            click("clear_learned") { confirm(R.string.pref_clear_confirm) { WordDictionary.clearLearned(ctx) } }
             click("clear_clipboard") {
                 ClipboardStore(ctx).clearAll()
                 toast(R.string.done_toast)
@@ -111,9 +95,7 @@ class SettingsActivity : AppCompatActivity(),
                     AlertDialog.Builder(ctx)
                         .setTitle(R.string.export_training_confirm)
                         .setMessage(R.string.export_training_confirm_msg)
-                        .setPositiveButton(R.string.yes) { _, _ ->
-                            exportTraining.launch("shade-training.zip")
-                        }
+                        .setPositiveButton(R.string.yes) { _, _ -> exportTraining.launch("shade-training.zip") }
                         .setNegativeButton(R.string.no, null)
                         .show()
                 }
@@ -129,9 +111,7 @@ class SettingsActivity : AppCompatActivity(),
             findPreference<SwitchPreferenceCompat>("contribute_data")
                 ?.setOnPreferenceChangeListener { _, newValue ->
                     val on = newValue as? Boolean ?: true
-                    if (!on) {
-                        TrainingExport.clearAutoExports(ctx)
-                    }
+                    if (!on) TrainingExport.clearAutoExports(ctx)
                     true
                 }
 
@@ -144,21 +124,12 @@ class SettingsActivity : AppCompatActivity(),
                 }
             findPreference<EditTextPreference>("custom_layout")
                 ?.setOnPreferenceChangeListener { _, v ->
-                    if (Layouts.parseCustom(v?.toString() ?: "") == null) {
-                        toast(R.string.layout_invalid)
-                    }
+                    if (Layouts.parseCustom(v?.toString() ?: "") == null) toast(R.string.layout_invalid)
                     true
                 }
             for (k in listOf("color_bg", "color_key", "color_keyfn", "color_text", "color_accent")) {
-                findPreference<EditTextPreference>(k)
-                    ?.setOnBindEditTextListener { it.hint = "#RRGGBB" }
+                findPreference<EditTextPreference>(k)?.setOnBindEditTextListener { it.hint = "#RRGGBB" }
             }
-        }
-
-        override fun onResume() {
-            super.onResume()
-            activity?.title = preferenceScreen?.title?.toString()?.takeIf { it.isNotBlank() }
-                ?: getString(R.string.settings_title)
         }
 
         private fun click(key: String, action: () -> Unit) {
@@ -168,8 +139,7 @@ class SettingsActivity : AppCompatActivity(),
             }
         }
 
-        private fun toast(res: Int) =
-            Toast.makeText(requireContext(), res, Toast.LENGTH_SHORT).show()
+        private fun toast(res: Int) = Toast.makeText(requireContext(), res, Toast.LENGTH_SHORT).show()
 
         private fun confirm(msg: Int, ok: () -> Unit) {
             AlertDialog.Builder(requireContext())
@@ -181,32 +151,19 @@ class SettingsActivity : AppCompatActivity(),
 
         private fun refreshLanguagePref() {
             val pref = findPreference<MultiSelectListPreference>("active_languages") ?: return
-            val ctx = requireContext()
             val available = try {
-                ctx.assets.list("wordlists")
-                    ?.filter { it.endsWith(".txt") }
-                    ?.map { it.removeSuffix(".txt") }
-                    ?.sorted()
-                    ?: emptyList()
-            } catch (_: Exception) {
-                emptyList()
-            }
-            if (available.isEmpty()) return
+                requireContext().assets.list("wordlists")?.filter { it.endsWith(".txt") }?.map { it.removeSuffix(".txt") }?.sorted() ?: emptyList()
+            } catch (_: Exception) { emptyList() }
 
-            val names = available.map { localeName(it) }
-            pref.entries = names.toTypedArray()
-            pref.entryValues = available.toTypedArray()
+            if (available.isNotEmpty()) {
+                pref.entries = available.map { localeName(it) }.toTypedArray()
+                pref.entryValues = available.toTypedArray()
+            }
         }
 
         private fun localeName(code: String): String = when (code) {
-            "en" -> "English"
-            "de" -> "Deutsch"
-            "fr" -> "Français"
-            "es" -> "Español"
-            "it" -> "Italiano"
-            "pt" -> "Português"
-            "ru" -> "Русский"
-            else -> code.uppercase()
+            "en" -> "English"; "de" -> "Deutsch"; "fr" -> "Français"; "es" -> "Español"
+            "it" -> "Italiano"; "pt" -> "Português"; "ru" -> "Русский"; else -> code.uppercase()
         }
 
         private fun saveBackground(uri: Uri) {
