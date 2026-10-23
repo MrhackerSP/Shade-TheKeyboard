@@ -55,19 +55,31 @@ class WordDictionary(private val ctx: Context) {
         withContext(Dispatchers.IO) {
             try {
                 val w = HashMap<String, Long>()
-                ctx.assets.open("wordlists/${localeId}.txt").bufferedReader().useLines { lines ->
+                val raw = java.io.BufferedInputStream(ctx.assets.open("wordlists/${localeId}.txt"))
+                raw.mark(2)
+                val b0 = raw.read()
+                val b1 = raw.read()
+                raw.reset()
+                val stream: java.io.InputStream =
+                    if (b0 == 0x1f && b1 == 0x8b) java.util.zip.GZIPInputStream(raw) else raw
+                stream.bufferedReader().useLines { lines ->
                     for (line in lines) {
-                        val parts = line.trim().split(Regex("\\s+"), limit = 2)
-                        if (parts.size == 2) {
-                            val freq = parts[1].toLongOrNull() ?: continue
-                            w[parts[0].lowercase()] = freq
-                        } else if (parts.size == 1 && parts[0].isNotEmpty()) {
-                            w[parts[0].lowercase()] = 1L
-                        }
+                        val t = line.trim()
+                        if (t.isEmpty()) continue
+                        val sp = t.indexOfFirst { it == ' ' || it == '\t' }
+                        val word = (if (sp < 0) t else t.substring(0, sp)).lowercase()
+                        val freq = if (sp < 0) 1L else (t.substring(sp + 1).trim().toLongOrNull() ?: continue)
+                        if (word.length > 20) continue
+                        if (word.length == 1 && word != "a" && word != "i") continue
+                        if (!word.all { it.isLetter() || it == '\'' }) continue
+                        w[word] = freq
                     }
                 }
+                val top = if (w.size > MAX_WORDS) {
+                    w.entries.sortedByDescending { it.value }.take(MAX_WORDS)
+                } else w.entries.toList()
                 words.clear()
-                words.putAll(w)
+                for (e in top) words[e.key] = e.value
                 rebuildPrefixIndex()
             } catch (_: Exception) {
                 // No dictionary file
@@ -144,30 +156,103 @@ class WordDictionary(private val ctx: Context) {
     fun suggest(prefix: String, max: Int): List<String> {
         if (prefix.isEmpty()) return emptyList()
         val p = prefix.lowercase()
-        val out = LinkedHashSet<String>(max * 2)
+        val known = contains(p)
+        val scored = HashMap<String, Float>()
+
+        contractions[p]?.let { scored[it.lowercase()] = if (known) 12f else 100f }
 
         val userBucket: List<String>? = if (p.length >= 2) {
             userPrefix2[p.substring(0, 2)]
         } else {
             userPrefix1[p.substring(0, 1)]
         }
-        userBucket?.asSequence()
-            ?.filter { it.startsWith(p) }
-            ?.take(max)
-            ?.forEach { out.add(it) }
-
-        if (out.size < max) {
-            val bucket: List<String>? = if (p.length >= 2) {
-                prefix2[p.substring(0, 2)]
-            } else {
-                prefix1[p.substring(0, 1)]
+        var found = 0
+        userBucket?.let { bucket ->
+            for (cand in bucket) {
+                if (!cand.startsWith(p)) continue
+                val us = user[cand] ?: continue
+                val s = 16f + kotlin.math.ln(us + 1f) - 0.3f * (cand.length - p.length)
+                scored[cand] = maxOf(scored[cand] ?: -1000f, s)
+                if (++found >= 6) break
             }
-            bucket?.asSequence()
-                ?.filter { it.startsWith(p) }
-                ?.take(max - out.size)
-                ?.forEach { out.add(it) }
         }
-        return out.take(max).map { match(prefix, it) }
+
+        var completions = 0
+        val bucket: List<String>? = if (p.length >= 2) {
+            prefix2[p.substring(0, 2)]
+        } else {
+            prefix1[p.substring(0, 1)]
+        }
+        bucket?.let { b ->
+            for (cand in b) {
+                if (!cand.startsWith(p)) continue
+                val f = words[cand] ?: continue
+                val s = kotlin.math.ln(f.toDouble()).toFloat() - 0.3f * (cand.length - p.length)
+                scored[cand] = maxOf(scored[cand] ?: -1000f, s)
+                if (++completions >= 12) break
+            }
+        }
+
+        if (p.length in 3..20 && (!known || completions < max)) {
+            val limit = if (p.length <= 4) 1.0f else 1.6f
+            val fuzzyBucket = prefix1[p.substring(0, 1)]
+            if (fuzzyBucket != null) {
+                val d = Array(24) { FloatArray(24) }
+                for (cand in fuzzyBucket) {
+                    if (cand.length < p.length - 1 || cand.length > p.length + 1) continue
+                    if (scored.containsKey(cand)) continue
+                    val cost = editCost(p, cand, d)
+                    if (cost > limit) continue
+                    val f = words[cand] ?: continue
+                    scored[cand] = kotlin.math.ln(f.toDouble()).toFloat() - 4f * cost
+                }
+            }
+        }
+
+        return scored.entries
+            .sortedByDescending { it.value }
+            .take(max)
+            .map { match(prefix, it.key) }
+    }
+
+    private val adj: Array<BooleanArray> = Array(26) { BooleanArray(26) }
+
+    init {
+        val rows = arrayOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+        for (r1 in rows.indices) for (c1 in rows[r1].indices) {
+            for (r2 in rows.indices) for (c2 in rows[r2].indices) {
+                if ((r1 != r2 || c1 != c2) &&
+                    kotlin.math.abs(r1 - r2) <= 1 && kotlin.math.abs(c1 - c2) <= 1
+                ) {
+                    adj[rows[r1][c1] - 'a'][rows[r2][c2] - 'a'] = true
+                }
+            }
+        }
+    }
+
+    /** Typo distance: neighbouring keys and swapped letters cost less than random mistakes. */
+    private fun editCost(a: String, b: String, d: Array<FloatArray>): Float {
+        val n = a.length
+        val m = b.length
+        for (i in 0..n) d[i][0] = i.toFloat()
+        for (j in 0..m) d[0][j] = j.toFloat()
+        for (i in 1..n) {
+            for (j in 1..m) {
+                val ca = a[i - 1]
+                val cb = b[j - 1]
+                val sub = when {
+                    ca == cb -> 0f
+                    ca in 'a'..'z' && cb in 'a'..'z' && adj[ca - 'a'][cb - 'a'] -> 0.6f
+                    else -> 1f
+                }
+                var v = minOf(d[i - 1][j] + 1f, d[i][j - 1] + 1f, d[i - 1][j - 1] + sub)
+                if (i > 1 && j > 1 && ca == b[j - 2] && a[i - 2] == cb) {
+                    v = minOf(v, d[i - 2][j - 2] + 0.7f)
+                }
+                d[i][j] = v
+            }
+        }
+        return d[n][m]
     }
 
     fun correction(word: String): String? {
@@ -178,21 +263,20 @@ class WordDictionary(private val ctx: Context) {
         if (w.length < 3 || !w.all { it.isLetter() || it == '\'' }) return null
         if (contains(w)) return null
 
-        val candidates: Iterable<String> = if (w.length >= 2) {
-            prefix2[w.substring(0, 2)] ?: emptyList()
-        } else {
-            words.keys
-        }
+        if (w.length > 20) return null
+        val candidates: Iterable<String> = prefix1[w.substring(0, 1)] ?: emptyList()
 
         var best: String? = null
-        var bestFreq = 0L
+        var bestScore = -1000f
+        val d = Array(24) { FloatArray(24) }
         for (cand in candidates) {
             if (cand.length !in (w.length - 1)..(w.length + 1)) continue
-            if (cand.firstOrNull() != w.firstOrNull()) continue
             val freq = words[cand] ?: continue
-            if (within1(w, cand) && freq > bestFreq) {
+            if (!within1(w, cand)) continue
+            val score = kotlin.math.ln(freq.toDouble()).toFloat() - 3f * editCost(w, cand, d)
+            if (score > bestScore) {
                 best = cand
-                bestFreq = freq
+                bestScore = score
             }
         }
         return best?.let { match(word, it) }
@@ -246,6 +330,7 @@ class WordDictionary(private val ctx: Context) {
 
     companion object {
         private const val DECAY = 0.99f
+        private const val MAX_WORDS = 60000
 
         fun clearLearned(ctx: Context) {
             ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE).edit().clear().apply()

@@ -610,7 +610,7 @@ class KeyboardView(context: Context) : View(context) {
         val caps = shiftState == 2
         val shiftBoost = 1f + 0.18f * shiftTapProgress
         val s = s0 * shiftBoost
-        val cy = if (caps) cy0 - s * 0.1f else cy0
+        val cy = if (caps) cy0 - s * 0.15f else cy0
         val col = kbTheme.text
 
         path.reset()
@@ -628,10 +628,10 @@ class KeyboardView(context: Context) : View(context) {
         c.drawPath(path, stroke)
 
         if (caps) {
-            stroke.style = Paint.Style.FILL
-            stroke.color = ColorUtils.setAlphaComponent(kbTheme.accent, alpha)
-            c.drawCircle(cx, cy + s * 1.35f, dp(2.5f), stroke)
             stroke.style = Paint.Style.STROKE
+            stroke.strokeWidth = dp(2f)
+            stroke.color = ColorUtils.setAlphaComponent(col, alpha)
+            c.drawLine(cx - s * 0.5f, cy + s * 1.4f, cx + s * 0.5f, cy + s * 1.4f, stroke)
         }
     }
 
@@ -727,26 +727,31 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun drawKeyPreview(c: Canvas, k: Key) {
         val label = display(k.label)
-        val baseDiameter = maxOf(k.right - k.left, k.bottom - k.top) * 1.45f
-        val diameter = baseDiameter * (0.65f + 0.35f * previewProgress)
-        val radius = diameter / 2f
-        val cx = k.centerX
-        var cy = k.top - dp(8f) - radius
-        if (cy - radius < dp(2f)) {
-            cy = k.bottom + dp(8f) + radius
+        val t = previewProgress.coerceIn(0f, 1f)
+        val scale = 0.82f + 0.18f * t
+        val w = (k.right - k.left) * 1.3f * scale
+        val h = rowHeight * 1.25f * scale
+        val cx = k.centerX.coerceIn(w / 2f + dp(2f), width - w / 2f - dp(2f))
+        var bottom = k.top + dp(6f)
+        var top = bottom - h
+        if (top < dp(1f)) {
+            bottom += dp(1f) - top
+            top = dp(1f)
         }
-        val cl = cx.coerceIn(radius + dp(2f), width - radius - dp(2f))
-        val ct = cy.coerceIn(radius + dp(2f), height - radius - dp(2f))
+        val r = dp(14f)
+        val a = (255 * minOf(1f, t * 1.6f)).toInt()
 
-        previewShadow.color = 0x55000000
-        c.drawCircle(cl, ct + dp(2f), radius, previewShadow)
-        previewBg.color = kbTheme.popupBg
-        c.drawCircle(cl, ct, radius, previewBg)
-        previewHue.color = ColorUtils.setAlphaComponent(kbTheme.accent, 0x33)
-        c.drawCircle(cl, ct, radius * 0.82f, previewHue)
-        previewText.color = kbTheme.text
-        previewText.textSize = min(radius * 1.1f, dp(34f))
-        c.drawText(label, cl, ct - (previewText.ascent() + previewText.descent()) / 2f, previewText)
+        rect.set(cx - w / 2f, top + dp(2f), cx + w / 2f, bottom + dp(2f))
+        previewShadow.color = ColorUtils.setAlphaComponent(0x000000, (0x40 * t).toInt())
+        c.drawRoundRect(rect, r, r, previewShadow)
+
+        rect.set(cx - w / 2f, top, cx + w / 2f, bottom)
+        previewBg.color = ColorUtils.setAlphaComponent(kbTheme.popupBg, a)
+        c.drawRoundRect(rect, r, r, previewBg)
+
+        previewText.color = ColorUtils.setAlphaComponent(kbTheme.text, a)
+        previewText.textSize = min(h * 0.5f, dp(32f))
+        c.drawText(label, cx, (top + bottom) / 2f - (previewText.ascent() + previewText.descent()) / 2f, previewText)
     }
 
     private fun showPreviewFor(k: Key) {
@@ -754,7 +759,7 @@ class KeyboardView(context: Context) : View(context) {
         previewKey = k
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 95L
+            duration = 45L
             interpolator = DecelerateInterpolator(2f)
             addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             start()
@@ -765,7 +770,7 @@ class KeyboardView(context: Context) : View(context) {
         if (previewKey == null) return
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(previewProgress, 0f).apply {
-            duration = 70L
+            duration = 55L
             interpolator = DecelerateInterpolator()
             addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             addListener(object : android.animation.AnimatorListenerAdapter() {
@@ -1063,11 +1068,15 @@ class KeyboardView(context: Context) : View(context) {
         listener?.onKey(Codes.DELETE)
 
         val repeat = object : Runnable {
+            var n = 0
             override fun run() {
                 if (p.consumed) return
                 if (p.key !== k) return
                 listener?.onKey(Codes.DELETE)
-                handler.postDelayed(this, repeatIntervalMs)
+                n++
+                if (haptic && n % 2 == 0) hapticTick()
+                val next = if (n > 12) (repeatIntervalMs / 2).coerceAtLeast(18L) else repeatIntervalMs
+                handler.postDelayed(this, next)
             }
         }
         p.repeatRunnable = repeat
@@ -1192,7 +1201,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun longPress(p: Pointer) {
         val k = p.key ?: return
         p.longRunnable = null
-        hapticHeavy()
+        if (k.kind == KeyKind.CHAR) hapticTick() else hapticHeavy()
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             p.consumed = true
             return
@@ -1249,17 +1258,10 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun hapticGboard() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            performHapticFeedback(
-                HapticFeedbackConstants.KEYBOARD_RELEASE,
-                HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
-            )
-        } else {
-            performHapticFeedback(
-                HapticFeedbackConstants.KEYBOARD_TAP,
-                HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
-            )
-        }
+        performHapticFeedback(
+            HapticFeedbackConstants.KEYBOARD_TAP,
+            HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+        )
     }
 
     private fun hapticTick() {

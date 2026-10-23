@@ -12,6 +12,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.widget.ImageView
 import android.inputmethodservice.InputMethodService
 import android.os.Build
 import android.os.SystemClock
@@ -62,6 +63,15 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste",
         "undo" to "Undo", "incognito" to "🕶", "onehand" to "1-hand",
         "settings" to "⚙"
+    )
+    private val toolIcons = mapOf(
+        "clip" to R.drawable.ic_tb_clip, "emoji" to R.drawable.ic_tb_emoji,
+        "numpad" to R.drawable.ic_tb_numpad, "left" to R.drawable.ic_tb_left,
+        "right" to R.drawable.ic_tb_right, "selectall" to R.drawable.ic_tb_selectall,
+        "copy" to R.drawable.ic_tb_copy, "cut" to R.drawable.ic_tb_cut,
+        "paste" to R.drawable.ic_tb_paste, "undo" to R.drawable.ic_tb_undo,
+        "incognito" to R.drawable.ic_tb_incognito, "onehand" to R.drawable.ic_tb_onehand,
+        "settings" to R.drawable.ic_tb_settings
     )
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -542,6 +552,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         toggle.setTextColor(kbTheme.hint)
         for (tv in slots) tv.setTextColor(kbTheme.text)
         for (tv in slotOlds) tv.setTextColor(kbTheme.text)
+        slotRow.showDividers = LinearLayout.SHOW_DIVIDER_MIDDLE
+        slotRow.dividerPadding = dp(14f).toInt()
+        slotRow.dividerDrawable = GradientDrawable().apply {
+            setSize(dp(1f).toInt(), 0)
+            setColor((kbTheme.hint and 0x00FFFFFF) or 0x55000000)
+        }
         rebuildToolbar()
         refreshStrip()
         root.post { applyOneHandedToStrip() }
@@ -569,12 +585,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val enabled = prefs.getStringSet("toolbar_keys", null) ?: toolDefs.map { it.first }.toSet()
         for ((id, label) in toolDefs) {
             if (enabled.contains(id) == false) continue
-            val tv = TextView(this).apply {
-                text = label
-                textSize = 15f
-                gravity = Gravity.CENTER
-                setTextColor(kbTheme.text)
-                setPadding(dp(12f).toInt(), 0, dp(12f).toInt(), 0)
+            val tv = ImageView(this).apply {
+                setImageResource(toolIcons[id] ?: R.drawable.ic_tb_settings)
+                setColorFilter(if (id == "incognito" && incognito) kbTheme.accent else kbTheme.text)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(dp(12f).toInt(), dp(14f).toInt(), dp(12f).toInt(), dp(14f).toInt())
+                contentDescription = label
                 isClickable = true
                 isFocusable = false
                 setOnTouchListener { v, event ->
@@ -1414,11 +1430,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 else if (canCompose == false && suggestionsAllowed) previousWordFromField()
                 else lastWord()
             val next: List<String> = if (prev1 != null) {
-                dict.predictNext(null, prev1, 3)
+                centerBest(dict.predictNext(null, prev1, 3))
             } else emptyList()
             val list: List<String> = when {
                 next.isNotEmpty() -> next
-                atSentenceEndBeforeCursor() -> listOf("I", "The", "I'm")
+                atSentenceEndBeforeCursor() -> listOf("The", "I", "I'm")
                 else -> emptyList()
             }
             setCandidates(list)
@@ -1435,9 +1451,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val layout = kbKeyLayout()
 
         suggestJob = scope.launch {
+            val known = dict.contains(prefix)
             val stage1 = LinkedHashSet<String>()
-            if (dict.contains(prefix) == false) stage1.add(prefix)
-            stage1.addAll(dict.suggestAsync(prefix, 3))
+            stage1.addAll(dict.suggestAsync(prefix, 4))
 
             val stage2 = if (prev1 != null) {
                 dict.rerankWithContext(null, prev1, stage1.toList())
@@ -1451,10 +1467,25 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 } else stage2
             } else stage2
 
-            val words = stage3.take(3)
-            val final = if (emoji != null) words.take(2) + emoji else words
+            val ranked = stage3
+            val shown: List<String> = if (!known && ranked.isNotEmpty()) {
+                listOf(prefix) + ranked.take(2)
+            } else {
+                centerBest(ranked.ifEmpty { listOf(prefix) }.take(3))
+            }
+            val final = shown.toMutableList()
+            if (emoji != null) {
+                if (final.size >= 3) final[2] = emoji else final.add(emoji)
+            }
             setCandidates(final)
         }
+    }
+
+    private fun centerBest(l: List<String>): List<String> = when (l.size) {
+        0 -> l
+        1 -> listOf("", l[0])
+        2 -> listOf(l[1], l[0])
+        else -> listOf(l[1], l[0], l[2])
     }
 
     private fun setCandidates(list: List<String>) {
@@ -1476,9 +1507,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
             slots[i].text = newWord
             slots[i].alpha = 0f
-            slots[i].scaleX = if (i == 0) 0.95f else 1f
-            slots[i].scaleY = if (i == 0) 0.95f else 1f
-            slots[i].setTypeface(null, if (i == 0) Typeface.BOLD else Typeface.NORMAL)
+            slots[i].scaleX = if (i == 1) 0.95f else 1f
+            slots[i].scaleY = if (i == 1) 0.95f else 1f
+            slots[i].setTypeface(null, if (i == 1) Typeface.BOLD else Typeface.NORMAL)
         }
         if (!anyChanged) return
 
@@ -1490,7 +1521,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 for (i in 0 until 3) {
                     slotOlds[i].alpha = 1f - t
                     slots[i].alpha = t
-                    if (i == 0) {
+                    if (i == 1) {
                         val s = 0.95f + 0.05f * t
                         slots[i].scaleX = s
                         slots[i].scaleY = s
@@ -1514,6 +1545,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun pickSuggestion(i: Int) {
         val w = candidates.getOrNull(i) ?: return
+        if (w.isEmpty()) return
         val ic = currentInputConnection ?: return
         clearUndo()
         ic.beginBatchEdit()
