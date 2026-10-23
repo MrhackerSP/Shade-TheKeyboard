@@ -196,15 +196,13 @@
     </string-array>
     <string-array name="dict_entries">
         <item>English</item>
-        <item>Español</item>
-        <item>Deutsch</item>
-        <item>Français</item>
+        <item>हिन्दी (Hindi)</item>
+        <item>Hinglish</item>
     </string-array>
     <string-array name="dict_values">
         <item>en</item>
-        <item>es</item>
-        <item>de</item>
-        <item>fr</item>
+        <item>hi</item>
+        <item>hinglish</item>
     </string-array>
     <string-array name="dict_default">
         <item>en</item>
