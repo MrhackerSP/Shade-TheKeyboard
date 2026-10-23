@@ -162,7 +162,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         private fun localeName(code: String): String = when (code) {
-            "en" -> "English"; "de" -> "Deutsch"; "fr" -> "Français"; "es" -> "Español"
+            "en" -> "English"; "hi" -> "हिन्दी (Hindi)"; "hinglish" -> "Hinglish"
             "it" -> "Italiano"; "pt" -> "Português"; "ru" -> "Русский"; else -> code.uppercase()
         }
 

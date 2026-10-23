@@ -21,6 +21,7 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import android.widget.PopupWindow
 import androidx.core.graphics.ColorUtils
 import java.util.ArrayDeque
 import kotlin.math.abs
@@ -133,6 +134,9 @@ class KeyboardView(context: Context) : View(context) {
     private val previewHue = Paint(Paint.ANTI_ALIAS_FLAG)
     private val previewText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val previewShadow = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var previewPopup: PopupWindow? = null
+    private var previewBubble: PreviewBubble? = null
+    private var popupActive = false
 
     private var altShown = false
     private var altItems: List<String> = emptyList()
@@ -496,7 +500,7 @@ class KeyboardView(context: Context) : View(context) {
         if (trailActive && trailAlpha > 0f) drawTrail(c)
         if (burstActive && typingBurstEnabled) drawTypingBurst(c)
         if (altShown && altItems.isNotEmpty()) drawAltStrip(c)
-        previewKey?.let { if (previewProgress > 0f) drawKeyPreview(c, it) }
+        previewKey?.let { if (previewProgress > 0f && !popupActive) drawKeyPreview(c, it) }
     }
 
     private fun drawDeleteSlideBadge(c: Canvas, k: Key) {
@@ -757,6 +761,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun showPreviewFor(k: Key) {
         if (!showPreview) return
         previewKey = k
+        popupActive = tryShowPopup(k)
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 45L
@@ -766,8 +771,85 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    private inner class PreviewBubble(ctx: Context) : View(ctx) {
+        var label = ""
+        var bubbleW = 0f
+        var bubbleH = 0f
+        private val box = RectF()
+        override fun onDraw(c: Canvas) {
+            val pad = (width - bubbleW) / 2f
+            val r = dp(14f)
+            box.set(pad, pad + dp(2f), pad + bubbleW, pad + bubbleH + dp(2f))
+            previewShadow.color = ColorUtils.setAlphaComponent(0x000000, 0x40)
+            c.drawRoundRect(box, r, r, previewShadow)
+            box.set(pad, pad, pad + bubbleW, pad + bubbleH)
+            previewBg.color = kbTheme.popupBg
+            c.drawRoundRect(box, r, r, previewBg)
+            previewText.color = kbTheme.text
+            previewText.textSize = min(bubbleH * 0.5f, dp(32f))
+            c.drawText(
+                label, pad + bubbleW / 2f,
+                pad + bubbleH / 2f - (previewText.ascent() + previewText.descent()) / 2f,
+                previewText
+            )
+        }
+    }
+
+    /** Top-row keys have no room above them inside the keyboard, so float the preview in its own window. */
+    private fun tryShowPopup(k: Key): Boolean {
+        val h = rowHeight * 1.25f
+        if (k.top + dp(6f) - h >= dp(1f)) return false
+        if (windowToken == null) return false
+        return try {
+            val bw = (k.right - k.left) * 1.3f
+            val pad = dp(6f)
+            val pw = (bw + pad * 2f).toInt()
+            val ph = (h + pad * 2f).toInt()
+            val bubble = previewBubble ?: PreviewBubble(context).also { previewBubble = it }
+            bubble.label = display(k.label)
+            bubble.bubbleW = bw
+            bubble.bubbleH = h
+            val loc = IntArray(2)
+            getLocationOnScreen(loc)
+            val cx = k.centerX.coerceIn(bw / 2f + dp(2f), width - bw / 2f - dp(2f))
+            val x = (loc[0] + cx - pw / 2f).toInt()
+            val y = (loc[1] + k.top + dp(6f) - h - pad).toInt()
+            var pop = previewPopup
+            if (pop == null) {
+                pop = PopupWindow(bubble, pw, ph).apply {
+                    isTouchable = false
+                    isFocusable = false
+                    isClippingEnabled = false
+                    inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+                    setBackgroundDrawable(null)
+                    animationStyle = 0
+                }
+                previewPopup = pop
+            }
+            bubble.animate().cancel()
+            bubble.pivotX = pw / 2f
+            bubble.pivotY = ph - pad
+            bubble.scaleX = 0.85f
+            bubble.scaleY = 0.85f
+            bubble.alpha = 0.3f
+            if (pop.isShowing) pop.update(x, y, pw, ph) else pop.showAtLocation(this, Gravity.NO_GRAVITY, x, y)
+            bubble.invalidate()
+            bubble.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(45L).start()
+            true
+        } catch (_: Exception) {
+            dismissPreviewPopup()
+            false
+        }
+    }
+
+    private fun dismissPreviewPopup() {
+        previewBubble?.animate()?.cancel()
+        try { previewPopup?.dismiss() } catch (_: Exception) {}
+    }
+
     private fun hidePreview() {
         if (previewKey == null) return
+        dismissPreviewPopup()
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(previewProgress, 0f).apply {
             duration = 55L
@@ -1307,6 +1389,7 @@ class KeyboardView(context: Context) : View(context) {
             recyclePointer(p)
         }
         pointers.clear()
+        dismissPreviewPopup()
         previewKey = null
         altShown = false
         altItems = emptyList()
@@ -1328,6 +1411,7 @@ class KeyboardView(context: Context) : View(context) {
         oneHandedAnimator?.cancel()
         pointers.clear()
         pointerPool.clear()
+        dismissPreviewPopup()
         previewKey = null
         altShown = false
         altItems = emptyList()

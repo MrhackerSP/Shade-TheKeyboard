@@ -144,6 +144,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
+    private fun dictIds(): String =
+        (prefs.getStringSet("dictionaries", setOf("en")) ?: setOf("en"))
+            .ifEmpty { setOf("en") }.sorted().joinToString(",")
+
     private fun dp(v: Float) = v * resources.displayMetrics.density
 
     // ------------------------------------------------------------------ lifecycle
@@ -157,7 +161,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         try { cm.addPrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
 
-        val locale = prefs.getString("locale", "en") ?: "en"
+        val locale = dictIds()
         scope.launch(Dispatchers.Default) {
             dict.configure(locale)
         }
@@ -512,7 +516,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.repeatDelayMs = 350L
         kb.repeatIntervalMs = 40L
 
-        val locale = prefs.getString("locale", "en") ?: "en"
+        val locale = dictIds()
         scope.launch(Dispatchers.Default) { dict.configure(locale) }
 
         val keyH = prefs.getInt("key_height", 50)
@@ -907,7 +911,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         var i = before.length - 1
         while (i >= 0) {
             val c = before[i]
-            if (c.isLetter() || c == '\'') i -= 1 else break
+            if (WordDictionary.isWordChar(c)) i -= 1 else break
         }
         return before.substring(i + 1)
     }
@@ -920,7 +924,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         var start = end
         while (start > 0) {
             val c = before[start - 1]
-            if (c.isLetter() || c == '\'') start -= 1 else break
+            if (WordDictionary.isWordChar(c)) start -= 1 else break
         }
         if (start >= end) return null
         return before.substring(start, end).takeIf { it.isNotEmpty() }
@@ -1059,7 +1063,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (text != " ") clearUndo()
 
         val isWordChar = canCompose && mode == Mode.LETTERS && text.length == 1 &&
-            (text[0].isLetter() || (text[0] == '\'' && composing.isNotEmpty()))
+            ((text[0] != '\'' && WordDictionary.isWordChar(text[0])) || (text[0] == '\'' && composing.isNotEmpty()))
 
         if (isWordChar) {
             recordLastTouch()

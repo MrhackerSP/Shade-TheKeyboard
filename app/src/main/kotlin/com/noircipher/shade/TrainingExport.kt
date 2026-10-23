@@ -130,7 +130,7 @@ object TrainingExport {
                     is Int -> v.toFloat()
                     else -> null
                 } ?: return@mapNotNull null
-                if (!k.all { it.isLetter() || it == '\'' }) return@mapNotNull null
+                if (!k.all { WordDictionary.isWordChar(it) }) return@mapNotNull null
                 if (k.length < 2 || k.length > 32) return@mapNotNull null
                 k to freq
             }

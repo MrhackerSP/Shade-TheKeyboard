@@ -55,24 +55,11 @@ class WordDictionary(private val ctx: Context) {
         withContext(Dispatchers.IO) {
             try {
                 val w = HashMap<String, Long>()
-                val raw = java.io.BufferedInputStream(ctx.assets.open("wordlists/${localeId}.txt"))
-                raw.mark(2)
-                val b0 = raw.read()
-                val b1 = raw.read()
-                raw.reset()
-                val stream: java.io.InputStream =
-                    if (b0 == 0x1f && b1 == 0x8b) java.util.zip.GZIPInputStream(raw) else raw
-                stream.bufferedReader().useLines { lines ->
-                    for (line in lines) {
-                        val t = line.trim()
-                        if (t.isEmpty()) continue
-                        val sp = t.indexOfFirst { it == ' ' || it == '\t' }
-                        val word = (if (sp < 0) t else t.substring(0, sp)).lowercase()
-                        val freq = if (sp < 0) 1L else (t.substring(sp + 1).trim().toLongOrNull() ?: continue)
-                        if (word.length > 20) continue
-                        if (word.length == 1 && word != "a" && word != "i") continue
-                        if (!word.all { it.isLetter() || it == '\'' }) continue
-                        w[word] = freq
+                for (id in localeId.split(',').map { it.trim() }.filter { it.isNotEmpty() }) {
+                    try {
+                        readWordList(id, w)
+                    } catch (_: Exception) {
+                        // missing list: skip it
                     }
                 }
                 val top = if (w.size > MAX_WORDS) {
@@ -83,6 +70,29 @@ class WordDictionary(private val ctx: Context) {
                 rebuildPrefixIndex()
             } catch (_: Exception) {
                 // No dictionary file
+            }
+        }
+    }
+
+    private fun readWordList(id: String, w: MutableMap<String, Long>) {
+        val raw = java.io.BufferedInputStream(ctx.assets.open("wordlists/${id}.txt"))
+        raw.mark(2)
+        val b0 = raw.read()
+        val b1 = raw.read()
+        raw.reset()
+        val stream: java.io.InputStream =
+            if (b0 == 0x1f && b1 == 0x8b) java.util.zip.GZIPInputStream(raw) else raw
+        stream.bufferedReader().useLines { lines ->
+            for (line in lines) {
+                val t = line.trim()
+                if (t.isEmpty()) continue
+                val sp = t.indexOfFirst { it == ' ' || it == '\t' }
+                val word = (if (sp < 0) t else t.substring(0, sp)).lowercase()
+                val freq = if (sp < 0) 1L else (t.substring(sp + 1).trim().toLongOrNull() ?: continue)
+                if (word.length > 20) continue
+                if (word.length == 1 && word[0] in 'a'..'z' && word != "a" && word != "i") continue
+                if (!word.all { isWordChar(it) }) continue
+                w[word] = maxOf(w[word] ?: 0L, freq)
             }
         }
     }
@@ -134,7 +144,7 @@ class WordDictionary(private val ctx: Context) {
 
     fun learn(word: String, prev2: String? = null, prev1: String? = null) {
         val w = word.lowercase()
-        if (w.length < 2 || !w.all { it.isLetter() || it == '\'' }) return
+        if (w.length < 2 || !w.all { isWordChar(it) }) return
         val old = user[w] ?: 0f
         val score = old * DECAY + 1f
         user[w] = score
@@ -260,7 +270,7 @@ class WordDictionary(private val ctx: Context) {
 
         contractions[w]?.let { return match(word, it) }
 
-        if (w.length < 3 || !w.all { it.isLetter() || it == '\'' }) return null
+        if (w.length < 3 || !w.all { isWordChar(it) }) return null
         if (contains(w)) return null
 
         if (w.length > 20) return null
@@ -331,6 +341,13 @@ class WordDictionary(private val ctx: Context) {
     companion object {
         private const val DECAY = 0.99f
         private const val MAX_WORDS = 60000
+
+        /** Letters, apostrophes and combining marks (needed for Hindi vowel signs). */
+        fun isWordChar(c: Char): Boolean {
+            if (c == '\'' || c.isLetter()) return true
+            val t = Character.getType(c)
+            return t == Character.NON_SPACING_MARK.toInt() || t == Character.COMBINING_SPACING_MARK.toInt()
+        }
 
         fun clearLearned(ctx: Context) {
             ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE).edit().clear().apply()
