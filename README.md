@@ -10,7 +10,7 @@ An original, privacy-first Android keyboard written from scratch in Kotlin. (MIT
 - Space-bar swipe to move the cursor; long-press space for the keyboard picker
 
 **Text correction**
-- Offline suggestions from one or more dictionaries (English, Español, Deutsch, Français bundled)
+- Offline suggestions from one or more dictionaries (English, Hindi, Hinglish bundled)
 - **Multilingual typing**: enable several dictionaries at once; **import your own** word lists
 - Autocorrect for single-letter typos (backspace undoes it), emoji suggestions
 - Learned words stored on-device only; **incognito mode**
