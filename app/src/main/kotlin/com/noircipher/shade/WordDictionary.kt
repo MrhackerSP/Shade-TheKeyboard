@@ -341,7 +341,7 @@ class WordDictionary(private val ctx: Context) {
 
     companion object {
         private const val DECAY = 0.99f
-        private const val MAX_WORDS = 200000
+        private const val MAX_WORDS = 300000
 
         /** Letters, apostrophes and combining marks (needed for Hindi vowel signs). */
         fun isWordChar(c: Char): Boolean {
