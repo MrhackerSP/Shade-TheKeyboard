@@ -271,6 +271,7 @@ class WordDictionary(private val ctx: Context) {
         contractions[w]?.let { return match(word, it) }
 
         if (w.length < 3 || !w.all { isWordChar(it) }) return null
+        if (w.any { it.code > 0x24F }) return null
         if (contains(w)) return null
 
         if (w.length > 20) return null
@@ -340,7 +341,7 @@ class WordDictionary(private val ctx: Context) {
 
     companion object {
         private const val DECAY = 0.99f
-        private const val MAX_WORDS = 60000
+        private const val MAX_WORDS = 200000
 
         /** Letters, apostrophes and combining marks (needed for Hindi vowel signs). */
         fun isWordChar(c: Char): Boolean {
