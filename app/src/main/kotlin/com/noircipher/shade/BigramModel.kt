@@ -22,9 +22,28 @@ class BigramModel(private val ctx: Context) {
     private val store = File(ctx.filesDir, "ngram.json")
     private var dirty = false
 
+    /** Read-only next-word table bundled with the app: word -> best next words, best first. */
+    @Volatile private var staticNext: Map<String, Array<String>> = emptyMap()
+
     init {
         load()
         if (bigrams.isEmpty()) seedFromAssets()
+        Thread { loadStatic() }.apply { isDaemon = true; start() }
+    }
+
+    private fun loadStatic() {
+        try {
+            val m = HashMap<String, Array<String>>(40000)
+            ctx.assets.open("bigrams_en.txt").bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    val p = line.split('\t')
+                    if (p.size >= 2) m[p[0]] = p.subList(1, p.size).toTypedArray()
+                }
+            }
+            staticNext = m
+        } catch (_: Exception) {
+            // No bundled table: only learned data is used.
+        }
     }
 
     @Synchronized
@@ -66,6 +85,12 @@ class BigramModel(private val ctx: Context) {
         val bt = bigramTotals[p1] ?: 0f
         if (bm != null && bt > 0f) {
             for ((w, c) in bm) scores[w] = (scores[w] ?: 0f) + 0.3f * (c / bt)
+        }
+
+        staticNext[p1]?.let { arr ->
+            for ((i, w) in arr.withIndex()) {
+                scores[w] = (scores[w] ?: 0f) + 0.18f - 0.06f * i
+            }
         }
 
         if (scores.isEmpty()) return emptyList()
