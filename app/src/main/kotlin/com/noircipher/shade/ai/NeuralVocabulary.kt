@@ -61,12 +61,20 @@ class NeuralVocabulary private constructor(
         val wantedPrefix = prefix?.lowercase()
         val candidates = ArrayList<Triple<Int, String, Float>>()
 
-        for (id in probabilities.indices) {
+        // Some ONNX models omit the empty placeholder ID 0. When that happens,
+        // shift model output indices by one so class 0 maps to vocabulary ID 1.
+        val placeholderOffset = if (
+            idToToken.firstOrNull().isNullOrEmpty() &&
+            logits.size == idToToken.size - 1
+        ) 1 else 0
+
+        for (outputId in probabilities.indices) {
+            val id = outputId + placeholderOffset
             val token = idToToken.getOrNull(id) ?: continue
             if (token.isEmpty()) continue
             if (token.startsWith("[") && token.endsWith("]")) continue
             if (wantedPrefix != null && !token.startsWith(wantedPrefix)) continue
-            candidates.add(Triple(id, token, probabilities[id]))
+            candidates.add(Triple(id, token, probabilities[outputId]))
         }
 
         return candidates
@@ -94,6 +102,8 @@ class NeuralVocabulary private constructor(
     companion object {
         fun load(context: Context, languageTag: String = "en"): NeuralVocabulary? {
             val candidates = buildList {
+                add("languages/${languageTag}/vocab_${languageTag}.tsv")
+                add("languages/${languageTag}/vocab.tsv")
                 add("neural/vocab_${languageTag}.tsv")
                 add("neural/vocab_${languageTag}.txt")
                 add("neural/vocab.tsv")

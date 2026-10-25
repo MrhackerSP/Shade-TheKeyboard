@@ -17,6 +17,8 @@ class OnnxNeuralPredictor(
 
     private val session: OrtSession = run {
         val candidates = buildList {
+            add("languages/${languageTag}/model_${languageTag}.ort")
+            add("languages/${languageTag}/model.ort")
             add("neural/model_${languageTag}.ort")
             add("neural/model.ort")
         }
