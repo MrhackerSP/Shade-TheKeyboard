@@ -66,10 +66,21 @@ class NeuralPredictionEngine private constructor(
     companion object {
         private const val TAG = "NeuralPredictionEngine"
 
-        fun create(context: Context): NeuralPredictionEngine? {
+        private fun normalizeLanguageTag(languageTag: String): String {
+            val lower = languageTag.lowercase()
+            return when {
+                lower.startsWith("hg") -> "hg"
+                lower.startsWith("hinglish") -> "hg"
+                lower.startsWith("hi") -> "hi"
+                else -> "en"
+            }
+        }
+
+        fun create(context: Context, languageTag: String = "en"): NeuralPredictionEngine? {
+            val modelLanguage = normalizeLanguageTag(languageTag)
             return try {
-                val vocabulary = NeuralVocabulary.load(context) ?: return null
-                val predictor = OnnxNeuralPredictor(context, vocabulary)
+                val vocabulary = NeuralVocabulary.load(context, modelLanguage) ?: return null
+                val predictor = OnnxNeuralPredictor(context, vocabulary, languageTag = modelLanguage)
                 NeuralPredictionEngine(vocabulary, predictor)
             } catch (t: Throwable) {
                 Log.i(TAG, "Neural engine unavailable", t)

@@ -163,8 +163,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val locale = dictIds()
         scope.launch(Dispatchers.Default) {
             dict.configure(locale)
-            neural = NeuralPredictionEngine.create(this@ShadeService)
-            neural?.enabled = neuralOn
+            reloadNeuralEngine(locale)
         }
     }
 
@@ -520,7 +519,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.repeatIntervalMs = 40L
 
         val locale = dictIds()
-        scope.launch(Dispatchers.Default) { dict.configure(locale) }
+        scope.launch(Dispatchers.Default) {
+            dict.configure(locale)
+            reloadNeuralEngine(locale)
+        }
 
         val keyH = prefs.getInt("key_height", 50)
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -1417,6 +1419,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     // ------------------------------------------------------------------ suggestions (cascade)
 
+    @Synchronized
+    private fun reloadNeuralEngine(locale: String) {
+        if (neuralLocale == locale) return
+        neuralLocale = locale
+        val old = neural
+        neural = null
+        old?.close()
+        val created = NeuralPredictionEngine.create(this@ShadeService, locale)
+        created?.enabled = neuralOn
+        neural = created
+    }
+
     private fun neuralContext(typedWord: String): String {
         val raw = currentInputConnection
             ?.getTextBeforeCursor(96, 0)
@@ -1454,10 +1468,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             val context = neuralContext("")
 
             suggestJob = scope.launch {
-                val neuralNext = neural
-                    ?.predictNext(context, null, 6)
-                    ?.map { it.first }
-                    .orEmpty()
+                val neuralNext = withContext(Dispatchers.Default) {
+                    neural
+                        ?.predictNext(context, null, 6)
+                        ?.map { it.first }
+                        .orEmpty()
+                }
                 val dictionaryNext = prev1
                     ?.let { dict.predictNext(null, it, 6) }
                     .orEmpty()
@@ -1502,7 +1518,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 } else stage2
             } else stage2
 
-            val ranked = neural?.rerankPrefix(neuralCtx, prefix, stage3) ?: stage3
+            val ranked = withContext(Dispatchers.Default) {
+                neural?.rerankPrefix(neuralCtx, prefix, stage3)
+            } ?: stage3
             val shown: List<String> = if (!known && ranked.isNotEmpty()) {
                 listOf(prefix) + ranked.take(2)
             } else {

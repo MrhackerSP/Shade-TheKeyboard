@@ -92,8 +92,14 @@ class NeuralVocabulary private constructor(
     }
 
     companion object {
-        fun load(context: Context): NeuralVocabulary? {
-            for (path in listOf("neural/vocab.tsv", "neural/vocab.txt")) {
+        fun load(context: Context, languageTag: String = "en"): NeuralVocabulary? {
+            val candidates = buildList {
+                add("neural/vocab_${languageTag}.tsv")
+                add("neural/vocab_${languageTag}.txt")
+                add("neural/vocab.tsv")
+                add("neural/vocab.txt")
+            }
+            for (path in candidates) {
                 try {
                     context.assets.open(path).bufferedReader().use { reader ->
                         val byId = HashMap<Int, String>()

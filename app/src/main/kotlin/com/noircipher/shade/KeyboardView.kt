@@ -354,7 +354,7 @@ class KeyboardView(context: Context) : View(context) {
         val visible = lastRow.filter { it.kind != KeyKind.SPACER }
         for (k in visible) k.outerCorner = KeyOuterCorner.NONE
         if (visible.isNotEmpty()) {
-            visible.first().outerCorner = KeyOuterCorner.BOTTOM_LEFT
+            visible.firstOrNull()?.outerCorner = KeyOuterCorner.BOTTOM_LEFT
             visible.last().outerCorner = KeyOuterCorner.BOTTOM_RIGHT
         }
     }

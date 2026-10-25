@@ -9,17 +9,31 @@ import java.nio.LongBuffer
 class OnnxNeuralPredictor(
     context: Context,
     private val vocabulary: NeuralVocabulary,
-    private val contextSize: Int = 16
+    private val contextSize: Int = 16,
+    languageTag: String = "en"
 ) : NeuralPredictor {
 
     private val environment: OrtEnvironment = OrtEnvironment.getEnvironment()
 
-    private val session: OrtSession = environment.createSession(
-        context.assets.open("neural/model.ort").readBytes(),
-        OrtSession.SessionOptions()
-    )
+    private val session: OrtSession = run {
+        val candidates = buildList {
+            add("neural/model_${languageTag}.ort")
+            add("neural/model.ort")
+        }
+        var lastError: Exception? = null
+        val modelBytes = candidates.firstNotNullOfOrNull { path ->
+            try {
+                context.assets.open(path).readBytes()
+            } catch (e: Exception) {
+                lastError = e
+                null
+            }
+        } ?: throw (lastError ?: IllegalStateException("No ONNX model asset found"))
+        environment.createSession(modelBytes, OrtSession.SessionOptions())
+    }
 
-    private val inputName: String = session.inputNames.first()
+    private val inputName: String = session.inputNames.firstOrNull()
+        ?: throw IllegalStateException("ONNX model has no inputs")
 
     override fun predictLogits(contextIds: IntArray): FloatArray {
         val ids = IntArray(contextSize)
@@ -42,7 +56,8 @@ class OnnxNeuralPredictor(
 
         val result = session.run(mapOf(inputName to input))
         try {
-            val output = result.get(0) as OnnxTensor
+            val output = result.get(0) as? OnnxTensor
+                ?: throw IllegalStateException("ONNX model returned no tensor output")
             val floatBuffer = output.floatBuffer
             val length = minOf(floatBuffer.remaining(), vocabulary.size)
             return FloatArray(length) { floatBuffer.get() }
