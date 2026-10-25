@@ -167,6 +167,12 @@
             app:iconSpaceReserved="false" />
         <SwitchPreferenceCompat
             android:defaultValue="true"
+            android:key="neural_predictions"
+            android:title="@string/pref_neural_predictions"
+            android:summary="@string/pref_neural_predictions_sum"
+            app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
             android:key="emoji_suggestions"
             android:title="@string/pref_emoji_sugg"
             android:summary="@string/pref_emoji_sugg_sum"

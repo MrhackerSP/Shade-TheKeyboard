@@ -18,25 +18,51 @@ import java.io.FileOutputStream
 
 class SettingsActivity : AppCompatActivity() {
 
+    private var currentScreenTitleRes: Int = 0
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
-        supportActionBar?.elevation = 0f
+        supportActionBar?.apply {
+            elevation = 0f
+            setDisplayShowTitleEnabled(false)
+            setDisplayHomeAsUpEnabled(false)
+        }
+        supportFragmentManager.addOnBackStackChangedListener {
+            updateActionBar()
+        }
 
         // The main menu is just a set of clickable rows that open
         // specific preference screens inside a new fragment.
-        findViewById<View>(R.id.row_languages).setOnClickListener { openScreen("screen_layouts") }
-        findViewById<View>(R.id.row_preferences).setOnClickListener { openScreen("screen_toolbar") }
-        findViewById<View>(R.id.row_theme).setOnClickListener { openScreen("screen_appearance") }
-        findViewById<View>(R.id.row_corrections).setOnClickListener { openScreen("screen_typing") }
-        findViewById<View>(R.id.row_voice).setOnClickListener { /* Placeholder */ }
-        findViewById<View>(R.id.row_emoji).setOnClickListener { /* Placeholder */ }
-        findViewById<View>(R.id.row_clipboard).setOnClickListener { openScreen("screen_toolbar") }
-        findViewById<View>(R.id.row_backup).setOnClickListener { openScreen("screen_backup") }
-        findViewById<View>(R.id.row_about).setOnClickListener { openScreen("screen_about") }
+        findViewById<View>(R.id.row_languages).setOnClickListener { openScreen("screen_layouts", R.string.pref_languages) }
+        findViewById<View>(R.id.row_preferences).setOnClickListener { openScreen("screen_toolbar", R.string.pref_preferences) }
+        findViewById<View>(R.id.row_theme).setOnClickListener { openScreen("screen_appearance", R.string.pref_theme) }
+        findViewById<View>(R.id.row_corrections).setOnClickListener { openScreen("screen_typing", R.string.pref_corrections) }
+        findViewById<View>(R.id.row_voice).setOnClickListener { toast(R.string.settings_coming_soon) }
+        findViewById<View>(R.id.row_emoji).setOnClickListener { toast(R.string.settings_coming_soon) }
+        findViewById<View>(R.id.row_clipboard).setOnClickListener { openScreen("screen_toolbar", R.string.pref_clipboard) }
+        findViewById<View>(R.id.row_backup).setOnClickListener { openScreen("screen_backup", R.string.pref_backup) }
+        findViewById<View>(R.id.row_about).setOnClickListener { openScreen("screen_about", R.string.pref_about) }
     }
 
-    private fun openScreen(rootKey: String) {
+    private fun updateActionBar() {
+        val canNavigateBack = supportFragmentManager.backStackEntryCount > 0
+        supportActionBar?.setDisplayHomeAsUpEnabled(canNavigateBack)
+        supportActionBar?.setDisplayShowTitleEnabled(canNavigateBack)
+        supportActionBar?.setTitle(if (canNavigateBack) currentScreenTitleRes else 0)
+    }
+
+    override fun onSupportNavigateUp(): Boolean {
+        if (supportFragmentManager.backStackEntryCount > 0) {
+            supportFragmentManager.popBackStack()
+            return true
+        }
+        return super.onSupportNavigateUp()
+    }
+
+    private fun openScreen(rootKey: String, titleRes: Int) {
+        currentScreenTitleRes = titleRes
+        updateActionBar()
         val fragment = SettingsFragment().apply {
             arguments = Bundle().apply {
                 putString(PreferenceFragmentCompat.ARG_PREFERENCE_ROOT, rootKey)

@@ -237,4 +237,30 @@
         <item>onehand</item>
         <item>settings</item>
     </string-array>
+
+    <string name="settings_header_title">Shade</string>
+    <string name="settings_header_subtitle">Keyboard settings</string>
+    <string name="settings_section_general">General</string>
+    <string name="settings_section_typing">Typing</string>
+    <string name="settings_section_advanced">Advanced</string>
+    <string name="settings_languages_subtitle">Languages, layouts and models</string>
+    <string name="settings_preferences_subtitle">Keys, toolbar and behavior</string>
+    <string name="settings_theme_subtitle">Colors, backgrounds and key styles</string>
+    <string name="settings_corrections_subtitle">Autocorrect, prediction and learning</string>
+    <string name="settings_voice_subtitle">Dictation and voice input</string>
+    <string name="settings_emoji_subtitle">Emoji, stickers and GIFs</string>
+    <string name="settings_clipboard_subtitle">Saved clips and pinned items</string>
+    <string name="settings_backup_subtitle">Export and restore settings</string>
+    <string name="settings_about_subtitle">Version, license and project details</string>
+    <string name="pref_languages">Languages</string>
+    <string name="pref_preferences">Preferences</string>
+    <string name="pref_corrections">Corrections &amp; suggestions</string>
+    <string name="pref_voice">Voice typing</string>
+    <string name="pref_clipboard">Clipboard</string>
+    <string name="pref_about">About</string>
+    <string name="pref_emoji">Emoji &amp; GIFs</string>
+    <string name="pref_backup">Backup &amp; restore</string>
+    <string name="settings_coming_soon">Coming soon</string>
+    <string name="pref_neural_predictions">Neural predictions</string>
+    <string name="pref_neural_predictions_sum">Use an on-device ONNX model for smarter suggestions</string>
 </resources>

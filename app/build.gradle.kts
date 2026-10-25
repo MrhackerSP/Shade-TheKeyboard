@@ -92,5 +92,6 @@ dependencies {
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.asynclayoutinflater:asynclayoutinflater:1.1.0")
     implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }

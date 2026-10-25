@@ -22,8 +22,6 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.DecelerateInterpolator
-import android.view.animation.OvershootInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
@@ -106,6 +104,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var canCompose = true
     private var suggestionsAllowed = true
     private var suggestionsOn = true
+    private var neuralOn = true
     private var learnOn = true
     private var autoCaps = true
     private var doubleSpace = true
@@ -164,6 +163,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val locale = dictIds()
         scope.launch(Dispatchers.Default) {
             dict.configure(locale)
+            neural = NeuralPredictionEngine.create(this@ShadeService)
+            neural?.enabled = neuralOn
         }
     }
 
@@ -502,6 +503,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kbTheme = Themes.resolve(this, prefs)
         numberRow = prefs.getBoolean("number_row", false)
         suggestionsOn = prefs.getBoolean("suggestions", true)
+        neuralOn = prefs.getBoolean("neural_predictions", true)
+        neural?.enabled = neuralOn
         learnOn = prefs.getBoolean("learn_words", true)
         autoCaps = prefs.getBoolean("auto_caps", true)
         doubleSpace = prefs.getBoolean("double_space", true)
@@ -601,15 +604,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
                             v.animate().cancel()
-                            v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(60L).start()
+                            v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(ShadeMotion.KEY_PRESS_DOWN_MS)
+                                .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
+                                .start()
                             false
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                             v.animate().cancel()
                             v.animate()
                                 .scaleX(1f).scaleY(1f)
-                                .setDuration(180L)
-                                .setInterpolator(OvershootInterpolator(2.5f))
+                                .setDuration(ShadeMotion.KEY_PRESS_UP_MS)
+                                .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
                                 .start()
                             false
                         }
@@ -632,12 +637,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         toggle.animate().cancel()
         toggle.animate()
             .scaleX(1.3f).scaleY(1.3f)
-            .setDuration(90L)
+            .setDuration(ShadeMotion.UI_TOGGLE_IN_MS)
+                .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
             .withEndAction {
                 toggle.animate()
                     .scaleX(1f).scaleY(1f)
-                    .setDuration(180L)
-                    .setInterpolator(OvershootInterpolator(2.5f))
+                    .setDuration(ShadeMotion.UI_TOGGLE_OUT_MS)
+                    .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
                     .start()
             }
             .start()
@@ -656,8 +662,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val target = if (showTools) toolScroll else slotFrame
         target.animate()
             .alpha(1f)
-            .setDuration(140L)
-            .setInterpolator(DecelerateInterpolator())
+            .setDuration(ShadeMotion.CANDIDATE_SWAP_MS)
+            .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
             .start()
 
         toggle.text = if (showTools) "‹" else "›"
@@ -760,7 +766,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     stiffness = SpringForce.STIFFNESS_MEDIUM
                 }
             }.start()
-            v.animate().alpha(1f).setDuration(180L).start()
+            v.animate().alpha(1f).setDuration(ShadeMotion.PANEL_IN_MS).setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN).start()
         }
 
         outgoing?.let { v ->
@@ -770,7 +776,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     stiffness = SpringForce.STIFFNESS_MEDIUM
                 }
             }.start()
-            v.animate().alpha(0f).setDuration(180L)
+            v.animate().alpha(0f).setDuration(ShadeMotion.PANEL_OUT_MS).setInterpolator(ShadeMotion.FAST_OUT_LINEAR_IN)
                 .withEndAction {
                     v.visibility = View.GONE
                     v.translationX = 0f
@@ -1411,6 +1417,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     // ------------------------------------------------------------------ suggestions (cascade)
 
+    private fun neuralContext(typedWord: String): String {
+        val raw = currentInputConnection
+            ?.getTextBeforeCursor(96, 0)
+            ?.toString()
+            ?: ""
+        return if (typedWord.isNotEmpty() && raw.endsWith(typedWord, ignoreCase = true)) {
+            raw.dropLast(typedWord.length)
+        } else {
+            raw
+        }
+    }
+
     private fun updateSuggestions() {
         if (this::slots.isInitialized == false) return
         suggestJob?.cancel()
@@ -1433,15 +1451,27 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             val prev1: String? = if (composingActive) lastWord()
                 else if (canCompose == false && suggestionsAllowed) previousWordFromField()
                 else lastWord()
-            val next: List<String> = if (prev1 != null) {
-                centerBest(dict.predictNext(null, prev1, 3))
-            } else emptyList()
-            val list: List<String> = when {
-                next.isNotEmpty() -> next
-                atSentenceEndBeforeCursor() -> listOf("The", "I", "I'm")
-                else -> emptyList()
+            val context = neuralContext("")
+
+            suggestJob = scope.launch {
+                val neuralNext = neural
+                    ?.predictNext(context, null, 6)
+                    ?.map { it.first }
+                    .orEmpty()
+                val dictionaryNext = prev1
+                    ?.let { dict.predictNext(null, it, 6) }
+                    .orEmpty()
+                val merged = (neuralNext + dictionaryNext)
+                    .distinct()
+                    .take(3)
+
+                val list: List<String> = when {
+                    merged.isNotEmpty() -> centerBest(merged)
+                    atSentenceEndBeforeCursor() -> listOf("The", "I", "I'm")
+                    else -> emptyList()
+                }
+                setCandidates(list)
             }
-            setCandidates(list)
             return
         }
 
@@ -1453,6 +1483,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val prev1 = lastWord()
         val touches = if (composingActive) touchTrace.last(touchTrace.size()) else emptyList()
         val layout = kbKeyLayout()
+        val neuralCtx = neuralContext(typedWord)
 
         suggestJob = scope.launch {
             val known = dict.contains(prefix)
@@ -1471,7 +1502,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 } else stage2
             } else stage2
 
-            val ranked = stage3
+            val ranked = neural?.rerankPrefix(neuralCtx, prefix, stage3) ?: stage3
             val shown: List<String> = if (!known && ranked.isNotEmpty()) {
                 listOf(prefix) + ranked.take(2)
             } else {
@@ -1518,8 +1549,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (!anyChanged) return
 
         slotAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 140L
-            interpolator = DecelerateInterpolator(1.6f)
+            duration = ShadeMotion.CANDIDATE_SWAP_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener {
                 val t = it.animatedValue as Float
                 for (i in 0 until 3) {

@@ -20,7 +20,6 @@ import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
-import android.view.animation.DecelerateInterpolator
 import android.widget.PopupWindow
 import androidx.core.graphics.ColorUtils
 import java.util.ArrayDeque
@@ -234,16 +233,16 @@ class KeyboardView(context: Context) : View(context) {
     fun setRowsAnimated(r: List<List<Key>>) {
         layoutAnimator?.cancel()
         layoutAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
-            duration = 80L
-            interpolator = DecelerateInterpolator()
+            duration = ShadeMotion.KEY_POPUP_OUT_MS
+            interpolator = ShadeMotion.FAST_OUT_LINEAR_IN
             addUpdateListener { layoutAlpha = it.animatedValue as Float; invalidate() }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
                     rows = r
                     layoutKeys()
                     layoutAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-                        duration = 120L
-                        interpolator = DecelerateInterpolator()
+                        duration = ShadeMotion.LAYOUT_FADE_IN_MS
+                        interpolator = ShadeMotion.FAST_OUT_SLOW_IN
                         addUpdateListener { layoutAlpha = it.animatedValue as Float; invalidate() }
                         start()
                     }
@@ -261,8 +260,8 @@ class KeyboardView(context: Context) : View(context) {
         if (splitProgress == target) return
         splitAnimator?.cancel()
         splitAnimator = ValueAnimator.ofFloat(splitProgress, target).apply {
-            duration = 200L
-            interpolator = DecelerateInterpolator(1.4f)
+            duration = ShadeMotion.MODE_CHANGE_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener {
                 splitProgress = it.animatedValue as Float
                 layoutKeys()
@@ -278,8 +277,8 @@ class KeyboardView(context: Context) : View(context) {
         if (oneHandedProgress == target) return
         oneHandedAnimator?.cancel()
         oneHandedAnimator = ValueAnimator.ofFloat(oneHandedProgress, target).apply {
-            duration = 200L
-            interpolator = DecelerateInterpolator(1.4f)
+            duration = ShadeMotion.MODE_CHANGE_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener {
                 oneHandedProgress = it.animatedValue as Float
                 layoutKeys()
@@ -698,7 +697,7 @@ class KeyboardView(context: Context) : View(context) {
         trailAlpha = 0f
         trailAnimator?.cancel()
         trailAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 90L
+            duration = ShadeMotion.SWIPE_TRAIL_FADE_IN_MS
             addUpdateListener { trailAlpha = it.animatedValue as Float; invalidate() }
             start()
         }
@@ -715,7 +714,7 @@ class KeyboardView(context: Context) : View(context) {
         if (!trailActive) return
         trailAnimator?.cancel()
         trailAnimator = ValueAnimator.ofFloat(trailAlpha, 0f).apply {
-            duration = 180L
+            duration = ShadeMotion.SWIPE_TRAIL_FADE_OUT_MS
             addUpdateListener { trailAlpha = it.animatedValue as Float; invalidate() }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
@@ -764,8 +763,8 @@ class KeyboardView(context: Context) : View(context) {
         popupActive = tryShowPopup(k)
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 45L
-            interpolator = DecelerateInterpolator(2f)
+            duration = ShadeMotion.KEY_POPUP_IN_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             start()
         }
@@ -834,7 +833,13 @@ class KeyboardView(context: Context) : View(context) {
             bubble.alpha = 0.3f
             if (pop.isShowing) pop.update(x, y, pw, ph) else pop.showAtLocation(this, Gravity.NO_GRAVITY, x, y)
             bubble.invalidate()
-            bubble.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(45L).start()
+            bubble.animate()
+                .scaleX(1f)
+                .scaleY(1f)
+                .alpha(1f)
+                .setDuration(ShadeMotion.KEY_POPUP_IN_MS)
+                .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
+                .start()
             true
         } catch (_: Exception) {
             dismissPreviewPopup()
@@ -852,8 +857,8 @@ class KeyboardView(context: Context) : View(context) {
         dismissPreviewPopup()
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(previewProgress, 0f).apply {
-            duration = 55L
-            interpolator = DecelerateInterpolator()
+            duration = ShadeMotion.KEY_POPUP_OUT_MS
+            interpolator = ShadeMotion.FAST_OUT_LINEAR_IN
             addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
@@ -918,8 +923,8 @@ class KeyboardView(context: Context) : View(context) {
 
         altAnimator?.cancel()
         altAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 100L
-            interpolator = DecelerateInterpolator(2f)
+            duration = ShadeMotion.KEY_POPUP_IN_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener { altProgress = it.animatedValue as Float; invalidate() }
             start()
         }
@@ -939,8 +944,8 @@ class KeyboardView(context: Context) : View(context) {
         if (!altShown) return
         altAnimator?.cancel()
         altAnimator = ValueAnimator.ofFloat(altProgress, 0f).apply {
-            duration = 80L
-            interpolator = DecelerateInterpolator()
+            duration = ShadeMotion.KEY_POPUP_OUT_MS
+            interpolator = ShadeMotion.FAST_OUT_LINEAR_IN
             addUpdateListener { altProgress = it.animatedValue as Float; invalidate() }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
@@ -976,8 +981,8 @@ class KeyboardView(context: Context) : View(context) {
             burstActive = true
             burstAnimator?.cancel()
             burstAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = 450L
-                interpolator = DecelerateInterpolator()
+                duration = ShadeMotion.FEEDBACK_BURST_MS
+                interpolator = ShadeMotion.FAST_OUT_SLOW_IN
                 addUpdateListener { burstProgress = it.animatedValue as Float; invalidate() }
                 addListener(object : android.animation.AnimatorListenerAdapter() {
                     override fun onAnimationEnd(animation: android.animation.Animator) {
@@ -1074,8 +1079,8 @@ class KeyboardView(context: Context) : View(context) {
     private fun startPressAnimation() {
         pressAnimator?.cancel()
         pressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 55L
-            interpolator = DecelerateInterpolator(2f)
+            duration = ShadeMotion.KEY_PRESS_DOWN_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener { pressProgress = it.animatedValue as Float; invalidate() }
             start()
         }
@@ -1084,8 +1089,8 @@ class KeyboardView(context: Context) : View(context) {
     private fun stopPressAnimation() {
         pressAnimator?.cancel()
         pressAnimator = ValueAnimator.ofFloat(pressProgress, 0f).apply {
-            duration = 110L
-            interpolator = DecelerateInterpolator(1.5f)
+            duration = ShadeMotion.KEY_PRESS_UP_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener { pressProgress = it.animatedValue as Float; invalidate() }
             start()
         }
@@ -1094,8 +1099,8 @@ class KeyboardView(context: Context) : View(context) {
     private fun animateShiftTap() {
         shiftTapAnimator?.cancel()
         shiftTapAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 90L
-            interpolator = DecelerateInterpolator(2f)
+            duration = ShadeMotion.KEY_POPUP_IN_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener {
                 shiftTapProgress = it.animatedValue as Float
                 invalidate()
@@ -1103,7 +1108,8 @@ class KeyboardView(context: Context) : View(context) {
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
                     shiftTapAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
-                        duration = 140L
+                        duration = ShadeMotion.SWIPE_TRAIL_FADE_OUT_MS
+                        interpolator = ShadeMotion.FAST_OUT_LINEAR_IN
                         addUpdateListener {
                             shiftTapProgress = it.animatedValue as Float
                             invalidate()
