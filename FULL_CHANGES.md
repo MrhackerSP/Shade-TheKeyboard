@@ -62,9 +62,9 @@ Run:
 Added language-specific neural assets:
 
 ```text
-app/src/main/assets/neural/model_en.ort
-app/src/main/assets/neural/vocab_en.tsv
-app/src/main/assets/neural/vocab_hg.tsv
+app/src/main/assets/languages/en_US/model_en.ort
+app/src/main/assets/languages/en_US/vocab_en.tsv
+app/src/main/assets/languages/hg_IN/vocab_hg.tsv
 ```
 
 The engine now looks for language-specific files first:
@@ -95,7 +95,7 @@ fallback unless `model_hg.ort` is added later.
 Added:
 
 ```text
-app/src/main/assets/neural/vocab_hi.tsv
+app/src/main/assets/languages/hi_IN/vocab_hi.tsv
 ```
 
 The language router now maps Hindi locales/tags to `hi` and Hinglish tags to `hg`.
@@ -122,8 +122,8 @@ so they live inside the app folder structure instead of as a separate ZIP sectio
 Generated valid ONNX Runtime models:
 
 ```text
-app/src/main/assets/neural/model_hi.ort
-app/src/main/assets/neural/model_hg.ort
+app/src/main/assets/languages/hi_IN/model_hi.ort
+app/src/main/assets/languages/hg_IN/model_hg.ort
 ```
 
 Purpose:
@@ -134,3 +134,18 @@ Purpose:
 
 These are unigram-prior baseline models generated from vocabulary order, not trained
 SwiftKey-quality language models.
+
+## Runtime language assets moved into per-language folders
+
+Raw `.lm/.lm1/.lm2` source containers are no longer bundled as Shade runtime assets.
+Shade now loads decoded vocabularies and ONNX models from:
+
+```text
+app/src/main/assets/languages/<lang>/
+```
+
+This avoids shipping proprietary source containers inside the app runtime bundle.
+
+## English vocabulary/model off-by-one alignment
+
+Detected that `model_en.ort` has 20,000 output classes while the decoded English vocabulary contains 20,001 IDs including the empty placeholder ID 0. `NeuralVocabulary.topK()` now shifts model output indices by one when this exact pattern is present, so class 0 maps to vocabulary ID 1 instead of dropping the final vocabulary entry.

@@ -29,3 +29,7 @@
 - Low-RAM device test.
 - Long typing sessions to detect native memory growth.
 - Android Studio StrictMode / FrameMetrics review.
+
+## English vocabulary/model off-by-one alignment
+
+Detected that `model_en.ort` has 20,000 output classes while the decoded English vocabulary contains 20,001 IDs including the empty placeholder ID 0. `NeuralVocabulary.topK()` now shifts model output indices by one when this exact pattern is present, so class 0 maps to vocabulary ID 1 instead of dropping the final vocabulary entry.
