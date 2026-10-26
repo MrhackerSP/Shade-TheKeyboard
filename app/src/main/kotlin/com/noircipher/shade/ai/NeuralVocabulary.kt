@@ -26,7 +26,7 @@ class NeuralVocabulary private constructor(
         for (ch in text) {
             when {
                 ch.isLetterOrDigit() -> current.append(ch.lowercaseChar())
-                ch == ''' || ch == '-' || ch == '_' -> current.append(ch)
+                ch == '\'' || ch == '-' || ch == '_' -> current.append(ch)
                 else -> flush()
             }
         }
@@ -100,6 +100,34 @@ class NeuralVocabulary private constructor(
     }
 
     companion object {
+        fun fromText(text: String, languageTag: String = "en"): NeuralVocabulary? {
+            val byId = HashMap<Int, String>()
+            var sequentialId = 0
+
+            text.lineSequence().forEach { line ->
+                if ('	' in line) {
+                    val parts = line.split('	')
+                    val id = parts.getOrNull(0)?.toIntOrNull() ?: sequentialId
+                    val token = parts.getOrElse(2) { parts.last() }
+                    byId[id] = token
+                } else {
+                    byId[sequentialId] = line
+                }
+                sequentialId++
+            }
+
+            if (byId.isEmpty()) return null
+
+            val size = (byId.keys.maxOrNull() ?: -1) + 1
+            val tokens = List(size) { byId[it] ?: "" }
+            val tokenToId = HashMap<String, Int>()
+            for ((id, token) in byId) {
+                tokenToId[token] = id
+                tokenToId.putIfAbsent(token.lowercase(), id)
+            }
+            return NeuralVocabulary(tokens, tokenToId)
+        }
+
         fun load(context: Context, languageTag: String = "en"): NeuralVocabulary? {
             val candidates = buildList {
                 add("languages/${languageTag}/vocab_${languageTag}.tsv")
