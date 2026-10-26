@@ -16,6 +16,9 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # Ubuntu runners already include Android SDK/cmdline tools. Avoid
+      # setup-android here because it tries to install the removed `tools`
+      # SDK package on newer runner images.
       - name: Grant wrapper permission
         run: chmod +x gradlew
 
