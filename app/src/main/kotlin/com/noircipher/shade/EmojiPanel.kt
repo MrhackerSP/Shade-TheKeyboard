@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.GridView
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -33,6 +34,8 @@ class EmojiPanel(
     private val bar = LinearLayout(context)
     private val abc = TextView(context)
     private val del = ImageView(context)
+    private val suggestionScroll = HorizontalScrollView(context)
+    private val suggestionRow = LinearLayout(context)
     private val tabs = ArrayList<TextView>()
     private var selected = 0
     private var theme: KbTheme = Themes.LIGHT
@@ -56,6 +59,15 @@ class EmojiPanel(
 
     init {
         orientation = VERTICAL
+        suggestionScroll.visibility = GONE
+        suggestionScroll.isHorizontalScrollBarEnabled = false
+        suggestionRow.orientation = HORIZONTAL
+        suggestionScroll.addView(
+            suggestionRow,
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
+        )
+        addView(suggestionScroll, LayoutParams(LayoutParams.MATCH_PARENT, dp(44f)))
+
         grid.numColumns = 8
         grid.stretchMode = GridView.STRETCH_COLUMN_WIDTH
         grid.adapter = adapter
@@ -105,11 +117,34 @@ class EmojiPanel(
         }
     }
 
+    fun setSuggestions(suggestions: List<String>) {
+        suggestionRow.removeAllViews()
+        if (suggestions.isEmpty()) {
+            suggestionScroll.visibility = GONE
+            return
+        }
+
+        suggestionScroll.visibility = VISIBLE
+        suggestions.take(10).forEach { emoji ->
+            val tv = TextView(context).apply {
+                text = emoji
+                textSize = 24f
+                gravity = Gravity.CENTER
+                setPadding(dp(12f), 0, dp(12f), 0)
+                setOnClickListener { onEmoji(emoji) }
+            }
+            suggestionRow.addView(tv, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
+        }
+    }
+
     fun setTheme(t: KbTheme) {
         theme = t
         setBackgroundColor(t.bg)
         abc.setTextColor(t.text)
         del.setColorFilter(t.text)
+        for (i in 0 until suggestionRow.childCount) {
+            (suggestionRow.getChildAt(i) as? TextView)?.setTextColor(t.text)
+        }
         paintTabs()
     }
 }

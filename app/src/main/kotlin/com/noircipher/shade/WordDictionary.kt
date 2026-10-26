@@ -75,26 +75,39 @@ class WordDictionary(private val ctx: Context) {
     }
 
     private fun readWordList(id: String, w: MutableMap<String, Long>) {
-        val raw = java.io.BufferedInputStream(ctx.assets.open("wordlists/${id}.txt"))
-        raw.mark(2)
-        val b0 = raw.read()
-        val b1 = raw.read()
-        raw.reset()
-        val stream: java.io.InputStream =
-            if (b0 == 0x1f && b1 == 0x8b) java.util.zip.GZIPInputStream(raw) else raw
-        stream.bufferedReader().useLines { lines ->
-            for (line in lines) {
-                val t = line.trim()
-                if (t.isEmpty()) continue
-                val sp = t.indexOfFirst { it == ' ' || it == '\t' }
-                val word = (if (sp < 0) t else t.substring(0, sp)).lowercase()
-                val freq = if (sp < 0) 1L else (t.substring(sp + 1).trim().toLongOrNull() ?: continue)
-                if (word.length > 20) continue
-                if (word.length == 1 && word[0] in 'a'..'z' && word != "a" && word != "i") continue
-                if (!word.all { isWordChar(it) }) continue
-                w[word] = maxOf(w[word] ?: 0L, freq)
+        val candidates = listOf(
+            "languages/$id/dictionary.txt",
+            "wordlists/$id.txt"
+        )
+        var lastError: Exception? = null
+        for (path in candidates) {
+            try {
+                val raw = java.io.BufferedInputStream(ctx.assets.open(path))
+                raw.mark(2)
+                val b0 = raw.read()
+                val b1 = raw.read()
+                raw.reset()
+                val stream: java.io.InputStream =
+                    if (b0 == 0x1f && b1 == 0x8b) java.util.zip.GZIPInputStream(raw) else raw
+                stream.bufferedReader().useLines { lines ->
+                    for (line in lines) {
+                        val t = line.trim()
+                        if (t.isEmpty()) continue
+                        val sp = t.indexOfFirst { it == ' ' || it == '\t' }
+                        val word = (if (sp < 0) t else t.substring(0, sp)).lowercase()
+                        val freq = if (sp < 0) 1L else (t.substring(sp + 1).trim().toLongOrNull() ?: continue)
+                        if (word.length > 20) continue
+                        if (word.length == 1 && word[0] in 'a'..'z' && word != "a" && word != "i") continue
+                        if (!word.all { isWordChar(it) }) continue
+                        w[word] = maxOf(w[word] ?: 0L, freq)
+                    }
+                }
+                return
+            } catch (e: Exception) {
+                lastError = e
             }
         }
+        throw lastError ?: IllegalStateException("No dictionary asset found for $id")
     }
 
     private fun rebuildPrefixIndex() {

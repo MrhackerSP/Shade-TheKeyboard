@@ -45,6 +45,10 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<View>(R.id.row_about).setOnClickListener { openScreen("screen_about", R.string.pref_about) }
     }
 
+    private fun toast(res: Int) {
+        Toast.makeText(this, res, Toast.LENGTH_SHORT).show()
+    }
+
     private fun updateActionBar() {
         val canNavigateBack = supportFragmentManager.backStackEntryCount > 0
         supportActionBar?.setDisplayHomeAsUpEnabled(canNavigateBack)

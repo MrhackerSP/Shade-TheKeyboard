@@ -2,19 +2,20 @@ package com.noircipher.shade.ai
 
 import android.content.Context
 import android.util.Log
+import com.noircipher.shade.engine.LanguageModelEngine
 import java.io.Closeable
 
 class NeuralPredictionEngine private constructor(
     private val vocabulary: NeuralVocabulary,
     private val predictor: NeuralPredictor
-) : Closeable {
+) : LanguageModelEngine {
 
     @Volatile
-    var enabled: Boolean = true
+    override var enabled: Boolean = true
 
     private val contextSize = 16
 
-    fun predictNext(
+    override fun predictNext(
         beforeCursor: String,
         typedPrefix: String?,
         limit: Int
@@ -32,7 +33,7 @@ class NeuralPredictionEngine private constructor(
         }
     }
 
-    fun rerankPrefix(
+    override fun rerankPrefix(
         beforeCursor: String,
         typedPrefix: String,
         candidates: List<String>
