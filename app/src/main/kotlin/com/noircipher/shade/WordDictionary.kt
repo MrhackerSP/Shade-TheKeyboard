@@ -194,7 +194,8 @@ class WordDictionary(private val ctx: Context) {
             for (cand in bucket) {
                 if (!cand.startsWith(p)) continue
                 val us = user[cand] ?: continue
-                val s = 16f + kotlin.math.ln(us + 1f) - 0.3f * (cand.length - p.length)
+                // Needs repeated use to beat common dictionary words (one-off typos stay low).
+                val s = 10f + 4f * kotlin.math.ln(us + 1f) - 0.3f * (cand.length - p.length)
                 scored[cand] = maxOf(scored[cand] ?: -1000f, s)
                 if (++found >= 6) break
             }
