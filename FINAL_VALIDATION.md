@@ -44,3 +44,12 @@ dictionary suggestions, and spatial reranking.
 - Voice permission denial now opens Shade's app settings so users can grant mic access.
 - Slide input now requires meaningful movement before it consumes the key press, reducing accidental swipe triggers from tap jitter.
 - Slide decoding requires a slightly longer raw key sequence.
+
+## CI setup-android fix
+
+Removed the `android-actions/setup-android` CI step. Newer GitHub Ubuntu runner
+images no longer provide the legacy `tools` SDK package that the action tries to
+install. Android SDK tooling is already present on the runner image.
+
+Also updated workflow actions to current v5 versions to avoid Node.js 20
+deprecation warnings.
