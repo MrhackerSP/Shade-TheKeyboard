@@ -133,7 +133,7 @@ Purpose:
 - enable end-to-end neural pipeline testing.
 
 These are unigram-prior baseline models generated from vocabulary order, not trained
-SwiftKey-quality language models.
+production-quality language models.
 
 ## Runtime language assets moved into per-language folders
 
@@ -149,3 +149,51 @@ This avoids shipping proprietary source containers inside the app runtime bundle
 ## English vocabulary/model off-by-one alignment
 
 Detected that `model_en.ort` has 20,000 output classes while the decoded English vocabulary contains 20,001 IDs including the empty placeholder ID 0. `NeuralVocabulary.topK()` now shifts model output indices by one when this exact pattern is present, so class 0 maps to vocabulary ID 1 instead of dropping the final vocabulary entry.
+
+## Emoji panel suggestions
+
+Emoji predictions are no longer inserted into the normal word suggestion strip.
+When the user opens the emoji panel, Shade shows emoji suggestions in a top row
+based on the current typed word / previous word.
+
+## Engine contracts and candidate helpers
+
+Added engine interfaces and helper classes under:
+
+```text
+app/src/main/kotlin/com/noircipher/shade/engine/
+```
+
+## Dictionary consolidation
+
+Canonical dictionaries are now loaded from:
+
+```text
+app/src/main/assets/languages/<locale>/dictionary.txt
+```
+
+Legacy `wordlists/<locale>.txt` paths remain as fallback only.
+
+## Tests and CI
+
+Added starter unit tests and a GitHub Actions workflow.
+
+## Packaging revert note
+
+Shade-owned custom model packaging was removed. The project is back to direct ONNX assets (`model_<lang>.ort` + `vocab_<lang>.tsv`) for simplicity.
+
+## Voice typing integration
+
+Added a mic toolbar action using Android speech recognition. Users must grant
+`RECORD_AUDIO` permission for voice input to work.
+
+## Slide typing integration
+
+Added basic slide decoding using actual touch paths, nearest-key sequence,
+dictionary suggestions, and spatial reranking.
+
+## Voice/slide scrutiny fixes
+
+- Voice permission denial now opens Shade's app settings so users can grant mic access.
+- Slide input now requires meaningful movement before it consumes the key press, reducing accidental swipe triggers from tap jitter.
+- Slide decoding requires a slightly longer raw key sequence.

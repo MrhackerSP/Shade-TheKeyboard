@@ -1,6 +1,6 @@
 # Bundled language assets
 
-The organized SwiftKey language packs are bundled inside the app assets:
+The organized external language packs are bundled inside the app assets:
 
 ```text
 app/src/main/assets/languages/
