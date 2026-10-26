@@ -1,12 +1,11 @@
 package com.noircipher.shade.motion
 
-import android.view.animation.FastOutLinearInInterpolator
-import android.view.animation.FastOutSlowInInterpolator
+import android.view.animation.PathInterpolator
 
 object ShadeMotion {
-    // Public Android/Google motion curves.
-    val FAST_OUT_SLOW_IN = FastOutSlowInInterpolator()
-    val FAST_OUT_LINEAR_IN = FastOutLinearInInterpolator()
+    // Public Android/Google-style motion curves.
+    val FAST_OUT_SLOW_IN = PathInterpolator(0.4f, 0.0f, 0.2f, 1.0f)
+    val FAST_OUT_LINEAR_IN = PathInterpolator(0.4f, 0.0f, 1.0f, 1.0f)
 
     // Key feedback.
     const val KEY_PRESS_DOWN_MS = 40L
