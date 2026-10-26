@@ -749,7 +749,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun transitionToPanel(p: Panel, animate: Boolean = true) {
         if (this::emoji.isInitialized == false) return
-        val emojiContext = if (composingActive) typedWord else lastWord().orEmpty()
+        val emojiContext = if (composing.isNotEmpty()) composing.toString() else lastWord().orEmpty()
         if (p != Panel.NONE) endWord()
         if (panel == p) return
 
@@ -968,7 +968,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onSwipePath(path: List<FloatArray>): Boolean {
         if (path.size < 4) return false
-        val layout = kbKeyLayout()
+        val layout = kbKeyLayout() ?: return false
         suggestJob?.cancel()
         suggestJob = scope.launch {
             val decoded = slideDecoder.decode(path, layout)
