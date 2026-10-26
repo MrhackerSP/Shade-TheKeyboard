@@ -16,4 +16,16 @@ class CandidateRankerTest {
             )
         )
     }
+
+    @Test
+    fun mergeNextWordInterleavesSoDictionaryGetsASlot() {
+        assertEquals(
+            listOf("a", "x", "b"),
+            CandidateRanker.mergeNextWord(
+                neural = listOf("a", "b", "c", "d"),
+                dictionary = listOf("x", "y"),
+                limit = 3
+            )
+        )
+    }
 }
