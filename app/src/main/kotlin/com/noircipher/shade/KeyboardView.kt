@@ -22,6 +22,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.PopupWindow
 import androidx.core.graphics.ColorUtils
+import com.noircipher.shade.motion.ShadeMotion
 import java.util.ArrayDeque
 import kotlin.math.abs
 import kotlin.math.min
@@ -41,6 +42,7 @@ class KeyboardView(context: Context) : View(context) {
         fun onDeletePreview(travelPx: Float): Int
         fun onDeleteCommit()
         fun onDeleteCancel()
+        fun onSwipePath(path: List<FloatArray>): Boolean = false
     }
 
     var listener: Listener? = null
@@ -206,6 +208,8 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private val pointers = SparseArray<Pointer>()
+    private var slidePointerId = -1
+    private val slidePath = ArrayList<FloatArray>()
 
     private fun obtainPointer(k: Key?, x: Float, y: Float): Pointer {
         val p = pointerPool.pollFirst() ?: Pointer()
@@ -1069,6 +1073,11 @@ class KeyboardView(context: Context) : View(context) {
         val k = hit(x, y) ?: return
         val p = obtainPointer(k, x, y)
         pointers.put(id, p)
+        if (k.kind == KeyKind.CHAR) {
+            slidePointerId = id
+            slidePath.clear()
+            slidePath.add(floatArrayOf(x, y))
+        }
         feedback(k)
         onKeyBurst()
         startPressAnimation()
@@ -1174,6 +1183,10 @@ class KeyboardView(context: Context) : View(context) {
     private fun move(id: Int, x: Float, y: Float) {
         val p = pointers.get(id) ?: return
         val k = p.key ?: return
+        if (id == slidePointerId && k.kind == KeyKind.CHAR) {
+            slidePath.add(floatArrayOf(x, y))
+            if (slidePath.size > 240) slidePath.removeAt(0)
+        }
         if (altShown) {
             p.lastX = x
             updateAlt(p, x)
@@ -1229,6 +1242,20 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+
+    private fun slidePathSpread(path: List<FloatArray>): Float {
+        if (path.isEmpty()) return 0f
+        var minX = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        for (point in path) {
+            minX = minOf(minX, point[0]); maxX = maxOf(maxX, point[0])
+            minY = minOf(minY, point[1]); maxY = maxOf(maxY, point[1])
+        }
+        return (maxX - minX) + (maxY - minY)
+    }
+
     private fun up(id: Int, cancel: Boolean) {
         val p = pointers.get(id) ?: return
         pointers.remove(id)
@@ -1237,6 +1264,16 @@ class KeyboardView(context: Context) : View(context) {
         p.repeatRunnable = null
         hidePreview()
         if (p.swiping) endTrail()
+
+        var slideConsumed = false
+        if (!cancel && id == slidePointerId && slidePath.size >= 4 && slidePathSpread(slidePath) > dp(48f)) {
+            slideConsumed = listener?.onSwipePath(slidePath.toList()) == true
+            if (slideConsumed) p.consumed = true
+        }
+        if (id == slidePointerId) {
+            slidePointerId = -1
+            slidePath.clear()
+        }
 
         val k = p.key
         if (k != null && k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {

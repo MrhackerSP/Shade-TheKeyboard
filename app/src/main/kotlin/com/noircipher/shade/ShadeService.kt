@@ -36,6 +36,14 @@ import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
 import androidx.preference.PreferenceManager
+import com.noircipher.shade.ai.NeuralPredictionEngine
+import com.noircipher.shade.emoji.EmojiPredictionEngine
+import com.noircipher.shade.engine.CandidateRanker
+import com.noircipher.shade.engine.EmojiPredictor
+import com.noircipher.shade.engine.LanguageModelEngine
+import com.noircipher.shade.motion.ShadeMotion
+import com.noircipher.shade.slide.SlideDecoder
+import com.noircipher.shade.voice.VoiceInputController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,7 +68,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         "clip" to "📋", "emoji" to "😀", "numpad" to "123", "left" to "◀", "right" to "▶",
         "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste",
         "undo" to "Undo", "incognito" to "🕶", "onehand" to "1-hand",
-        "settings" to "⚙"
+        "voice" to "🎤", "settings" to "⚙"
     )
     private val toolIcons = mapOf(
         "clip" to R.drawable.ic_tb_clip, "emoji" to R.drawable.ic_tb_emoji,
@@ -69,7 +77,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         "copy" to R.drawable.ic_tb_copy, "cut" to R.drawable.ic_tb_cut,
         "paste" to R.drawable.ic_tb_paste, "undo" to R.drawable.ic_tb_undo,
         "incognito" to R.drawable.ic_tb_incognito, "onehand" to R.drawable.ic_tb_onehand,
-        "settings" to R.drawable.ic_tb_settings
+        "voice" to R.drawable.ic_tb_mic, "settings" to R.drawable.ic_tb_settings
     )
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -105,6 +113,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var suggestionsAllowed = true
     private var suggestionsOn = true
     private var neuralOn = true
+    private var neural: LanguageModelEngine? = null
+    private var neuralLocale: String? = null
+    private var emojiPredictor: EmojiPredictor = EmojiPredictionEngine.builtIn()
+    private var voice: VoiceInputController? = null
+    private val slideDecoder: SlideDecoder by lazy { SlideDecoder(dict) }
     private var learnOn = true
     private var autoCaps = true
     private var doubleSpace = true
@@ -155,6 +168,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         super.onCreate()
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         dict = WordDictionary(this)
+        voice = VoiceInputController(this) { text -> commitVoiceText(text) }
         dict.bigramModel = BigramModel(this)
         clips = ClipboardStore(this)
         cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -163,6 +177,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val locale = dictIds()
         scope.launch(Dispatchers.Default) {
             dict.configure(locale)
+            emojiPredictor = EmojiPredictionEngine.load(this@ShadeService, locale)
             reloadNeuralEngine(locale)
         }
     }
@@ -174,6 +189,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         correctionJob?.cancel()
         slotAnimator?.cancel()
         panelSpring?.cancel()
+        voice?.cancel()
+        voice = null
         serviceJob.cancel()
 
         if (this::kb.isInitialized) kb.release()
@@ -521,6 +538,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val locale = dictIds()
         scope.launch(Dispatchers.Default) {
             dict.configure(locale)
+            emojiPredictor = EmojiPredictionEngine.load(this@ShadeService, locale)
             reloadNeuralEngine(locale)
         }
 
@@ -731,6 +749,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun transitionToPanel(p: Panel, animate: Boolean = true) {
         if (this::emoji.isInitialized == false) return
+        val emojiContext = if (composingActive) typedWord else lastWord().orEmpty()
         if (p != Panel.NONE) endWord()
         if (panel == p) return
 
@@ -746,6 +765,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
 
         panel = p
+
+        if (p == Panel.EMOJI) {
+            emoji.setSuggestions(
+                if (emojiSuggest) emojiPredictor.predictEmoji(emojiContext, 10) else emptyList()
+            )
+        }
 
         if (!animate) {
             outgoing?.visibility = View.GONE
@@ -799,6 +824,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         when (id) {
             "clip" -> transitionToPanel(Panel.CLIP)
             "emoji" -> transitionToPanel(Panel.EMOJI)
+            "voice" -> voice?.start()
             "numpad" -> {
                 endWord()
                 if (mode == Mode.NUMPAD) setMode(Mode.LETTERS) else setMode(Mode.NUMPAD)
@@ -939,6 +965,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     // ------------------------------------------------------------------ KeyboardView.Listener
+
+    override fun onSwipePath(path: List<FloatArray>): Boolean {
+        if (path.size < 4) return false
+        val layout = kbKeyLayout()
+        suggestJob?.cancel()
+        suggestJob = scope.launch {
+            val decoded = slideDecoder.decode(path, layout)
+            if (!decoded.isNullOrEmpty()) commitSlideWord(decoded)
+        }
+        return true
+    }
 
     override fun onKey(code: Int) {
         when (code) {
@@ -1443,6 +1480,26 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    private fun commitVoiceText(text: String) {
+        endWord()
+        val cleaned = text.trim()
+        if (cleaned.isEmpty()) return
+        currentInputConnection?.commitText("$cleaned ", 1)
+        appendTail("$cleaned ")
+        pushUndo(cleaned.length + 1, "")
+        composing.clear()
+        afterText()
+    }
+
+    private fun commitSlideWord(word: String) {
+        endWord()
+        currentInputConnection?.commitText("$word ", 1)
+        appendTail("$word ")
+        pushUndo(word.length + 1, "")
+        composing.clear()
+        afterText()
+    }
+
     private fun updateSuggestions() {
         if (this::slots.isInitialized == false) return
         suggestJob?.cancel()
@@ -1477,9 +1534,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 val dictionaryNext = prev1
                     ?.let { dict.predictNext(null, it, 6) }
                     .orEmpty()
-                val merged = (neuralNext + dictionaryNext)
-                    .distinct()
-                    .take(3)
+                val merged = CandidateRanker.mergeNextWord(
+                    neural = neuralNext,
+                    dictionary = dictionaryNext,
+                    limit = 3
+                )
 
                 val list: List<String> = when {
                     merged.isNotEmpty() -> centerBest(merged)
@@ -1490,10 +1549,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
             return
         }
-
-        val emoji = if (emojiSuggest && composingActive) {
-            EmojiKeywords.map[typedWord.lowercase()]
-        } else null
 
         val prefix = typedWord
         val prev1 = lastWord()
@@ -1526,11 +1581,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             } else {
                 centerBest(ranked.ifEmpty { listOf(prefix) }.take(3))
             }
-            val final = shown.toMutableList()
-            if (emoji != null) {
-                if (final.size >= 3) final[2] = emoji else final.add(emoji)
-            }
-            setCandidates(final)
+            setCandidates(shown)
         }
     }
 
