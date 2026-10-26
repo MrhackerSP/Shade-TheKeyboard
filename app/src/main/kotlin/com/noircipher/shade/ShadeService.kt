@@ -1559,7 +1559,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         suggestJob = scope.launch {
             val known = dict.contains(prefix)
             val stage1 = LinkedHashSet<String>()
-            stage1.addAll(dict.suggestAsync(prefix, 4))
+            stage1.addAll(dict.suggestAsync(prefix, 6))
 
             val stage2 = if (prev1 != null) {
                 dict.rerankWithContext(null, prev1, stage1.toList())
