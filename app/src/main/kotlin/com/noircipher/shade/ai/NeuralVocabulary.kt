@@ -27,6 +27,13 @@ class NeuralVocabulary private constructor(
             when {
                 ch.isLetterOrDigit() -> current.append(ch.lowercaseChar())
                 ch == '\'' || ch == '-' || ch == '_' -> current.append(ch)
+                // Sentence punctuation is part of the training vocabulary; keeping it
+                // lets the model see sentence boundaries.
+                ch == '.' || ch == ',' || ch == '!' || ch == '?' -> {
+                    flush()
+                    val p = ch.toString()
+                    if (tokenToId.containsKey(p)) tokens.add(p)
+                }
                 else -> flush()
             }
         }
@@ -36,7 +43,8 @@ class NeuralVocabulary private constructor(
 
     fun encode(tokens: List<String>, maxContext: Int): IntArray {
         val tail = tokens.takeLast(maxContext)
-        val ids = IntArray(maxContext) { bosId }
+        // The model was evaluated with id 0 left-padding; BOS padding degrades predictions.
+        val ids = IntArray(maxContext) { 0 }
         val start = maxContext - tail.size
 
         for (i in tail.indices) {
@@ -73,6 +81,8 @@ class NeuralVocabulary private constructor(
             val token = idToToken.getOrNull(id) ?: continue
             if (token.isEmpty()) continue
             if (token.startsWith("[") && token.endsWith("]")) continue
+            // Punctuation-only tokens should never take a suggestion slot.
+            if (token.none { it.isLetterOrDigit() }) continue
             if (wantedPrefix != null && !token.startsWith(wantedPrefix)) continue
             candidates.add(Triple(id, token, probabilities[outputId]))
         }
