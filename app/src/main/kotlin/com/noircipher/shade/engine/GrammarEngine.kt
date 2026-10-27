@@ -43,7 +43,7 @@ object GrammarEngine {
         if (limit <= 0) return emptyList()
         val typed = typedWord.trim().lowercase()
         if (typed.isEmpty()) return emptyList()
-        if (!typed.all { it.isLetter() || it == ''' }) return emptyList()
+        if (!typed.all { it.isLetter() || it == '\'' }) return emptyList()
 
         val last = contextWords.lastOrNull()?.lowercase()
         val out = LinkedHashSet<String>()
