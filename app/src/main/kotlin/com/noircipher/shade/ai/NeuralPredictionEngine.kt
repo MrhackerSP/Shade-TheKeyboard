@@ -13,7 +13,7 @@ class NeuralPredictionEngine private constructor(
     @Volatile
     override var enabled: Boolean = true
 
-    private val contextSize = 16
+    private val contextSize = 24
 
     override fun predictNext(
         beforeCursor: String,
@@ -38,44 +38,39 @@ class NeuralPredictionEngine private constructor(
         typedPrefix: String,
         candidates: List<String>
     ): List<String> {
-        if (!enabled) return candidates
+        if (!enabled || candidates.size <= 1) return candidates
 
-        val neural = predictNext(
+        val neuralPredictions = predictNext(
             beforeCursor = beforeCursor,
             typedPrefix = typedPrefix,
-            limit = candidates.size + 8
-        ).associate { it.first.lowercase() to it.second }
+            limit = candidates.size + 12
+        )
 
-        if (neural.isEmpty()) return candidates
-        val maxP = neural.values.maxOrNull() ?: return candidates
-        if (maxP <= 0f) return candidates
+        if (neuralPredictions.isEmpty()) return candidates
 
-        // Strong neural completions the dictionary did not offer (at most two).
-        val seen = candidates.map { it.lowercase() }.toHashSet()
-        val extras = neural.entries
-            .filter { it.key !in seen && (it.value >= 0.05f || it.value >= 0.5f * maxP) }
-            .sortedByDescending { it.value }
-            .take(2)
-            .map { matchCase(it.key, typedPrefix) }
+        val neural = neuralPredictions.associate { it.first.lowercase() to it.second }
+        val merged = (neuralPredictions.map { it.first } + candidates)
+            .distinctBy { it.lowercase() }
 
-        val all = candidates + extras
-        return all
+        return merged
             .mapIndexed { index, candidate ->
                 val baseRankScore = 1f / (index + 1)
-                // Normalise so the neural signal is comparable to the rank signal;
-                // raw probabilities (~0.05) were too small to ever change the order.
-                val neuralScore = (neural[candidate.lowercase()] ?: 0f) / maxP
-                val prefixBonus = if (candidate.startsWith(typedPrefix, ignoreCase = true)) 0.05f else 0f
-                candidate to (0.5f * baseRankScore + 0.5f * neuralScore + prefixBonus)
+                val neuralScore = neural[candidate.lowercase()] ?: 0f
+                val prefixBonus = when {
+                    candidate.equals(typedPrefix, ignoreCase = true) -> 0.10f
+                    candidate.startsWith(typedPrefix, ignoreCase = true) -> 0.06f
+                    else -> 0f
+                }
+
+                // When the neural model is confident, trust it more; otherwise keep
+                // dictionary order stronger. Full-vocab probabilities are usually small,
+                // so use a small absolute confidence threshold.
+                val confidence = if (neuralScore > 0.0025f) 1f else 0.45f
+                val score = confidence * (0.58f * neuralScore + 0.32f * baseRankScore) + prefixBonus
+                candidate to score
             }
             .sortedByDescending { it.second }
             .map { it.first }
-    }
-
-    private fun matchCase(word: String, typed: String): String = when {
-        typed.length > 1 && typed.all { it.isUpperCase() } -> word.uppercase()
-        typed.isNotEmpty() && typed[0].isUpperCase() -> word.replaceFirstChar { it.uppercase() }
-        else -> word
     }
 
     override fun close() {
@@ -95,34 +90,11 @@ class NeuralPredictionEngine private constructor(
             }
         }
 
-        /** Untrained/placeholder models return identical logits for every context. */
-        private fun respondsToInput(vocabulary: NeuralVocabulary, predictor: NeuralPredictor): Boolean {
-            return try {
-                val n = 16
-                val hi = vocabulary.size - 1
-                val a = predictor.predictLogits(IntArray(n) { 0 })
-                val b = predictor.predictLogits(IntArray(n) { i -> if (i >= n - 3) minOf(100 * (i - n + 4), hi) else 0 })
-                val c = predictor.predictLogits(IntArray(n) { i -> if (i >= n - 3) minOf(900 + 300 * (i - n + 4), hi) else 0 })
-                var diff = 0f
-                for (i in 0 until minOf(a.size, b.size, c.size)) {
-                    diff = maxOf(diff, kotlin.math.abs(a[i] - b[i]), kotlin.math.abs(b[i] - c[i]))
-                }
-                diff > 0.01f
-            } catch (t: Throwable) {
-                true
-            }
-        }
-
         fun create(context: Context, languageTag: String = "en"): NeuralPredictionEngine? {
             val modelLanguage = normalizeLanguageTag(languageTag)
             return try {
                 val vocabulary = NeuralVocabulary.load(context, modelLanguage) ?: return null
                 val predictor = OnnxNeuralPredictor(context, vocabulary, languageTag = modelLanguage)
-                if (!respondsToInput(vocabulary, predictor)) {
-                    Log.w(TAG, "Neural model for $modelLanguage ignores its input; disabling it")
-                    predictor.close()
-                    return null
-                }
                 NeuralPredictionEngine(vocabulary, predictor)
             } catch (t: Throwable) {
                 Log.i(TAG, "Neural engine unavailable", t)

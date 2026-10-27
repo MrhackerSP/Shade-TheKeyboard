@@ -39,8 +39,10 @@ import androidx.preference.PreferenceManager
 import com.noircipher.shade.ai.NeuralPredictionEngine
 import com.noircipher.shade.emoji.EmojiPredictionEngine
 import com.noircipher.shade.engine.CandidateRanker
+import com.noircipher.shade.engine.GrammarEngine
 import com.noircipher.shade.engine.EmojiPredictor
 import com.noircipher.shade.engine.LanguageModelEngine
+import com.noircipher.shade.engine.PhraseBooster
 import com.noircipher.shade.motion.ShadeMotion
 import com.noircipher.shade.slide.SlideDecoder
 import com.noircipher.shade.voice.VoiceInputController
@@ -62,6 +64,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private class UndoEntry(
         val charsCommitted: Int,
         val restore: String
+    )
+
+    private data class CorrectionEvent(
+        val original: String,
+        val corrected: String,
+        val timestamp: Long
     )
 
     private val toolDefs = listOf(
@@ -141,6 +149,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var lastWordTouches: List<FloatArray> = emptyList()
 
     private val undoStack = ArrayDeque<UndoEntry>(10)
+    private var lastCorrectionEvent: CorrectionEvent? = null
 
     private val tail = StringBuilder(16)
     private var cursorPos = -1
@@ -749,7 +758,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun transitionToPanel(p: Panel, animate: Boolean = true) {
         if (this::emoji.isInitialized == false) return
-        val emojiContext = if (composing.isNotEmpty()) composing.toString() else lastWord().orEmpty()
+        val currentComposing = composing.toString()
+        val emojiContext = if (currentComposing.isNotEmpty()) currentComposing else lastWord().orEmpty()
         if (p != Panel.NONE) endWord()
         if (panel == p) return
 
@@ -899,6 +909,37 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     // ------------------------------------------------------------------ undo stack
+
+    private fun recordCorrectionEvent(original: String, corrected: String) {
+        lastCorrectionEvent = CorrectionEvent(
+            original = original,
+            corrected = corrected,
+            timestamp = SystemClock.uptimeMillis()
+        )
+    }
+
+    private fun tryRevertLastCorrectionEvent(): Boolean {
+        val event = lastCorrectionEvent ?: return false
+        lastCorrectionEvent = null
+
+        if (SystemClock.uptimeMillis() - event.timestamp > 4000L) return false
+        val ic = currentInputConnection ?: return false
+        val current = ic.getTextBeforeCursor(event.corrected.length, 0)?.toString()
+            ?: return false
+        if (!current.equals(event.corrected, ignoreCase = true)) return false
+
+        ic.beginBatchEdit()
+        try {
+            ic.deleteSurroundingText(event.corrected.length, 0)
+            ic.commitText(event.original, 1)
+        } finally {
+            ic.endBatchEdit()
+        }
+        appendTail(event.original)
+        updateShiftFromCaps()
+        updateSuggestions()
+        return true
+    }
 
     private fun pushUndo(charsCommitted: Int, restore: String) {
         if (charsCommitted <= 0 && restore.isEmpty()) return
@@ -1124,6 +1165,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 composing.isEmpty() && atSentenceEndBeforeCursor()
             if (sentenceEnd) {
                 val upper = text.uppercase()
+                lastCorrectionEvent = null
                 composing.append(upper)
                 ic.setComposingText(composing.toString(), 1)
                 pushUndo(upper.length, text)
@@ -1132,6 +1174,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 return
             }
 
+            lastCorrectionEvent = null
             composing.append(text)
             ic.setComposingText(composing.toString(), 1)
             appendTail(text)
@@ -1249,6 +1292,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun backspace() {
         val ic = currentInputConnection ?: return
 
+        if (tryRevertLastCorrectionEvent()) return
+
         if (undoStack.isNotEmpty() && composing.isEmpty()) {
             val undo = undoStack.pollLast()
             if (undo != null) {
@@ -1356,6 +1401,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 popTail(1)
                 appendTail("I")
                 pushUndo(1, "i")
+                recordCorrectionEvent("i", "I")
                 composing.clear()
                 return null
             }
@@ -1383,6 +1429,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                                 ic2.endBatchEdit()
                             }
                             pushUndo(c.length, w)
+                            recordCorrectionEvent(w, c)
                             appendTail(c)
                             updateShiftFromCaps()
                             updateSuggestions()
@@ -1500,6 +1547,26 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         afterText()
     }
 
+
+    private fun contextWordsExcluding(typedWord: String): List<String> {
+        val raw = currentInputConnection
+            ?.getTextBeforeCursor(120, 0)
+            ?.toString()
+            ?: ""
+        val context = if (
+            typedWord.isNotEmpty() &&
+            raw.endsWith(typedWord, ignoreCase = true)
+        ) {
+            raw.dropLast(typedWord.length)
+        } else {
+            raw
+        }
+        return Regex("[\\p{L}\\p{N}'_-]+")
+            .findAll(context)
+            .map { it.value.lowercase() }
+            .toList()
+    }
+
     private fun updateSuggestions() {
         if (this::slots.isInitialized == false) return
         suggestJob?.cancel()
@@ -1519,9 +1586,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
 
         if (typedWord.isEmpty()) {
-            val prev1: String? = if (composingActive) lastWord()
-                else if (canCompose == false && suggestionsAllowed) previousWordFromField()
-                else lastWord()
+            val contextWords = contextWordsExcluding("")
+            val prev1 = contextWords.lastOrNull()
+            val prev2 = contextWords.dropLast(1).lastOrNull()
             val context = neuralContext("")
 
             suggestJob = scope.launch {
@@ -1532,10 +1599,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         .orEmpty()
                 }
                 val dictionaryNext = prev1
-                    ?.let { dict.predictNext(null, it, 6) }
+                    ?.let { dict.predictNext(prev2, it, 8) }
                     .orEmpty()
+                val phraseNext = PhraseBooster.predict(prev1, 6)
+                val grammarNext = GrammarEngine.predictNext(contextWords, 6)
                 val merged = CandidateRanker.mergeNextWord(
-                    neural = neuralNext,
+                    neural = grammarNext + phraseNext + neuralNext,
                     dictionary = dictionaryNext,
                     limit = 3
                 )
@@ -1551,7 +1620,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
 
         val prefix = typedWord
-        val prev1 = lastWord()
+        val contextWords = contextWordsExcluding(typedWord)
+        val prev1 = contextWords.lastOrNull()
+        val prev2 = contextWords.dropLast(1).lastOrNull()
         val touches = if (composingActive) touchTrace.last(touchTrace.size()) else emptyList()
         val layout = kbKeyLayout()
         val neuralCtx = neuralContext(typedWord)
@@ -1559,7 +1630,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         suggestJob = scope.launch {
             val known = dict.contains(prefix)
             val stage1 = LinkedHashSet<String>()
-            stage1.addAll(dict.suggestAsync(prefix, 6))
+            val grammarCandidates = GrammarEngine.suggest(contextWords, prefix, 4)
+            val phraseCandidates = PhraseBooster.predict(prev1, prefix, 6)
+            val contextCandidates = prev1
+                ?.let { dict.predictNext(prev2, it, 12) }
+                .orEmpty()
+                .filter { it.startsWith(prefix, ignoreCase = true) }
+            stage1.addAll(grammarCandidates)
+            stage1.addAll(phraseCandidates)
+            stage1.addAll(contextCandidates)
+            stage1.addAll(dict.suggestAsync(prefix, 4))
 
             val stage2 = if (prev1 != null) {
                 dict.rerankWithContext(null, prev1, stage1.toList())
@@ -1576,10 +1656,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             val ranked = withContext(Dispatchers.Default) {
                 neural?.rerankPrefix(neuralCtx, prefix, stage3)
             } ?: stage3
-            val shown: List<String> = if (!known && ranked.isNotEmpty()) {
-                listOf(prefix) + ranked.take(2)
-            } else {
-                centerBest(ranked.ifEmpty { listOf(prefix) }.take(3))
+            val grammarTop = GrammarEngine.suggest(contextWords, prefix, 1).firstOrNull()
+            val shown: List<String> = when {
+                grammarTop != null && !grammarTop.equals(prefix, ignoreCase = true) ->
+                    (listOf(grammarTop) + ranked + listOf(prefix)).distinct().take(3)
+
+                !known && ranked.isNotEmpty() ->
+                    listOf(prefix) + ranked.take(2)
+
+                else ->
+                    centerBest(ranked.ifEmpty { listOf(prefix) }.take(3))
             }
             setCandidates(shown)
         }

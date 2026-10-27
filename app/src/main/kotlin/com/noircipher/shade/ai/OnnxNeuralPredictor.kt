@@ -9,7 +9,7 @@ import java.nio.LongBuffer
 class OnnxNeuralPredictor(
     context: Context,
     private val vocabulary: NeuralVocabulary,
-    private val contextSize: Int = 16,
+    private val contextSize: Int = 24,
     languageTag: String = "en"
 ) : NeuralPredictor {
 
