@@ -1,0 +1,266 @@
+<resources>
+    <string name="app_name">Shade</string>
+    <string name="ime_name">Shade</string>
+    <string name="settings_title">Shade settings</string>
+
+    <string name="setup_intro">A private, open, offline keyboard. No internet permission, no tracking.</string>
+    <string name="step1">1. Enable Shade</string>
+    <string name="step2">2. Switch to Shade</string>
+    <string name="step3">3. Try it here</string>
+    <string name="open_settings">Keyboard settings</string>
+    <string name="status_done">✓ Done</string>
+    <string name="status_todo">Not yet</string>
+    <string name="test_hint">Tap here and type…</string>
+
+    <string name="go">Go</string>
+    <string name="search">Search</string>
+    <string name="send">Send</string>
+    <string name="next">Next</string>
+    <string name="done">Done</string>
+    <string name="abc">ABC</string>
+    <string name="yes">Yes</string>
+    <string name="no">No</string>
+    <string name="done_toast">Done</string>
+
+    <string name="clip_empty">Nothing copied yet</string>
+    <string name="clip_clear">Clear unpinned</string>
+
+    <!-- Settings: screens -->
+    <string name="scr_layouts">Languages &amp; layouts</string>
+    <string name="scr_layouts_sum">Layout, custom layout, dictionaries</string>
+    <string name="scr_appearance">Appearance</string>
+    <string name="scr_appearance_sum">Theme, size, split and one-handed mode, background</string>
+    <string name="scr_colors">Custom colors</string>
+    <string name="scr_colors_sum">Pick your own colors (use theme “Custom”)</string>
+    <string name="scr_typing">Text correction</string>
+    <string name="scr_typing_sum">Suggestions, autocorrect, smart correction, learning, incognito</string>
+    <string name="scr_toolbar">Toolbar &amp; clipboard</string>
+    <string name="scr_toolbar_sum">Toolbar keys and clipboard history</string>
+    <string name="scr_feedback">Feedback</string>
+    <string name="scr_feedback_sum">Vibration, sound, long-press delay, animations</string>
+    <string name="scr_backup">Backup &amp; restore</string>
+    <string name="scr_backup_sum">Export or import settings, learned words, and training data</string>
+
+    <!-- Layouts -->
+    <string name="pref_layout">Layout</string>
+    <string name="pref_custom_layout">Custom layout</string>
+    <string name="pref_custom_layout_sum">Used when layout is “Custom”. One row per line (2–4 rows), keys separated by spaces, alternates after |, e.g. a|àáâ</string>
+    <string name="pref_number_row">Number row</string>
+    <string name="pref_number_row_sum">Show a dedicated row of digits above the letters</string>
+    <string name="pref_dicts">Active dictionaries</string>
+    <string name="pref_dicts_sum">Enable several for multilingual typing</string>
+    <string name="pref_import_dict">Import dictionary</string>
+    <string name="pref_import_dict_sum">Plain text word list, one word per line (optionally “word&#9;frequency”)</string>
+    <string name="pref_delete_dict">Delete imported dictionary</string>
+    <string name="dict_imported">Dictionary imported and enabled</string>
+    <string name="dict_import_failed">Could not read that file</string>
+    <string name="dict_none">No imported dictionaries</string>
+    <string name="layout_invalid">Invalid custom layout, QWERTY will be used</string>
+
+    <!-- Appearance -->
+    <string name="pref_theme">Theme</string>
+    <string name="pref_key_height">Key height</string>
+    <string name="pref_key_borders">Key borders</string>
+    <string name="pref_hints">Show number hints</string>
+    <string name="pref_popup">Key preview popup</string>
+    <string name="pref_one_handed">One-handed mode</string>
+    <string name="pref_split">Split keyboard</string>
+    <string name="pref_bg_pick">Background image</string>
+    <string name="pref_bg_sum">Choose a picture to show behind the keys</string>
+    <string name="pref_bg_clear">Remove background image</string>
+
+    <!-- Colors -->
+    <string name="pref_colors_info">Enter colors as #RRGGBB. Select the theme “Custom” in Appearance to use them.</string>
+    <string name="pref_color_bg">Background</string>
+    <string name="pref_color_key">Keys</string>
+    <string name="pref_color_keyfn">Function keys</string>
+    <string name="pref_color_text">Text</string>
+    <string name="pref_color_accent">Accent</string>
+
+    <!-- Typing -->
+    <string name="pref_suggestions">Word suggestions</string>
+    <string name="pref_suggestions_sum">Offline suggestions while you type</string>
+    <string name="pref_autocorrect">Autocorrect</string>
+    <string name="pref_autocorrect_sum">Fix typos in words when you press space. Backspace right after undoes it.</string>
+    <string name="pref_smart_correction">Smart correction</string>
+    <string name="pref_smart_correction_sum">Auto-space after punctuation, capitalize new sentences, fix “i” to “I”, and double-space for period</string>
+    <string name="pref_emoji_sugg">Emoji suggestions</string>
+    <string name="pref_emoji_sugg_sum">Suggest an emoji for words like “love” or “pizza”</string>
+    <string name="pref_learn">Learn new words</string>
+    <string name="pref_learn_sum">Stored only on this device</string>
+    <string name="pref_clear">Clear learned words</string>
+    <string name="pref_clear_confirm">Delete all words Shade has learned?</string>
+    <string name="pref_incognito">Incognito mode</string>
+    <string name="pref_incognito_sum">Do not learn words or save clipboard entries</string>
+    <string name="pref_auto_caps">Auto-capitalize</string>
+    <string name="pref_double_space">Double-space for period</string>
+
+    <!-- Toolbar -->
+    <string name="pref_toolbar_keys">Toolbar keys</string>
+    <string name="pref_toolbar_open">Open toolbar by default</string>
+    <string name="pref_clip">Clipboard history</string>
+    <string name="pref_clip_sum">Keep recent copied text in the clipboard panel</string>
+    <string name="pref_clear_clip">Clear clipboard history</string>
+
+    <!-- Feedback -->
+    <string name="pref_haptic">Vibrate on keypress</string>
+    <string name="pref_sound">Sound on keypress</string>
+    <string name="pref_longpress">Long-press delay (ms)</string>
+    <string name="pref_typing_burst">Typing burst animation</string>
+    <string name="pref_typing_burst_sum">Show a subtle animation when typing rapidly</string>
+    <string name="pref_trackpad">Trackpad mode</string>
+    <string name="pref_trackpad_sum">Long-press spacebar to move the cursor in any direction</string>
+    <string name="pref_repeat_delay">Key repeat delay</string>
+    <string name="pref_repeat_delay_sum">Time before backspace starts repeating (ms)</string>
+    <string name="pref_repeat_interval">Key repeat interval</string>
+    <string name="pref_repeat_interval_sum">Interval between backspace repeats (ms)</string>
+
+    <!-- Backup -->
+    <string name="pref_backup_export">Back up</string>
+    <string name="pref_backup_sum">Saves settings and learned words to a file you choose</string>
+    <string name="pref_backup_import">Restore</string>
+    <string name="backup_done">Backup saved</string>
+    <string name="restore_done">Restored. Reopen the keyboard to apply.</string>
+    <string name="backup_failed">That did not work</string>
+
+    <!-- Training data contribution -->
+    <string name="pref_contribute">Contribute anonymized typing data</string>
+    <string name="pref_contribute_sum">On by default. Shade periodically saves your learned words and n-gram counts to a file on this device so future versions can be trained on real typing. No sentences, no clipboard, no personal identifiers. Turn off to stop and delete.</string>
+    <string name="pref_export_training">Export training data now</string>
+    <string name="pref_export_training_sum">Write your learned words and n-gram counts to a file you choose</string>
+    <string name="pref_clear_training">Delete saved training data</string>
+    <string name="pref_clear_training_sum">Remove all auto-saved training exports from this device</string>
+    <string name="export_training_done">Training data exported</string>
+    <string name="export_training_failed">Could not export training data</string>
+    <string name="export_training_none">No training data to export yet</string>
+    <string name="export_training_confirm">Export learned words and n-gram counts?</string>
+    <string name="export_training_confirm_msg">This file contains only aggregated statistics: word frequencies and word-pair counts. No sentences, no clipboard, no personal identifiers.</string>
+    <string name="clear_training_confirm">Delete all saved training data?</string>
+    <string name="clear_training_done">Saved training data deleted</string>
+
+    <string name="about_title">About Shade</string>
+    <string name="about_sum">Version 1.0, no internet permission</string>
+    <string name="about_text">Original open-source keyboard. Long-press keys for accents, swipe the space bar to move the cursor, tap › on the suggestion bar for the toolbar.</string>
+
+    <string-array name="theme_entries">
+        <item>Follow system</item>
+        <item>Light</item>
+        <item>Dark</item>
+        <item>Black (AMOLED)</item>
+        <item>Dynamic (Android 12+)</item>
+        <item>Custom</item>
+    </string-array>
+    <string-array name="theme_values">
+        <item>system</item>
+        <item>light</item>
+        <item>dark</item>
+        <item>amoled</item>
+        <item>dynamic</item>
+        <item>custom</item>
+    </string-array>
+    <string-array name="one_hand_entries">
+        <item>Off</item>
+        <item>Left</item>
+        <item>Right</item>
+    </string-array>
+    <string-array name="one_hand_values">
+        <item>off</item>
+        <item>left</item>
+        <item>right</item>
+    </string-array>
+    <string-array name="split_entries">
+        <item>Off</item>
+        <item>Landscape only</item>
+        <item>Always</item>
+    </string-array>
+    <string-array name="split_values">
+        <item>off</item>
+        <item>landscape</item>
+        <item>always</item>
+    </string-array>
+    <string-array name="layout_entries">
+        <item>QWERTY</item>
+        <item>QWERTZ</item>
+        <item>AZERTY</item>
+        <item>Dvorak</item>
+        <item>Colemak</item>
+        <item>Custom</item>
+    </string-array>
+    <string-array name="layout_values">
+        <item>qwerty</item>
+        <item>qwertz</item>
+        <item>azerty</item>
+        <item>dvorak</item>
+        <item>colemak</item>
+        <item>custom</item>
+    </string-array>
+    <string-array name="dict_entries">
+        <item>English</item>
+        <item>हिन्दी (Hindi)</item>
+        <item>Hinglish</item>
+    </string-array>
+    <string-array name="dict_values">
+        <item>en</item>
+        <item>hi</item>
+        <item>hinglish</item>
+    </string-array>
+    <string-array name="dict_default">
+        <item>en</item>
+    </string-array>
+    <string-array name="tool_entries">
+        <item>Clipboard</item>
+        <item>Emoji</item>
+        <item>Number pad</item>
+        <item>Cursor left</item>
+        <item>Cursor right</item>
+        <item>Select all</item>
+        <item>Copy</item>
+        <item>Cut</item>
+        <item>Paste</item>
+        <item>Undo</item>
+        <item>Incognito</item>
+        <item>One-handed</item>
+        <item>Settings</item>
+    </string-array>
+    <string-array name="tool_values">
+        <item>clip</item>
+        <item>emoji</item>
+        <item>numpad</item>
+        <item>left</item>
+        <item>right</item>
+        <item>selectall</item>
+        <item>copy</item>
+        <item>cut</item>
+        <item>paste</item>
+        <item>undo</item>
+        <item>incognito</item>
+        <item>onehand</item>
+        <item>settings</item>
+    </string-array>
+
+    <string name="settings_header_title">Shade</string>
+    <string name="settings_header_subtitle">Keyboard settings</string>
+    <string name="settings_section_general">General</string>
+    <string name="settings_section_typing">Typing</string>
+    <string name="settings_section_advanced">Advanced</string>
+    <string name="settings_languages_subtitle">Languages, layouts and models</string>
+    <string name="settings_preferences_subtitle">Keys, toolbar and behavior</string>
+    <string name="settings_theme_subtitle">Colors, backgrounds and key styles</string>
+    <string name="settings_corrections_subtitle">Autocorrect, prediction and learning</string>
+    <string name="settings_voice_subtitle">Dictation and voice input</string>
+    <string name="settings_emoji_subtitle">Emoji, stickers and GIFs</string>
+    <string name="settings_clipboard_subtitle">Saved clips and pinned items</string>
+    <string name="settings_backup_subtitle">Export and restore settings</string>
+    <string name="settings_about_subtitle">Version, license and project details</string>
+    <string name="pref_languages">Languages</string>
+    <string name="pref_preferences">Preferences</string>
+    <string name="pref_corrections">Corrections &amp; suggestions</string>
+    <string name="pref_voice">Voice typing</string>
+    <string name="pref_clipboard">Clipboard</string>
+    <string name="pref_about">About</string>
+    <string name="pref_emoji">Emoji &amp; GIFs</string>
+    <string name="pref_backup">Backup &amp; restore</string>
+    <string name="settings_coming_soon">Coming soon</string>
+    <string name="pref_neural_predictions">Neural predictions</string>
+    <string name="pref_neural_predictions_sum">Use an on-device ONNX model for smarter suggestions</string>
+</resources>
