@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <declare-styleable name="SettingsRow">
-        <attr name="rowIcon" format="reference" />
-        <attr name="rowTitle" format="reference|string" />
-        <attr name="rowSubtitle" format="reference|string" />
-    </declare-styleable>
-</resources>
