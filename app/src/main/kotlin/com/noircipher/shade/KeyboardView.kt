@@ -1366,7 +1366,7 @@ class KeyboardView(context: Context) : View(context) {
             when {
                 k.kind == KeyKind.FUNC && k.code == Codes.SHIFT && shiftState == 2 ->
                     hapticHeavy()
-                else -> hapticmodern keyboard()
+                else -> hapticModern()
             }
         }
         if (sound) {
@@ -1382,7 +1382,7 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    private fun hapticmodern keyboard() {
+    private fun hapticModern() {
         performHapticFeedback(
             HapticFeedbackConstants.KEYBOARD_TAP,
             HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
