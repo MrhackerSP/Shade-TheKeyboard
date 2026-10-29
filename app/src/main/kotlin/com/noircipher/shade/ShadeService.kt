@@ -1513,7 +1513,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     // ------------------------------------------------------------------ suggestions (cascade)
 
-    @Synchronized
     private suspend fun configureLocaleAssets(locale: String) {
         if (configuredLocale == locale) return
         configuredLocale = locale
@@ -1657,7 +1656,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             ?.predict(prev2, prev1, 32)
             ?.associate { it.first.lowercase() to it.second }
             .orEmpty()
-        val modelWeight = if (dictIds().firstOrNull().equals("en", ignoreCase = true)) 0.32f else 0.12f
+        val modelWeight = if (dictIds().firstOrNull()?.equals("en", ignoreCase = true) == true) 0.32f else 0.12f
 
         val ranked = candidates.take(8).mapIndexed { index, candidate ->
             val base = 1f / (index + 1)
