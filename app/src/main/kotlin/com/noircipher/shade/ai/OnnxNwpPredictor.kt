@@ -1,10 +1,12 @@
 package com.noircipher.shade.ai
 
+import ai.onnxruntime.OnnxJavaType
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
-import java.nio.IntBuffer
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class OnnxNwpPredictor(
     context: Context,
@@ -34,20 +36,20 @@ class OnnxNwpPredictor(
         ?: throw IllegalStateException("NWP model has no inputs")
 
     @Synchronized
-    @Synchronized
     override fun predictLogits(contextIds: IntArray): FloatArray {
         val lastMeaningful = contextIds.lastOrNull {
             it != vocabulary.bosId && it != vocabulary.eosId
         } ?: vocabulary.unkId
 
-        val buffer = IntBuffer.allocate(1)
-        buffer.put(lastMeaningful)
+        val buffer = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder())
+        buffer.putInt(lastMeaningful)
         buffer.rewind()
 
         val input = OnnxTensor.createTensor(
             environment,
             buffer,
-            intArrayOf(1)
+            intArrayOf(1),
+            OnnxJavaType.INT32
         )
 
         val result = session.run(mapOf(inputName to input))
