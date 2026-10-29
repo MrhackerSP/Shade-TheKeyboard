@@ -64,7 +64,7 @@ object RankingFeatureExtractor {
 
         // User/context summary (35..39)
         f[35] = if (contextEmbedding != null) 1f else 0f
-        f[36] = contextEmbedding?.average() ?: 0f
+        f[36] = contextEmbedding?.average()?.toFloat() ?: 0f
         f[37] = contextEmbedding?.maxOrNull() ?: 0f
         f[38] = contextEmbedding?.minOrNull() ?: 0f
         f[39] = contextEmbedding?.stddev() ?: 0f
