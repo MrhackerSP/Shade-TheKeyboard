@@ -1760,23 +1760,26 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         suggestJob = scope.launch {
             val known = dict.contains(prefix)
             val stage1 = LinkedHashSet<String>()
+            // For very short prefixes, relax to first-letter matching so intelligent
+            // completions can surface before most of the word has been typed.
+            val relaxedPrefix = if (prefix.length in 1..2) prefix.take(1) else prefix
             val neuralPrefixCandidates = withContext(Dispatchers.Default) {
                 neural
-                    ?.predictNext(neuralCtx, prefix, 8)
+                    ?.predictNext(neuralCtx, relaxedPrefix, 24)
                     ?.map { it.first }
                     .orEmpty()
             }
             stage1.addAll(neuralPrefixCandidates)
-            val grammarCandidates = GrammarEngine.suggest(contextWords, prefix, 4)
-            val phraseCandidates = PhraseBooster.predict(prev1, prefix, 6)
+            val grammarCandidates = GrammarEngine.suggest(contextWords, prefix, 6)
+            val phraseCandidates = PhraseBooster.predict(prev1, relaxedPrefix, 12)
             val contextCandidates = prev1
-                ?.let { dict.predictNext(prev2, it, 12) }
+                ?.let { dict.predictNext(prev2, it, 48) }
                 .orEmpty()
-                .filter { it.startsWith(prefix, ignoreCase = true) }
+                .filter { it.startsWith(relaxedPrefix, ignoreCase = true) }
             stage1.addAll(grammarCandidates)
             stage1.addAll(phraseCandidates)
             stage1.addAll(contextCandidates)
-            stage1.addAll(dict.suggestAsync(prefix, 4))
+            stage1.addAll(dict.suggestAsync(prefix, 32))
 
             val stage2 = if (prev1 != null) {
                 dict.rerankWithContext(null, prev1, stage1.toList())
@@ -1791,7 +1794,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             } else stage2
 
             var ranked = withContext(Dispatchers.Default) {
-                neural?.rerankPrefix(neuralCtx, prefix, stage3)
+                neural?.rerankPrefix(neuralCtx, relaxedPrefix, stage3)
             } ?: stage3
             ranked = withContext(Dispatchers.Default) {
                 learnedRankCandidates(
