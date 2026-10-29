@@ -38,7 +38,12 @@ class OnnxNeuralPredictor(
         ?: throw IllegalStateException("ONNX model has no inputs")
 
     private val fixedInputLength: Int? = run {
-        val shape = session.inputInfo[inputName]?.info?.shape
+        val info = session.inputInfo[inputName]?.info
+        val shape = try {
+            info?.javaClass?.getMethod("getShape")?.invoke(info) as? LongArray
+        } catch (_: Exception) {
+            null
+        }
         val dim = shape?.getOrNull(1)
         if (dim != null && dim > 0) dim.toInt() else null
     }
