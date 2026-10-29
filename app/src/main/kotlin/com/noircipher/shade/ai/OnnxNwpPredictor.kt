@@ -1,6 +1,5 @@
 package com.noircipher.shade.ai
 
-import ai.onnxruntime.OnnxJavaType
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
@@ -48,8 +47,7 @@ class OnnxNwpPredictor(
         val input = OnnxTensor.createTensor(
             environment,
             buffer,
-            intArrayOf(1),
-            OnnxJavaType.INT32
+            longArrayOf(1)
         )
 
         val result = session.run(mapOf(inputName to input))
