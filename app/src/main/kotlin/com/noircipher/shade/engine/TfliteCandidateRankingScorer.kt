@@ -2,6 +2,8 @@ package com.noircipher.shade.engine
 
 import android.content.Context
 import org.tensorflow.lite.Interpreter
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class TfliteCandidateRankingScorer(
     context: Context,
@@ -9,7 +11,9 @@ class TfliteCandidateRankingScorer(
 ) : CandidateRankingScorer {
 
     private val interpreter: Interpreter = Interpreter(
-        loadModelBytes(context, modelPath),
+        ByteBuffer.allocateDirect(loadModelBytes(context, modelPath).size)
+            .order(ByteOrder.nativeOrder())
+            .put(loadModelBytes(context, modelPath)),
         Interpreter.Options().apply {
             numThreads = 2
         }
