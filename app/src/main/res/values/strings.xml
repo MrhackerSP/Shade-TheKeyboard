@@ -263,4 +263,13 @@
     <string name="settings_coming_soon">Coming soon</string>
     <string name="pref_neural_predictions">Neural predictions</string>
     <string name="pref_neural_predictions_sum">Use an on-device ONNX model for smarter suggestions</string>
+
+    <string name="open_input_settings">Open input settings</string>
+    <string name="choose_keyboard">Choose Shade</string>
+    <string name="clip_image">Image</string>
+    <string name="settings_typing">Typing insights</string>
+    <string name="settings_typing_subtitle">Stats, heatmap, and typing-position learning</string>
+    <string name="typing_stats_title">Typing insights</string>
+    <string name="typing_stats_toggle">Enable typing insights</string>
+    <string name="typing_stats_clear">Clear typing data</string>
 </resources>

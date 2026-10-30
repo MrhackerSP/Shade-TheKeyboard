@@ -41,6 +41,7 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<View>(R.id.row_voice).setOnClickListener { toast(R.string.settings_coming_soon) }
         findViewById<View>(R.id.row_emoji).setOnClickListener { toast(R.string.settings_coming_soon) }
         findViewById<View>(R.id.row_clipboard).setOnClickListener { openScreen("screen_toolbar", R.string.pref_clipboard) }
+        findViewById<View>(R.id.row_typing).setOnClickListener { startActivity(Intent(this, TypingStatsActivity::class.java)) }
         findViewById<View>(R.id.row_backup).setOnClickListener { openScreen("screen_backup", R.string.pref_backup) }
         findViewById<View>(R.id.row_about).setOnClickListener { openScreen("screen_about", R.string.pref_about) }
     }
@@ -181,9 +182,18 @@ class SettingsActivity : AppCompatActivity() {
 
         private fun refreshLanguagePref() {
             val pref = findPreference<MultiSelectListPreference>("active_languages") ?: return
-            val available = try {
-                requireContext().assets.list("wordlists")?.filter { it.endsWith(".txt") }?.map { it.removeSuffix(".txt") }?.sorted() ?: emptyList()
+            val fromLanguageDirs = try {
+                requireContext().assets.list("languages")
+                    ?.filter { dir -> !dir.contains('.') }
+                    ?.filter { dir ->
+                        requireContext().assets.list("languages/$dir")?.contains("dictionary.txt") == true
+                    }
+                    ?: emptyList()
             } catch (_: Exception) { emptyList() }
+            val fromLegacy = try {
+                requireContext().assets.list("wordlists")?.filter { it.endsWith(".txt") }?.map { it.removeSuffix(".txt") } ?: emptyList()
+            } catch (_: Exception) { emptyList() }
+            val available = (fromLanguageDirs + fromLegacy).distinct().sorted()
 
             if (available.isNotEmpty()) {
                 pref.entries = available.map { localeName(it) }.toTypedArray()

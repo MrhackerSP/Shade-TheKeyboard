@@ -4,8 +4,7 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import java.nio.IntBuffer
 
 class OnnxNwpPredictor(
     context: Context,
@@ -40,8 +39,8 @@ class OnnxNwpPredictor(
             it != vocabulary.bosId && it != vocabulary.eosId
         } ?: vocabulary.unkId
 
-        val buffer = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder())
-        buffer.putInt(lastMeaningful)
+        val buffer = IntBuffer.allocate(1)
+        buffer.put(lastMeaningful)
         buffer.rewind()
 
         val input = OnnxTensor.createTensor(

@@ -1,75 +1,183 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:background="@color/settings_background"
+    android:fillViewport="true"
+    android:overScrollMode="never">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:paddingStart="20dp"
+        android:paddingTop="28dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="32dp">
 
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/app_name"
-            android:textSize="28sp"
+            android:textColor="@color/settings_title"
+            android:textSize="32sp"
             android:textStyle="bold" />
 
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:layout_marginBottom="20dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="24dp"
             android:text="@string/setup_intro"
-            android:textSize="15sp" />
+            android:textColor="@color/settings_subtitle"
+            android:textSize="14sp" />
 
-        <Button
-            android:id="@+id/btn_enable"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/step1" />
+            android:layout_marginBottom="14dp"
+            android:background="@drawable/bg_app_card"
+            android:orientation="vertical"
+            android:padding="16dp">
 
-        <TextView
-            android:id="@+id/status_enable"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/step1"
+                    android:textColor="@color/settings_title"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/status_enable"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_status_todo"
+                    android:gravity="center"
+                    android:minWidth="72dp"
+                    android:paddingStart="12dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="12dp"
+                    android:paddingBottom="6dp"
+                    android:text="@string/status_todo"
+                    android:textColor="@color/settings_title"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_enable"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_app_button"
+                android:text="@string/open_input_settings"
+                android:textAllCaps="false"
+                android:textColor="#000000"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:paddingStart="4dp" />
+            android:layout_marginBottom="14dp"
+            android:background="@drawable/bg_app_card"
+            android:orientation="vertical"
+            android:padding="16dp">
 
-        <Button
-            android:id="@+id/btn_select"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/step2"
+                    android:textColor="@color/settings_title"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/status_select"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_status_todo"
+                    android:gravity="center"
+                    android:minWidth="72dp"
+                    android:paddingStart="12dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="12dp"
+                    android:paddingBottom="6dp"
+                    android:text="@string/status_todo"
+                    android:textColor="@color/settings_title"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_select"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_app_button"
+                android:text="@string/choose_keyboard"
+                android:textAllCaps="false"
+                android:textColor="#000000"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/step2" />
+            android:layout_marginBottom="14dp"
+            android:background="@drawable/bg_app_card"
+            android:orientation="vertical"
+            android:padding="16dp">
 
-        <TextView
-            android:id="@+id/status_select"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:paddingStart="4dp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/step3"
+                android:textColor="@color/settings_title"
+                android:textSize="16sp"
+                android:textStyle="bold" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/step3"
-            android:textStyle="bold" />
-
-        <EditText
-            android:id="@+id/test_field"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:hint="@string/test_hint"
-            android:inputType="textCapSentences|textMultiLine"
-            android:minLines="3" />
+            <EditText
+                android:id="@+id/test_field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_settings_icon"
+                android:hint="@string/test_hint"
+                android:importantForAutofill="no"
+                android:inputType="textCapSentences|textMultiLine"
+                android:minLines="4"
+                android:padding="14dp"
+                android:textColor="@color/settings_title"
+                android:textColorHint="@color/settings_subtitle" />
+        </LinearLayout>
 
         <Button
             android:id="@+id/btn_settings"
+            style="?android:attr/borderlessButtonStyle"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/open_settings" />
+            android:layout_height="48dp"
+            android:background="@drawable/bg_app_button_secondary"
+            android:text="@string/open_settings"
+            android:textAllCaps="false"
+            android:textColor="@color/settings_title"
+            android:textStyle="bold" />
     </LinearLayout>
-</ScrollView>
+</androidx.core.widget.NestedScrollView>

@@ -381,6 +381,52 @@
 
         <LinearLayout style="@style/SettingsCard">
             <LinearLayout
+                android:id="@+id/row_typing"
+                style="@style/SettingsRowStyle">
+
+                <ImageView
+                    android:layout_width="42dp"
+                    android:layout_height="42dp"
+                    android:background="@drawable/bg_settings_icon"
+                    android:contentDescription="@null"
+                    android:padding="10dp"
+                    android:src="@drawable/ic_settings_typing"
+                    app:tint="@color/settings_icon_tint" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="14dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_typing"
+                        android:textColor="@color/settings_title"
+                        android:textSize="16sp"
+                        android:letterSpacing="0.01" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="@string/settings_typing_subtitle"
+                        android:textColor="@color/settings_subtitle"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_marginStart="12dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_settings_arrow"
+                    app:tint="@color/settings_chevron" />
+            </LinearLayout>
+            <View style="@style/SettingsDivider" />
+            <LinearLayout
                 android:id="@+id/row_backup"
                 style="@style/SettingsRowStyle">
 

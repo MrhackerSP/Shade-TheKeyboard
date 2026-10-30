@@ -10,14 +10,17 @@ class TfliteCandidateRankingScorer(
     modelPath: String = "ranking/candidate_ranking_en.tflite"
 ) : CandidateRankingScorer {
 
-    private val interpreter: Interpreter = Interpreter(
-        ByteBuffer.allocateDirect(loadModelBytes(context, modelPath).size)
-            .order(ByteOrder.nativeOrder())
-            .put(loadModelBytes(context, modelPath)),
-        Interpreter.Options().apply {
-            numThreads = 2
-        }
-    )
+    private val interpreter: Interpreter = run {
+        val bytes = context.assets.open(modelPath).readBytes()
+        Interpreter(
+            ByteBuffer.allocateDirect(bytes.size)
+                .order(ByteOrder.nativeOrder())
+                .put(bytes),
+            Interpreter.Options().apply {
+                numThreads = 2
+            }
+        )
+    }
 
     private val input: Array<FloatArray> = Array(1) { FloatArray(83) }
     private val output: Array<FloatArray> = Array(1) { FloatArray(1) }
@@ -36,23 +39,4 @@ class TfliteCandidateRankingScorer(
         interpreter.close()
     }
 
-    private fun loadModelBytes(context: Context, modelPath: String): ByteArray {
-        val bytes = context.assets.open(modelPath).readBytes()
-        // Some decoded assets carry the identifier at byte 0. Repair the
-        // FlatBuffer header in memory so the verifier sees a valid root.
-        if (bytes.size > 32 && bytes.copyOfRange(0, 4).contentEquals("TFL3".toByteArray())) {
-            val fixed = bytes.copyOf()
-            val rootOffset = if (modelPath.contains("context_encoder")) 32 else 28
-            fixed[0] = (rootOffset and 0xff).toByte()
-            fixed[1] = ((rootOffset shr 8) and 0xff).toByte()
-            fixed[2] = ((rootOffset shr 16) and 0xff).toByte()
-            fixed[3] = ((rootOffset shr 24) and 0xff).toByte()
-            fixed[4] = 'T'.code.toByte()
-            fixed[5] = 'F'.code.toByte()
-            fixed[6] = 'L'.code.toByte()
-            fixed[7] = '3'.code.toByte()
-            return fixed
-        }
-        return bytes
-    }
 }

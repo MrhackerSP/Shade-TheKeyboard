@@ -50,7 +50,14 @@ object GrammarEngine {
 
         if (typed == "i") out.add("I")
 
-        when (last) {
+        val prev2 = contextWords.dropLast(1).lastOrNull()?.lowercase()
+        val agreementBlocked = prev2 in setOf(
+            "do", "does", "did",
+            "should", "would", "could",
+            "might", "may", "must"
+        )
+
+        if (!agreementBlocked) when (last) {
             "i" -> when (typed) {
                 "is", "are" -> out.add("am")
                 "has" -> out.add("have")

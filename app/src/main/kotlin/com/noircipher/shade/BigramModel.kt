@@ -66,6 +66,7 @@ class BigramModel(private val ctx: Context) {
         dirty = true
     }
 
+    @Synchronized
     fun predict(prev2: String?, prev1: String?, max: Int): List<Pair<String, Float>> {
         if (prev1 == null) return emptyList()
         val p1 = prev1.lowercase()
@@ -100,12 +101,14 @@ class BigramModel(private val ctx: Context) {
             .map { it.key to it.value }
     }
 
+    @Synchronized
     fun rerank(prev2: String?, prev1: String?, candidates: List<String>): List<String> {
         if (candidates.isEmpty() || prev1 == null) return candidates
         val scores = predict(prev2, prev1, candidates.size * 2).toMap()
         return candidates.sortedByDescending { scores[it.lowercase()] ?: 0f }
     }
 
+    @Synchronized
     fun save() {
         if (!dirty) return
         try {
@@ -124,7 +127,11 @@ class BigramModel(private val ctx: Context) {
             }
             root.put("b", b)
             root.put("t", t)
-            store.writeText(root.toString())
+            val tmp = store.resolveSibling(store.name + ".tmp")
+            tmp.writeText(root.toString())
+            if (!tmp.renameTo(store)) {
+                store.writeText(root.toString())
+            }
             dirty = false
         } catch (_: Exception) {}
     }

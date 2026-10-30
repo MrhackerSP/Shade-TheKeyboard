@@ -2,9 +2,13 @@ package com.noircipher.shade.emoji
 
 import android.content.Context
 import com.noircipher.shade.engine.EmojiPredictor
+import com.noircipher.shade.engine.CompositeExpressionScorer
+import com.noircipher.shade.engine.ExpressionScorer
+import com.noircipher.shade.engine.TfliteExpressionScorer
 
 class EmojiPredictionEngine(
-    private val keywordMap: Map<String, List<String>>
+    private val keywordMap: Map<String, List<String>>,
+    private val expressionScorer: ExpressionScorer? = null
 ) : EmojiPredictor {
 
     override fun predictEmoji(typedPrefix: String, limit: Int): List<String> {
@@ -12,8 +16,15 @@ class EmojiPredictionEngine(
         val key = normalize(typedPrefix)
         if (key.length < 2) return emptyList()
 
+        val semantic = expressionScorer
+            ?.takeIf { it.isAvailable && key.length >= 3 }
+            ?.suggestEmojis(key, limit)
+            .orEmpty()
+
         val exact = keywordMap[key].orEmpty()
-        if (exact.isNotEmpty()) return exact.take(limit)
+        if (exact.isNotEmpty()) {
+            return (semantic + exact).distinct().take(limit)
+        }
 
         val prefixMatches = LinkedHashSet<String>()
         for ((keyword, emojis) in keywordMap) {
@@ -22,7 +33,12 @@ class EmojiPredictionEngine(
                 if (prefixMatches.size >= limit) break
             }
         }
-        return prefixMatches.take(limit)
+        val merged = (semantic + prefixMatches).distinct()
+        return merged.take(limit)
+    }
+
+    override fun close() {
+        expressionScorer?.close()
     }
 
     private fun normalize(text: String): String =
@@ -95,6 +111,7 @@ class EmojiPredictionEngine(
                     add("languages/${tag}/emoji_keywords.tsv")
                     add("languages/${tag}/emoji_keywords.txt")
                 }
+                add("emoji/emoji_keywords_concepts.tsv")
                 add("emoji/emoji_keywords.tsv")
                 add("emoji/emoji_keywords.txt")
             }
@@ -113,7 +130,14 @@ class EmojiPredictionEngine(
                             }
                         }
                     }
-                    if (map.isNotEmpty()) return EmojiPredictionEngine(map)
+                    if (map.isNotEmpty()) {
+                        val scorers = listOfNotNull(
+                            try { TfliteExpressionScorer(context) } catch (_: Exception) { null },
+                            try { TfliteEmotionScorer(context) } catch (_: Exception) { null }
+                        )
+                        val scorer = CompositeExpressionScorer(scorers).takeIf { it.isAvailable }
+                        return EmojiPredictionEngine(map, scorer)
+                    }
                 } catch (_: Exception) {
                     // Try the next asset.
                 }

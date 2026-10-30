@@ -19,6 +19,7 @@ interface LanguageModelEngine : Closeable {
 
 interface EmojiPredictor {
     fun predictEmoji(typedPrefix: String, limit: Int): List<String>
+    fun close()
 }
 
 interface DictionarySource {

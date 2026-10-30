@@ -51,26 +51,26 @@ class WordDictionary(private val ctx: Context) {
 
     suspend fun configure(localeId: String = "en") {
         if (loadedId == localeId) return
-        loadedId = localeId
-        withContext(Dispatchers.IO) {
-            try {
-                val w = HashMap<String, Long>()
-                for (id in localeId.split(',').map { it.trim() }.filter { it.isNotEmpty() }) {
-                    try {
-                        readWordList(id, w)
-                    } catch (_: Exception) {
-                        // missing list: skip it
-                    }
+        val loaded = withContext(Dispatchers.IO) {
+            val w = HashMap<String, Long>()
+            for (id in localeId.split(',').map { it.trim() }.filter { it.isNotEmpty() }) {
+                try {
+                    readWordList(id, w)
+                } catch (_: Exception) {
+                    // missing list: skip it
                 }
-                val top = if (w.size > MAX_WORDS) {
-                    w.entries.sortedByDescending { it.value }.take(MAX_WORDS)
-                } else w.entries.toList()
-                words.clear()
-                for (e in top) words[e.key] = e.value
-                rebuildPrefixIndex()
-            } catch (_: Exception) {
-                // No dictionary file
             }
+            val top = if (w.size > MAX_WORDS) {
+                w.entries.sortedByDescending { it.value }.take(MAX_WORDS)
+            } else w.entries.toList()
+            top
+        }
+        synchronized(this) {
+            if (loadedId == localeId) return
+            words.clear()
+            for (e in loaded) words[e.key] = e.value
+            rebuildPrefixIndex()
+            loadedId = localeId
         }
     }
 
@@ -150,11 +150,13 @@ class WordDictionary(private val ctx: Context) {
         rebuildUserPrefixIndex()
     }
 
+    @Synchronized
     fun contains(word: String): Boolean {
         val w = word.lowercase()
         return user.containsKey(w) || words.containsKey(w)
     }
 
+    @Synchronized
     fun learn(word: String, prev2: String? = null, prev1: String? = null) {
         val w = word.lowercase()
         if (w.length < 2 || !w.all { isWordChar(it) }) return
@@ -179,46 +181,53 @@ class WordDictionary(private val ctx: Context) {
     fun suggest(prefix: String, max: Int): List<String> {
         if (prefix.isEmpty()) return emptyList()
         val p = prefix.lowercase()
-        val known = contains(p)
+        val known = synchronized(this) { contains(p) }
         val scored = HashMap<String, Float>()
 
-        contractions[p]?.let { scored[it.lowercase()] = if (known) 12f else 100f }
+        synchronized(this) { contractions[p] }?.let {
+            scored[it.lowercase()] = if (known) 12f else 100f
+        }
 
-        val userBucket: List<String>? = if (p.length >= 2) {
-            userPrefix2[p.substring(0, 2)]
-        } else {
-            userPrefix1[p.substring(0, 1)]
+        val userBucket: List<String>? = synchronized(this) {
+            if (p.length >= 2) userPrefix2[p.substring(0, 2)] else userPrefix1[p.substring(0, 1)]
+        }
+        val userFreq = synchronized(this) {
+            userBucket.orEmpty().mapNotNull { cand -> user[cand]?.let { cand to it } }.toMap()
         }
         var found = 0
         userBucket?.let { bucket ->
             for (cand in bucket) {
                 if (!cand.startsWith(p)) continue
-                val us = user[cand] ?: continue
-                val s = 16f + kotlin.math.ln(us + 1f) - 0.3f * (cand.length - p.length)
-                scored[cand] = maxOf(scored[cand] ?: -1000f, s)
+                val us = userFreq[cand] ?: continue
+                val sc = 16f + kotlin.math.ln(us + 1f) - 0.3f * (cand.length - p.length)
+                scored[cand] = maxOf(scored[cand] ?: -1000f, sc)
                 if (++found >= 6) break
             }
         }
 
         var completions = 0
-        val bucket: List<String>? = if (p.length >= 2) {
-            prefix2[p.substring(0, 2)]
-        } else {
-            prefix1[p.substring(0, 1)]
+        val bucket: List<String>? = synchronized(this) {
+            if (p.length >= 2) prefix2[p.substring(0, 2)] else prefix1[p.substring(0, 1)]
+        }
+        val freq = synchronized(this) {
+            bucket.orEmpty().mapNotNull { cand -> words[cand]?.let { cand to it } }.toMap()
         }
         bucket?.let { b ->
             for (cand in b) {
                 if (!cand.startsWith(p)) continue
-                val f = words[cand] ?: continue
-                val s = kotlin.math.ln(f.toDouble()).toFloat() - 0.3f * (cand.length - p.length)
-                scored[cand] = maxOf(scored[cand] ?: -1000f, s)
+                val f = freq[cand] ?: continue
+                val sc = kotlin.math.ln(f.toDouble()).toFloat() - 0.3f * (cand.length - p.length)
+                scored[cand] = maxOf(scored[cand] ?: -1000f, sc)
                 if (++completions >= 12) break
             }
         }
 
         if (p.length in 3..20 && (!known || completions < max)) {
             val limit = if (p.length <= 4) 1.0f else 1.6f
-            val fuzzyBucket = prefix1[p.substring(0, 1)]
+            val fuzzyBucket: List<String>? = synchronized(this) { prefix1[p.substring(0, 1)] }
+            val fuzzyFreq = synchronized(this) {
+                fuzzyBucket.orEmpty().mapNotNull { cand -> words[cand]?.let { cand to it } }.toMap()
+            }
             if (fuzzyBucket != null) {
                 val d = Array(24) { FloatArray(24) }
                 for (cand in fuzzyBucket) {
@@ -226,7 +235,7 @@ class WordDictionary(private val ctx: Context) {
                     if (scored.containsKey(cand)) continue
                     val cost = editCost(p, cand, d)
                     if (cost > limit) continue
-                    val f = words[cand] ?: continue
+                    val f = fuzzyFreq[cand] ?: continue
                     scored[cand] = kotlin.math.ln(f.toDouble()).toFloat() - 4f * cost
                 }
             }
@@ -278,6 +287,7 @@ class WordDictionary(private val ctx: Context) {
         return d[n][m]
     }
 
+    @Synchronized
     fun correction(word: String): String? {
         val w = word.lowercase()
 
@@ -334,11 +344,13 @@ class WordDictionary(private val ctx: Context) {
         }
     }
 
+    @Synchronized
     fun predictNext(prev2: String?, prev1: String?, max: Int): List<String> {
         val model = bigramModel ?: return emptyList()
         return model.predict(prev2, prev1, max).map { it.first }
     }
 
+    @Synchronized
     fun rerankWithContext(prev2: String?, prev1: String?, candidates: List<String>): List<String> {
         val model = bigramModel ?: return candidates
         return model.rerank(prev2, prev1, candidates)
@@ -348,8 +360,9 @@ class WordDictionary(private val ctx: Context) {
         withContext(Dispatchers.Default) { suggest(prefix, max) }
 
     suspend fun correctionAsync(word: String): String? =
-        withContext(Dispatchers.Default) { correction(word) }
+        withContext(Dispatchers.Default) { synchronized(this) { correction(word) } }
 
+    @Synchronized
     fun exportUser(): Map<String, Float> = HashMap(user)
 
     companion object {

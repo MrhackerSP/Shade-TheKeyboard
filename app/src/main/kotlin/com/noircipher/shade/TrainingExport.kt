@@ -22,7 +22,7 @@ import java.util.zip.ZipOutputStream
  * Two modes:
  *  - exportToUri(): user-initiated, writes to a chosen file via SAF.
  *  - autoExport(): periodic, writes into filesDir/training_exports/.
- *    Runs only when contribute_data is on and at least 24h have passed
+ *    Runs only when contribute_data is explicitly enabled and at least 24h have passed
  *    since the last export.
  *
  * Only aggregated statistics are exported:
@@ -57,7 +57,7 @@ object TrainingExport {
      */
     fun autoExport(ctx: Context): File? {
         val prefs = PreferenceManager.getDefaultSharedPreferences(ctx)
-        if (!prefs.getBoolean("contribute_data", true)) return null
+        if (!prefs.getBoolean("contribute_data", false)) return null
 
         val now = System.currentTimeMillis()
         val last = prefs.getLong(PREF_LAST_EXPORT, 0L)

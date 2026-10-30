@@ -8,9 +8,9 @@ class NeuralVocabulary private constructor(
 ) {
     val size: Int get() = idToToken.size
 
-    val bosId: Int = tokenToId["[BOS]"] ?: 1
-    val eosId: Int = tokenToId["[EOS]"] ?: 2
-    val unkId: Int = tokenToId["_OOV_"] ?: tokenToId["[UNK]"] ?: 3
+    val bosId: Int = tokenToId["[BOS]"] ?: -1
+    val eosId: Int = tokenToId["[EOS]"] ?: -1
+    val unkId: Int = tokenToId["_OOV_"] ?: tokenToId["[UNK]"] ?: -1
 
     fun tokenize(text: String): List<String> {
         val tokens = ArrayList<String>()
@@ -38,15 +38,19 @@ class NeuralVocabulary private constructor(
         val tail = tokens.takeLast(maxContext).filter { it.isNotEmpty() }
         if (tail.isEmpty()) return intArrayOf(bosId)
 
-        val ids = IntArray(tail.size + 1)
-        ids[0] = bosId
-        for (i in tail.indices) {
-            val token = tail[i]
-            ids[i + 1] = tokenToId[token]
-                ?: tokenToId[token.lowercase()]
-                ?: unkId
+        val hasBos = bosId >= 0
+        val ids = IntArray(tail.size + if (hasBos) 1 else 0)
+        var out = 0
+        if (hasBos) ids[out++] = bosId
+        for (token in tail) {
+            val id = tokenToId[token] ?: tokenToId[token.lowercase()]
+            if (id != null) {
+                ids[out++] = id
+            } else if (unkId >= 0) {
+                ids[out++] = unkId
+            }
         }
-        return ids
+        return if (out == ids.size) ids else ids.copyOf(out)
     }
 
     private fun Char.isCombiningMark(): Boolean =

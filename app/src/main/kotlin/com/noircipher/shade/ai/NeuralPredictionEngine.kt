@@ -121,32 +121,28 @@ class NeuralPredictionEngine private constructor(
         fun create(context: Context, languageTag: String = "en"): NeuralPredictionEngine? {
             val modelLanguage = normalizeLanguageTag(languageTag)
             return try {
-                // Priority: reconstructed NWP for English, then standard ONNX.
-                if (modelLanguage == "en") {
-                    try {
-                        val nwpVocabulary = NeuralVocabulary.load(
-                            context = context,
-                            languageTag = modelLanguage,
-                            includeNwp = true
-                        ) ?: error("NWP vocabulary unavailable")
-                        if (nwpVocabulary.size != 9498) error("Unexpected NWP vocabulary size")
-                        val nwpPredictor = OnnxNwpPredictor(context, nwpVocabulary)
-                        return NeuralPredictionEngine(nwpVocabulary, nwpPredictor)
-                    } catch (_: Throwable) {
-                        // Fall through to the standard ONNX model.
-                    }
-                }
-
+                // Prefer the standard full-context ONNX model; NWP is only a fallback.
                 val vocabulary = NeuralVocabulary.load(
                     context = context,
                     languageTag = modelLanguage,
                     includeNwp = false
-                ) ?: return null
+                ) ?: error("Standard vocabulary unavailable")
                 val predictor = OnnxNeuralPredictor(context, vocabulary, languageTag = modelLanguage)
                 NeuralPredictionEngine(vocabulary, predictor)
-            } catch (t: Throwable) {
-                Log.i(TAG, "Neural engine unavailable", t)
-                null
+            } catch (_: Throwable) {
+                try {
+                    val nwpVocabulary = NeuralVocabulary.load(
+                        context = context,
+                        languageTag = modelLanguage,
+                        includeNwp = true
+                    ) ?: return null
+                    if (nwpVocabulary.size != 9498) return null
+                    val nwpPredictor = OnnxNwpPredictor(context, nwpVocabulary)
+                    NeuralPredictionEngine(nwpVocabulary, nwpPredictor)
+                } catch (t: Throwable) {
+                    Log.i(TAG, "Neural engine unavailable", t)
+                    null
+                }
             }
         }
     }

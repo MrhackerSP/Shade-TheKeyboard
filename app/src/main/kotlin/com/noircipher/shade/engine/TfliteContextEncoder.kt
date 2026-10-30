@@ -10,14 +10,17 @@ class TfliteContextEncoder(
     modelPath: String = "ranking/context_encoder_hi_xa.tflite"
 ) : ContextEncoder {
 
-    private val interpreter: Interpreter = Interpreter(
-        ByteBuffer.allocateDirect(loadModelBytes(context, modelPath).size)
-            .order(ByteOrder.nativeOrder())
-            .put(loadModelBytes(context, modelPath)),
-        Interpreter.Options().apply {
-            numThreads = 2
-        }
-    )
+    private val interpreter: Interpreter = run {
+        val bytes = context.assets.open(modelPath).readBytes()
+        Interpreter(
+            ByteBuffer.allocateDirect(bytes.size)
+                .order(ByteOrder.nativeOrder())
+                .put(bytes),
+            Interpreter.Options().apply {
+                numThreads = 2
+            }
+        )
+    }
 
     private val input1d = IntArray(1)
     private val input2d: Array<IntArray> = Array(1) { IntArray(1) }
@@ -42,21 +45,4 @@ class TfliteContextEncoder(
         interpreter.close()
     }
 
-    private fun loadModelBytes(context: Context, modelPath: String): ByteArray {
-        val bytes = context.assets.open(modelPath).readBytes()
-        if (bytes.size > 32 && bytes.copyOfRange(0, 4).contentEquals("TFL3".toByteArray())) {
-            val fixed = bytes.copyOf()
-            val rootOffset = 32
-            fixed[0] = (rootOffset and 0xff).toByte()
-            fixed[1] = ((rootOffset shr 8) and 0xff).toByte()
-            fixed[2] = ((rootOffset shr 16) and 0xff).toByte()
-            fixed[3] = ((rootOffset shr 24) and 0xff).toByte()
-            fixed[4] = 'T'.code.toByte()
-            fixed[5] = 'F'.code.toByte()
-            fixed[6] = 'L'.code.toByte()
-            fixed[7] = '3'.code.toByte()
-            return fixed
-        }
-        return bytes
-    }
 }

@@ -3,6 +3,7 @@ package com.noircipher.shade.ai
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import ai.onnxruntime.TensorInfo
 import android.content.Context
 import java.nio.LongBuffer
 
@@ -38,12 +39,7 @@ class OnnxNeuralPredictor(
         ?: throw IllegalStateException("ONNX model has no inputs")
 
     private val fixedInputLength: Int? = run {
-        val info = session.inputInfo[inputName]?.info
-        val shape = try {
-            info?.javaClass?.getMethod("getShape")?.invoke(info) as? LongArray
-        } catch (_: Exception) {
-            null
-        }
+        val shape = (session.inputInfo[inputName]?.info as? TensorInfo)?.shape
         val dim = shape?.getOrNull(1)
         if (dim != null && dim > 0) dim.toInt() else null
     }
@@ -71,7 +67,12 @@ class OnnxNeuralPredictor(
             longArrayOf(1, inputLength.toLong())
         )
 
-        val result = session.run(mapOf(inputName to input))
+        val result = try {
+            session.run(mapOf(inputName to input))
+        } catch (t: Throwable) {
+            try { input.close() } catch (_: Exception) {}
+            throw t
+        }
         try {
             val output = result.get(0) as? OnnxTensor
                 ?: throw IllegalStateException("ONNX model returned no tensor output")
@@ -79,8 +80,8 @@ class OnnxNeuralPredictor(
             val length = minOf(floatBuffer.remaining(), vocabulary.size)
             return FloatArray(length) { floatBuffer.get() }
         } finally {
-            result.close()
-            input.close()
+            try { result.close() } catch (_: Exception) {}
+            try { input.close() } catch (_: Exception) {}
         }
     }
 

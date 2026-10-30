@@ -76,10 +76,10 @@ object Layouts {
      */
     private fun bottomRow(left: Key): List<Key> = listOf(
         left,
-        Key(",", ','.code, 0.9f, KeyKind.CHAR),
+        Key(",", ','.code, 0.9f, KeyKind.CHAR, ";:!?."),
         fn(Codes.EMOJI, 0.9f),
         Key("", Codes.SPACE, 4.2f, KeyKind.SPACE),
-        Key(".", '.'.code, 0.9f, KeyKind.CHAR, ",?!:;'\"-@/"),
+        Key(".", '.'.code, 0.9f, KeyKind.CHAR, "&%+\"-:'@;/()#!,?."),
         Key("", Codes.ENTER, 1.5f, KeyKind.ENTER)
     )
 

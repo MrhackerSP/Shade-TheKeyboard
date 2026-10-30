@@ -43,6 +43,7 @@ class KeyboardView(context: Context) : View(context) {
         fun onDeleteCommit()
         fun onDeleteCancel()
         fun onSwipePath(path: List<FloatArray>): Boolean = false
+        fun onTouchSample(key: Key, x: Float, y: Float) {}
     }
 
     var listener: Listener? = null
@@ -142,6 +143,8 @@ class KeyboardView(context: Context) : View(context) {
     private var altShown = false
     private var altItems: List<String> = emptyList()
     private var altSel = 0
+    private var altCols = 1
+    private var altRows = 1
     private var altCell = 0f
     private var altOriginX = 0f
     private var altTop = 0f
@@ -418,7 +421,7 @@ class KeyboardView(context: Context) : View(context) {
         val gx = dp(2.5f)
         val gy = dp(3f)
         val radius = dp(7f)
-        val outerRadius = dp(16f)
+        val outerRadius = dp(24f)
         val combinedAlpha = ((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255)
         val pressDown = dp(0.7f) * pressProgress
 
@@ -451,18 +454,7 @@ class KeyboardView(context: Context) : View(context) {
                 if (k.outerCorner == KeyOuterCorner.NONE) {
                     c.drawRoundRect(rect, radius, radius, shadowPaint)
                 } else {
-                    val sr = floatArrayOf(
-                        radius, radius, radius, radius,
-                        radius, radius, radius, radius
-                    )
-                    when (k.outerCorner) {
-                        KeyOuterCorner.BOTTOM_LEFT -> { sr[6] = outerRadius; sr[7] = outerRadius }
-                        KeyOuterCorner.BOTTOM_RIGHT -> { sr[4] = outerRadius; sr[5] = outerRadius }
-                        KeyOuterCorner.NONE -> {}
-                    }
-                    path.reset()
-                    path.addRoundRect(rect, sr, Path.Direction.CW)
-                    c.drawPath(path, shadowPaint)
+                    c.drawRoundRect(rect, outerRadius, outerRadius, shadowPaint)
                 }
                 rect.set(
                     k.left + gx,
@@ -537,22 +529,11 @@ class KeyboardView(context: Context) : View(context) {
         which: KeyOuterCorner
     ) {
         val r = floatArrayOf(
-            radius, radius,
-            radius, radius,
-            radius, radius,
-            radius, radius
+            outerRadius, outerRadius,
+            outerRadius, outerRadius,
+            outerRadius, outerRadius,
+            outerRadius, outerRadius
         )
-        when (which) {
-            KeyOuterCorner.BOTTOM_LEFT -> {
-                r[6] = outerRadius
-                r[7] = outerRadius
-            }
-            KeyOuterCorner.BOTTOM_RIGHT -> {
-                r[4] = outerRadius
-                r[5] = outerRadius
-            }
-            KeyOuterCorner.NONE -> {}
-        }
         path.reset()
         path.addRoundRect(rect, r, Path.Direction.CW)
         c.drawPath(path, fill)
@@ -878,11 +859,11 @@ class KeyboardView(context: Context) : View(context) {
         val n = altItems.size
         if (n == 0) return
         val scale = 0.75f + 0.25f * altProgress
-        val cell = altCell
-        val stripH = dp(52f) * scale
-        val stripW = cell * n
+        val cell = altCell * scale
+        val stripH = cell * altRows
+        val stripW = cell * altCols
         val left = altOriginX
-        val top = altTop + (dp(52f) - stripH)
+        val top = altTop + (altCell * altRows - stripH)
 
         altRect.set(left, top + dp(3f), left + stripW, top + dp(3f) + stripH)
         altShadow.color = 0x55000000
@@ -893,18 +874,24 @@ class KeyboardView(context: Context) : View(context) {
         altBg.color = kbTheme.popupBg
         c.drawRoundRect(altRect, r, r, altBg)
 
-        val selLeft = left + altSel * cell + dp(4f)
-        val selRight = left + (altSel + 1) * cell - dp(4f)
-        altRect.set(selLeft, top + dp(4f), selRight, top + stripH - dp(4f))
+        val row = altSel / altCols
+        val col = altSel % altCols
+        val selLeft = left + col * cell + dp(4f) * scale
+        val selRight = left + (col + 1) * cell - dp(4f) * scale
+        val selTop = top + row * cell + dp(4f) * scale
+        val selBottom = top + (row + 1) * cell - dp(4f) * scale
+        altRect.set(selLeft, selTop, selRight, selBottom)
         altSelPaint.color = kbTheme.accent
         c.drawRoundRect(altRect, r * 0.75f, r * 0.75f, altSelPaint)
 
-        altText.textSize = min(stripH * 0.55f, dp(22f))
+        altText.textSize = min(cell * 0.55f, dp(22f) * scale)
         for (i in 0 until n) {
+            val rrow = i / altCols
+            val ccol = i % altCols
             altText.color = if (i == altSel) kbTheme.accentText else kbTheme.text
-            val cx = left + i * cell + cell / 2f
-            val cy = top + stripH / 2f - (altText.ascent() + altText.descent()) / 2f
-            c.drawText(altItems[i], cx, cy, altText)
+            val cx = left + ccol * cell + cell / 2f
+            val cy = top + rrow * cell + cell / 2f - (altText.ascent() + altText.descent()) / 2f
+            c.drawText(altItems[i].toString(), cx, cy, altText)
         }
     }
 
@@ -912,8 +899,11 @@ class KeyboardView(context: Context) : View(context) {
         val chars = k.alts.map { display(it.toString()) }.distinct()
         if (chars.isEmpty()) return
         val n = chars.size
-        val cell = min(dp(46f), (width - dp(8f)) / n)
-        val pw = cell * n
+        altCols = minOf(9, n).coerceAtLeast(1)
+        altRows = ((n + altCols - 1) / altCols).coerceAtLeast(1)
+        val cell = min(dp(52f), (width - dp(8f)) / altCols)
+        val pw = cell * altCols
+        val ph = cell * altRows
         val leftMode = k.centerX < width / 2f
         val origin = (if (leftMode) k.left else k.right - pw)
             .coerceIn(0f, maxOf(0f, (width - pw).toFloat()))
@@ -921,9 +911,11 @@ class KeyboardView(context: Context) : View(context) {
         altItems = if (leftMode) chars else chars.reversed()
         altOriginX = origin
         altCell = cell
-        altTop = (k.top - dp(58f)).coerceAtLeast(dp(2f))
+        altTop = (k.top - dp(6f) - ph).coerceAtLeast(dp(2f))
         altShown = true
-        altSel = ((p.lastX - origin) / cell).toInt().coerceIn(0, n - 1)
+        val startCol = ((p.lastX - origin) / cell).toInt().coerceIn(0, altCols - 1)
+        val startRow = ((p.lastY - altTop) / cell).toInt().coerceIn(0, altRows - 1)
+        altSel = (startRow * altCols + startCol).coerceIn(0, n - 1)
 
         altAnimator?.cancel()
         altAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -934,9 +926,11 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    private fun updateAlt(p: Pointer, x: Float) {
+    private fun updateAlt(p: Pointer, x: Float, y: Float) {
         if (!altShown || altItems.isEmpty()) return
-        val idx = ((x - altOriginX) / altCell).toInt().coerceIn(0, altItems.size - 1)
+        val col = ((x - altOriginX) / altCell).toInt().coerceIn(0, altCols - 1)
+        val row = ((y - altTop) / altCell).toInt().coerceIn(0, altRows - 1)
+        val idx = (row * altCols + col).coerceIn(0, altItems.size - 1)
         if (idx != altSel) {
             altSel = idx
             hapticTick()
@@ -1074,6 +1068,8 @@ class KeyboardView(context: Context) : View(context) {
         val p = obtainPointer(k, x, y)
         pointers.put(id, p)
         if (k.kind == KeyKind.CHAR) {
+            listener?.onTouchSample(k, x, y)
+
             slidePointerId = id
             slidePath.clear()
             slidePath.add(floatArrayOf(x, y))
@@ -1189,7 +1185,7 @@ class KeyboardView(context: Context) : View(context) {
         }
         if (altShown) {
             p.lastX = x
-            updateAlt(p, x)
+            updateAlt(p, x, y)
             return
         }
         if (k.kind == KeyKind.SPACE) {
