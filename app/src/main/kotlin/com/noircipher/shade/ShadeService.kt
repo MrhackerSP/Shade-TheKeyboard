@@ -19,6 +19,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.util.TypedValue
 import android.text.InputType
 import android.view.Gravity
@@ -1003,12 +1004,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // ------------------------------------------------------------------ undo stack
 
     private fun separatorForMatch(separator: String?): String {
-        if (separator.isNullOrEmpty() || separator.isBlank()) return separator.orEmpty()
-        return if (smartCorrectionOn && !separator.last().isLetterOrDigit()) {
-            separator + " "
-        } else {
-            separator
-        }
+        if (separator.isNullOrEmpty()) return ""
+        if (separator.isBlank() || separator.last().isLetterOrDigit()) return separator
+        return if (smartCorrectionOn) separator + " " else separator
     }
 
     private fun recordCorrectionEvent(original: String, corrected: String, separator: String? = null) {
@@ -1093,7 +1091,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun pasteClip(clip: ClipboardStore.Clip) {
         endWord()
         if (clip.isImage) {
-            val bytes = clip.imageBytes()
+            val bytes = clips.imageBytes(clip)
             val file = bytes?.let { clips.writeTempImage(it, clip.mime) }
             if (file != null) {
                 val committed = try {
@@ -2145,5 +2143,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     companion object {
         private const val MAX_UNDO = 10
+        private const val TAG = "ShadeService"
     }
 }

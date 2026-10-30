@@ -4,7 +4,6 @@ import android.content.Context
 import com.noircipher.shade.engine.EmojiPredictor
 import com.noircipher.shade.engine.CompositeExpressionScorer
 import com.noircipher.shade.engine.ExpressionScorer
-import com.noircipher.shade.engine.TfliteEmotionScorer
 import com.noircipher.shade.engine.TfliteExpressionScorer
 
 class EmojiPredictionEngine(

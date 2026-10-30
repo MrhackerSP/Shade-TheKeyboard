@@ -197,6 +197,7 @@ class KeyboardView(context: Context) : View(context) {
         var downX = 0f
         var downY = 0f
         var lastX = 0f
+        var lastY = 0f
         var longRunnable: Runnable? = null
         var repeatRunnable: Runnable? = null
         var consumed = false
@@ -204,7 +205,7 @@ class KeyboardView(context: Context) : View(context) {
         var repeated = false
 
         fun reset(k: Key?, x: Float, y: Float) {
-            key = k; downX = x; downY = y; lastX = x
+            key = k; downX = x; downY = y; lastX = x; lastY = y
             longRunnable = null; repeatRunnable = null
             consumed = false; swiping = false; repeated = false
         }
@@ -1185,6 +1186,7 @@ class KeyboardView(context: Context) : View(context) {
         }
         if (altShown) {
             p.lastX = x
+            p.lastY = y
             updateAlt(p, x, y)
             return
         }

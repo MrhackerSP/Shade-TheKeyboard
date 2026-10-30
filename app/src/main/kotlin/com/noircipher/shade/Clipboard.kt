@@ -48,8 +48,8 @@ class ClipboardStore(private val ctx: Context) {
         val isImage: Boolean get() = image != null
     }
 
-    private fun Clip.imageBytes(): ByteArray? {
-        val value = image ?: return null
+    fun imageBytes(clip: Clip): ByteArray? {
+        val value = clip.image ?: return null
         return if (value.startsWith("id:")) {
             readImageFile(value.removePrefix("id:"))
         } else {
@@ -289,7 +289,7 @@ class ClipboardPanel(
             if (clip.isImage) {
                 val thumb = ImageView(context).apply {
                     scaleType = ImageView.ScaleType.CENTER_CROP
-                    setBackgroundColor(theme.bgKey)
+                    setBackgroundColor(theme.key)
                 }
                 thumb.tag = clip.id
                 val cached = thumbCache.get(clip.id)
@@ -298,7 +298,7 @@ class ClipboardPanel(
                 } else {
                     thumbScope.launch {
                         val bmp = withContext(Dispatchers.IO) {
-                            clip.imageBytes()?.let { bytes -> decodeThumbnail(bytes) }
+                            store.imageBytes(clip)?.let { bytes -> decodeThumbnail(bytes) }
                         }
                         if (bmp != null) thumbCache.put(clip.id, bmp)
                         if (thumb.tag == clip.id) thumb.setImageBitmap(bmp)
