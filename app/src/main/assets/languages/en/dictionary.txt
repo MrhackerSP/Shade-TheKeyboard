@@ -6614,7 +6614,6 @@ marker	400312
 marriages	400312
 matched	400312
 matt	400312
-microsoft	400312
 minerals	400312
 miss	400312
 modeled	400312
@@ -11495,7 +11494,6 @@ gears	133252
 gerald	133252
 germanic	133252
 glider	133252
-google	133252
 gorge	133252
 grab	133252
 graffiti	133252
@@ -63900,7 +63898,6 @@ michigan's	1339
 microfilmed	1339
 microsatellites	1339
 microscale	1339
-microsoft's	1339
 microstrip	1339
 mideast	1339
 mightier	1339
@@ -81554,7 +81551,6 @@ glowering	365
 glumly	365
 gomberg	365
 goodbody	365
-google's	365
 googlies	365
 graininess	365
 grandmotherly	365
@@ -96667,7 +96663,6 @@ goldthread	148
 gooding	148
 goodwins	148
 goofiest	148
-googlebot	148
 goop	148
 gorgeousness	148
 gothamist	148
@@ -102481,7 +102476,6 @@ goetz	109
 gofers	109
 goitres	109
 goldfrapp	109
-googled	109
 gosling	109
 gouvernement	109
 govideo	109
@@ -108573,7 +108567,6 @@ gonging	81
 goodliest	81
 goody's	81
 goofballs	81
-googler	81
 gordas	81
 gorgoneion	81
 gotomypc	81
@@ -116127,7 +116120,6 @@ mezz	60
 mfis	60
 michi	60
 michiko	60
-microsoftmsn	60
 microsomal	60
 microspheres	60
 microvascular	60
@@ -118108,7 +118100,6 @@ goldenberg	54
 goldwater's	54
 golliwogs	54
 goniometric	54
-googles	54
 goosefish	54
 gooses	54
 goriest	54
@@ -138188,7 +138179,6 @@ goldwell	29
 goodenough	29
 goodgearguide	29
 goodkind	29
-googleplex	29
 goolwa	29
 gordini	29
 gorgoroth	29
@@ -138697,7 +138687,6 @@ microbicides	29
 microglia	29
 micromain	29
 microporous	29
-microsofts	29
 microtelinn	29
 microtell	29
 microzide	29
@@ -158789,7 +158778,6 @@ goodlier	6
 goodnesses	6
 goodwives	6
 googlability	6
-googlers	6
 gooier	6
 gooky	6
 gooney	6
