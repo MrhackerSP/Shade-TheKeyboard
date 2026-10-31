@@ -92,65 +92,62 @@ object Backup {
         } ?: false
     } catch (_: Exception) { false }
 
-    fun export(ctx: Context, uri: Uri, passphrase: String): Boolean = try {
-        val prefs = PreferenceManager.getDefaultSharedPreferences(ctx)
-        val p = JSONObject()
-        for ((k, v) in prefs.all) {
-            val o = JSONObject()
-            when (v) {
-                is Boolean -> o.put("t", "b").put("v", v)
-                is Int -> o.put("t", "i").put("v", v)
-                is Long -> o.put("t", "l").put("v", v)
-                is Float -> o.put("t", "f").put("v", v.toDouble())
-                is String -> o.put("t", "s").put("v", v)
-                is Set<*> -> o.put("t", "ss").put("v", JSONArray(v.map { it.toString() }))
-                else -> continue
-            }
-            p.put(k, o)
-        }
-
-        // Legacy `user_words` store — Float scores (NOT Int; older buggy
-        // exports would silently drop these — fixed in schema v2).
-        val words = JSONObject()
-        val userWordsPrefs = ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE)
-        for ((w, n) in userWordsPrefs.all) {
-            when (n) {
-                is Float -> words.put(w, n.toDouble())
-                is Int -> words.put(w, n.toDouble())
-                is Long -> words.put(w, n.toDouble())
-            }
-        }
-
-        // Adaptive-learning stores. Each is serialized as a JSONObject of
-        // (string-key -> any-value). We store the raw SharedPreferences map
-        // entries; restoration re-applies them with the same types.
-        val adaptive = JSONObject()
-        for (file in ADAPTIVE_PREFS_FILES) {
-            val sp = ctx.getSharedPreferences(file, Context.MODE_PRIVATE)
-            val entries = JSONObject()
-            for ((k, v) in sp.all) {
+    fun export(ctx: Context, uri: Uri, passphrase: String): Boolean {
+        return try {
+            val prefs = PreferenceManager.getDefaultSharedPreferences(ctx)
+            val p = JSONObject()
+            for ((k, v) in prefs.all) {
+                val o = JSONObject()
                 when (v) {
-                    is Boolean -> entries.put(k, JSONObject().put("t", "b").put("v", v))
-                    is Int -> entries.put(k, JSONObject().put("t", "i").put("v", v))
-                    is Long -> entries.put(k, JSONObject().put("t", "l").put("v", v))
-                    is Float -> entries.put(k, JSONObject().put("t", "f").put("v", v.toDouble()))
-                    is String -> entries.put(k, JSONObject().put("t", "s").put("v", v))
-                    is Set<*> -> entries.put(k, JSONObject().put("t", "ss").put("v", JSONArray(v.map { it.toString() })))
+                    is Boolean -> o.put("t", "b").put("v", v)
+                    is Int -> o.put("t", "i").put("v", v)
+                    is Long -> o.put("t", "l").put("v", v)
+                    is Float -> o.put("t", "f").put("v", v.toDouble())
+                    is String -> o.put("t", "s").put("v", v)
+                    is Set<*> -> o.put("t", "ss").put("v", JSONArray(v.map { it.toString() }))
                     else -> continue
                 }
+                p.put(k, o)
             }
-            adaptive.put(file, entries)
-        }
 
-        val root = JSONObject()
-            .put("version", SCHEMA_VERSION)
-            .put("prefs", p)
-            .put("words", words)
-            .put("adaptive", adaptive)
-        val data = encrypt(root.toString(2), passphrase) ?: return false
-        ctx.contentResolver.openOutputStream(uri)?.use { it.write(data) } != null
-    } catch (_: Exception) {
-        false
+            val words = JSONObject()
+            val userWordsPrefs = ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE)
+            for ((w, n) in userWordsPrefs.all) {
+                when (n) {
+                    is Float -> words.put(w, n.toDouble())
+                    is Int -> words.put(w, n.toDouble())
+                    is Long -> words.put(w, n.toDouble())
+                }
+            }
+
+            val adaptive = JSONObject()
+            for (file in ADAPTIVE_PREFS_FILES) {
+                val sp = ctx.getSharedPreferences(file, Context.MODE_PRIVATE)
+                val entries = JSONObject()
+                for ((k, v) in sp.all) {
+                    when (v) {
+                        is Boolean -> entries.put(k, JSONObject().put("t", "b").put("v", v))
+                        is Int -> entries.put(k, JSONObject().put("t", "i").put("v", v))
+                        is Long -> entries.put(k, JSONObject().put("t", "l").put("v", v))
+                        is Float -> entries.put(k, JSONObject().put("t", "f").put("v", v.toDouble()))
+                        is String -> entries.put(k, JSONObject().put("t", "s").put("v", v))
+                        is Set<*> -> entries.put(k, JSONObject().put("t", "ss").put("v", JSONArray(v.map { it.toString() })))
+                        else -> continue
+                    }
+                }
+                adaptive.put(file, entries)
+            }
+
+            val root = JSONObject()
+                .put("version", SCHEMA_VERSION)
+                .put("prefs", p)
+                .put("words", words)
+                .put("adaptive", adaptive)
+            val data = encrypt(root.toString(2), passphrase) ?: return false
+            ctx.contentResolver.openOutputStream(uri)?.use { it.write(data) } != null
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun import(ctx: Context, uri: Uri, passphrase: String): Boolean {
@@ -218,3 +215,4 @@ object Backup {
             false
         }
     }
+}

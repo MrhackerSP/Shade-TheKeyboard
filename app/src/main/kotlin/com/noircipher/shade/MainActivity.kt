@@ -82,15 +82,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshStatus() {
-        val enabled: Boolean
-        val selected: Boolean
+        var enabled = false
+        var selected = false
         try {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            val isEnabled = imm.enabledInputMethodList.any { it.packageName == packageName }
+            enabled = imm.enabledInputMethodList.any { it.packageName == packageName }
             val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-            val isSelected = current?.startsWith("$packageName/") == true
-            enabled = isEnabled
-            selected = isSelected
+            selected = current?.startsWith("$packageName/") == true
         } catch (_: Exception) {
             enabled = false
             selected = false

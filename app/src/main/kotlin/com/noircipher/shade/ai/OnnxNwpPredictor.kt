@@ -41,7 +41,6 @@ class OnnxNwpPredictor(
         } ?: throw (lastError ?: IllegalStateException("No NWP model asset found"))
 
         val opts = OrtSession.SessionOptions().apply {
-            setOptimizationLevel(1)  // ORT_ENABLE_BASIC — avoid enum resolution issues
             setIntraOpNumThreads(2)
         }
         environment.createSession(modelBytes, opts)

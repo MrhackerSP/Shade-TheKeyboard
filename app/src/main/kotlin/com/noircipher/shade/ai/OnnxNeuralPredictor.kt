@@ -46,7 +46,6 @@ class OnnxNeuralPredictor(
         } ?: throw (lastError ?: IllegalStateException("No ONNX model asset found"))
 
         val opts = OrtSession.SessionOptions().apply {
-            setOptimizationLevel(1)  // ORT_ENABLE_BASIC — avoid enum resolution issues
             setIntraOpNumThreads(2)
         }
         environment.createSession(modelBytes, opts)
