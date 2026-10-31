@@ -11,4 +11,5 @@
     <color name="settings_icon_background">#111111</color>
     <color name="settings_icon_tint">#DADADA</color>
     <color name="settings_chevron">#4A4A4A</color>
+    <color name="settings_accent">#FFB300</color>
 </resources>

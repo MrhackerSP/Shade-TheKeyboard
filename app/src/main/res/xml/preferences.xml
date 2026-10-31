@@ -195,6 +195,12 @@
             app:iconSpaceReserved="false" />
         <SwitchPreferenceCompat
             android:defaultValue="true"
+            android:key="voice_input"
+            android:title="@string/pref_voice_input"
+            android:summary="@string/pref_voice_input_sum"
+            app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
             android:key="auto_caps"
             android:title="@string/pref_auto_caps"
             app:iconSpaceReserved="false" />
@@ -210,6 +216,78 @@
             android:title="@string/typing_stats_toggle"
             app:iconSpaceReserved="false" />
     
+    </PreferenceScreen>
+    <PreferenceScreen
+        android:key="screen_learning"
+        android:summary="@string/scr_learning_sum"
+        android:title="@string/scr_learning"
+        app:iconSpaceReserved="false">
+
+        <Preference
+            android:selectable="false"
+            android:summary="@string/pref_learning_master_sum"
+            android:title="@string/pref_learning_master"
+            app:iconSpaceReserved="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="learning_adaptive"
+            android:title="@string/pref_learning_adaptive"
+            android:summary="@string/pref_learning_adaptive_sum"
+            app:iconSpaceReserved="false" />
+        <Preference
+            android:key="clear_learning_adaptive"
+            android:title="@string/pref_learning_clear_adaptive"
+            app:iconSpaceReserved="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="learning_appctx"
+            android:title="@string/pref_learning_appctx"
+            android:summary="@string/pref_learning_appctx_sum"
+            app:iconSpaceReserved="false" />
+        <Preference
+            android:key="clear_learning_appctx"
+            android:title="@string/pref_learning_clear_appctx"
+            app:iconSpaceReserved="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="learning_suppressor"
+            android:title="@string/pref_learning_suppressor"
+            android:summary="@string/pref_learning_suppressor_sum"
+            app:iconSpaceReserved="false" />
+        <Preference
+            android:key="clear_learning_suppressor"
+            android:title="@string/pref_learning_clear_suppressor"
+            app:iconSpaceReserved="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="learning_calibrator"
+            android:title="@string/pref_learning_calibrator"
+            android:summary="@string/pref_learning_calibrator_sum"
+            app:iconSpaceReserved="false" />
+        <Preference
+            android:key="clear_learning_calibrator"
+            android:title="@string/pref_learning_clear_calibrator"
+            app:iconSpaceReserved="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="learning_ranker"
+            android:title="@string/pref_learning_ranker"
+            android:summary="@string/pref_learning_ranker_sum"
+            app:iconSpaceReserved="false" />
+        <Preference
+            android:key="clear_learning_ranker"
+            android:title="@string/pref_learning_clear_ranker"
+            app:iconSpaceReserved="false" />
+
+        <Preference
+            android:key="clear_learning_all"
+            android:title="@string/pref_learning_clear_all"
+            app:iconSpaceReserved="false" />
     </PreferenceScreen>
     <PreferenceScreen
         android:key="screen_toolbar"
