@@ -203,6 +203,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var autocorrectOn = true
     private var smartCorrectionOn = true
     private var emojiSuggest = true
+    // When false (default) the suggestion strip only ever shows single-word
+    // candidates — multi-word phrase completions / smart responses / sentence
+    // completions are suppressed, and any space-containing candidate coming out
+    // of the neural / heuristic pipeline is filtered out. Matches the
+    // "word-by-word" behaviour users expect from Gboard's default.
+    private var phraseSuggestionsOn = false
     private var incognito = false
     private var fieldNoPersonalizedLearning = false
     private var fieldSecureInput = false
@@ -691,6 +697,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         autocorrectOn = prefs.getBoolean("autocorrect", true)
         smartCorrectionOn = prefs.getBoolean("smart_correction", true)
         emojiSuggest = prefs.getBoolean("emoji_suggestions", true)
+        phraseSuggestionsOn = prefs.getBoolean("phrase_suggestions", false)
         incognito = prefs.getBoolean("incognito", false) || fieldNoPersonalizedLearning || fieldSecureInput
         layoutName = prefs.getString("layout", "qwerty") ?: "qwerty"
         kb.trackpadEnabled = prefs.getBoolean("trackpad_mode", true)
@@ -2394,15 +2401,29 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
                 // 4j — typed-word pipeline injections.
                 // #1 — Multi-word phrase completion (good→morning, thank→you, ...).
-                run {
+                // Gated behind phraseSuggestionsOn: the bigram table contains
+                // single-word completions (good→morning) AND multi-word ones
+                // (good→"to see"); in word-by-word mode we still want the
+                // single-word continuations, so we keep the source but filter
+                // out space-containing entries.
+                if (phraseSuggestionsOn) {
                     val phraseCompletions = com.noircipher.shade.engine.PhraseCompletion
                         .suggestPhraseCompletions(contextWords, prefix, limit = 3)
                     if (phraseCompletions.isNotEmpty()) {
                         ranked = (phraseCompletions + ranked).distinct()
                     }
+                } else {
+                    val phraseCompletions = com.noircipher.shade.engine.PhraseCompletion
+                        .suggestPhraseCompletions(contextWords, prefix, limit = 3)
+                        .filter { !it.contains(' ') }
+                    if (phraseCompletions.isNotEmpty()) {
+                        ranked = (phraseCompletions + ranked).distinct()
+                    }
                 }
                 // #15 — Smart compose for common responses (ok → ok sounds good, ...).
-                if (FieldTypeDetector.shouldSmartCompose(currentFieldType)) {
+                // These templates are inherently multi-word, so the whole source
+                // is skipped in word-by-word mode.
+                if (phraseSuggestionsOn && FieldTypeDetector.shouldSmartCompose(currentFieldType)) {
                     val smartResponses = com.noircipher.shade.engine.SmartResponseComposer.suggest(prefix, limit = 2)
                     if (smartResponses.isNotEmpty()) {
                         ranked = (smartResponses + ranked).distinct()
@@ -2412,8 +2433,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 val extendedContext = com.noircipher.shade.engine.CrossSentenceContext.extendContext(contextWords)
                 if (com.noircipher.shade.engine.CrossSentenceContext.isSentenceStart(extendedContext)) {
                     val starters = com.noircipher.shade.engine.CrossSentenceContext.sentenceStarters(prefix, limit = 2)
-                    if (starters.isNotEmpty()) {
-                        ranked = (starters + ranked).distinct()
+                    // In word-by-word mode drop multi-word starters ("let me",
+                    // "thank you", "it would") and keep single-word ones ("the",
+                    // "I", "how", ...).
+                    val filteredStarters = if (phraseSuggestionsOn) starters
+                        else starters.filter { !it.contains(' ') }
+                    if (filteredStarters.isNotEmpty()) {
+                        ranked = (filteredStarters + ranked).distinct()
                     }
                 }
                 // #18 — Greeting/time-aware bias.
@@ -2465,10 +2491,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         }
                     }
                 // #21 — Multi-word sentence completion ("How are you" → "doing today?").
-                val sentenceCompletions = com.noircipher.shade.engine.SentenceCompleter
-                    .suggest(contextWords, limit = 2)
-                if (sentenceCompletions.isNotEmpty()) {
-                    ranked = (sentenceCompletions + ranked).distinct()
+                // Skipped entirely in word-by-word mode; in phrase mode keep only
+                // the single-word completions ("soon", "later", "tomorrow", ...).
+                run {
+                    val sentenceCompletions = com.noircipher.shade.engine.SentenceCompleter
+                        .suggest(contextWords, limit = 2)
+                    val kept = if (phraseSuggestionsOn) sentenceCompletions
+                        else sentenceCompletions.filter { !it.contains(' ') }
+                    if (kept.isNotEmpty()) {
+                        ranked = (kept + ranked).distinct()
+                    }
                 }
                 // #11 — Suggestion cache: nothing to inject here, but record the
                 // final ranked list so subsequent keystrokes can hit the cache.
@@ -2484,7 +2516,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 }
 
                 val typedWordIsValid = dict.contains(prefix)
-                val shown: List<String> = when {
+                var shown: List<String> = when {
                     grammarTop != null && !grammarTop.equals(prefix, ignoreCase = true) && !typedWordIsValid ->
                         (listOf(grammarTop) + ranked + listOf(prefix)).distinct().take(3)
 
@@ -2493,6 +2525,15 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
                     else ->
                         centerBest(ranked.ifEmpty { listOf(prefix) }.take(3))
+                }
+                // Final safety net: in word-by-word mode strip any candidate
+                // that still contains a space (could slip in from the neural
+                // model, the heuristic bigram engine, or the typed-word
+                // pipeline). Always preserve the typed-word itself and at
+                // least one candidate so the strip is never empty mid-word.
+                if (!phraseSuggestionsOn && shown.isNotEmpty()) {
+                    val singleWord = shown.filter { !it.contains(' ') }
+                    shown = if (singleWord.isEmpty()) shown else singleWord
                 }
                 withContext(Dispatchers.Main.immediate) { setCandidates(shown) }
             }

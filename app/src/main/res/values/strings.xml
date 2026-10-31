@@ -93,6 +93,8 @@
     <string name="pref_smart_correction_sum">Auto-space after punctuation, capitalize new sentences, fix “i” to “I”, and double-space for period</string>
     <string name="pref_emoji_sugg">Emoji suggestions</string>
     <string name="pref_emoji_sugg_sum">Suggest an emoji for words like “love” or “pizza”</string>
+    <string name="pref_phrase_sugg">Multi-word suggestions</string>
+    <string name="pref_phrase_sugg_sum">Suggest whole phrases (e.g. “good morning”, “how are you”). Turn off for word-by-word suggestions.</string>
     <string name="pref_learn">Learn new words</string>
     <string name="pref_learn_sum">Stored only on this device</string>
     <string name="pref_clear">Clear learned words</string>
