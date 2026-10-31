@@ -1,93 +1,123 @@
 package com.noircipher.shade
 
 /**
- * Detects when the user is currently typing a URL, email address, file path,
- * hashtag, or @-mention — so the keyboard can suppress autocorrect and word
- * suggestions that would otherwise corrupt these tokens.
+ * #26 — URL / email / phone-number detector.
  *
- * The detection is purely prefix/character-based: it examines the composing
- * text and the previous committed token to decide whether the current "word"
- * should be left alone.
+ * Inspects the composing text + text before cursor to figure out whether
+ * the user is currently typing something we should *not* autocorrect or
+ * suggest completions for:
+ *   - An email address (e.g. "john.doe@example")
+ *   - A URL (e.g. "https://example.com" or "example.com/path")
+ *   - A phone number (e.g. "+1 (555) 123-4567")
  *
- * Returns a [Result] describing what (if anything) was detected, so callers
- * can make per-call decisions.
+ * Used to suppress autocorrect mid-token (so "@example.com" doesn't get
+ * split into "@example . com" via space-insertion) and to suppress
+ * next-word suggestions that would interrupt typing.
  */
 object UrlEmailDetector {
 
-    enum class Kind { URL, EMAIL, PATH, HASHTAG, MENTION, NONE }
-
-    data class Result(val kind: Kind, val suppressAutocorrect: Boolean, val suppressSuggestions: Boolean) {
+    data class Detection(
+        val isEmail: Boolean,
+        val isUrl: Boolean,
+        val isPhone: Boolean,
+        val isPathSegment: Boolean
+    ) {
+        val anyActive: Boolean get() = isEmail || isUrl || isPhone || isPathSegment
         companion object {
-            val NONE = Result(Kind.NONE, suppressAutocorrect = false, suppressSuggestions = false)
+            val NONE = Detection(false, false, false, false)
         }
     }
 
-    /**
-     * Examines the [composing] text (the current in-progress word) and the
-     * [previousToken] (the last committed word before the cursor) to decide
-     * whether autocorrect / suggestion generation should be suppressed.
-     */
-    fun detect(composing: String, previousToken: String? = null): Result {
-        if (composing.isEmpty()) return Result.NONE
+    // Email-ish: word.char@word.char — we want to allow `.` and `@` in the
+    // composing text without inserting an auto-space.
+    private val emailRegex = Regex("^[\\w.\\-+]+@[\\w.\\-]+\$", RegexOption.IGNORE_CASE)
+    // Bare-domain + path: "example.com/path" or "sub.example.co.uk/path"
+    private val urlRegex = Regex(
+        "^(https?://|www\\.)?[\\w\\-]+(\\.[\\w\\-]+)+(/[^\\s]*)?\$",
+        RegexOption.IGNORE_CASE
+    )
+    // Scheme-prefix partial — user just started typing "http" or "https://".
+    private val urlPrefixRegex = Regex("^(https?://|www\\.)", RegexOption.IGNORE_CASE)
+    // Phone number: leading +, parens, dashes, spaces, and digits.
+    private val phoneRegex = Regex("^[+]?[\\d][\\d\\s()\\-]{2,}\$")
 
-        val lower = composing.lowercase()
-        val first = composing[0]
+    fun detect(composingText: String, beforeCursor: String): Detection {
+        val composing = composingText.trim()
+        val before = beforeCursor.trim()
+        // Combined last-token from beforeCursor + composing text — that's the
+        // logical unit we're checking.
+        val lastToken = lastToken(before) + composing
+        if (lastToken.isEmpty()) return Detection.NONE
 
-        // @-mention (e.g. social handles).
-        if (first == '@') return Result(Kind.MENTION, suppressAutocorrect = true, suppressSuggestions = false)
-
-        // #-hashtag.
-        if (first == '#') return Result(Kind.HASHTAG, suppressAutocorrect = true, suppressSuggestions = false)
-
-        // Email address — look for "name@domain" pattern.
-        if (composing.contains('@')) {
-            // Heuristic: there's an @ and at least one dot in the part after @.
-            val atIdx = composing.indexOf('@')
-            if (atIdx in 1 until composing.length - 2) {
-                val domain = composing.substring(atIdx + 1)
-                if (domain.contains('.') || domain.length >= 3) {
-                    return Result(Kind.EMAIL, suppressAutocorrect = true, suppressSuggestions = true)
+        // URL: scheme prefix matches even partially.
+        if (urlPrefixRegex.containsMatchIn(lastToken)) {
+            return Detection(isUrl = true, isEmail = false, isPhone = false, isPathSegment = false)
+        }
+        // Email: must contain '@'.
+        if (lastToken.contains('@')) {
+            // Email could be in-progress (no TLD yet). Be permissive: if it
+            // has '@' and at least one character on each side, treat as email.
+            val parts = lastToken.split('@', limit = 2)
+            if (parts.size == 2 && parts[0].isNotEmpty() && parts[1].isNotEmpty()) {
+                return Detection(isEmail = true, isUrl = false, isPhone = false, isPathSegment = false)
+            }
+        }
+        // Phone number.
+        if (phoneRegex.matches(lastToken) && lastToken.any { it.isDigit() }) {
+            return Detection(isUrl = false, isEmail = false, isPhone = true, isPathSegment = false)
+        }
+        // URL: full regex.
+        if (urlRegex.matches(lastToken)) {
+            // Disambiguate: a "word.word" with no scheme/path is ambiguous —
+            // could be a domain or a sentence ending in an abbreviation.
+            // Only treat as URL when there's a scheme OR a path.
+            if (urlPrefixRegex.containsMatchIn(lastToken) || lastToken.contains('/')) {
+                return Detection(isUrl = true, isEmail = false, isPhone = false, isPathSegment = false)
+            }
+        }
+        // Path segment: after a `/` in a URL — e.g. "example.com/foo|".
+        val slashIdx = before.lastIndexOf('/')
+        if (slashIdx >= 0) {
+            val afterSlash = before.substring(slashIdx)
+            // Only if the slash is part of a URL-looking token (no whitespace
+            // between scheme/host and slash).
+            val beforeSlash = before.substring(0, slashIdx)
+            if (urlRegex.containsMatchIn(beforeSlash) || urlPrefixRegex.containsMatchIn(beforeSlash)) {
+                val hasSpaceAfterSlash = afterSlash.any { it.isWhitespace() }
+                if (!hasSpaceAfterSlash) {
+                    return Detection(isUrl = false, isEmail = false, isPhone = false, isPathSegment = true)
                 }
             }
         }
-
-        // URL: starts with a scheme or "www.".
-        if (lower.startsWith("http://") || lower.startsWith("https://") ||
-            lower.startsWith("ftp://") || lower.startsWith("www.")
-        ) {
-            return Result(Kind.URL, suppressAutocorrect = true, suppressSuggestions = true)
-        }
-
-        // URL: a bare domain like "example.com" — only treat as URL if the
-        // previous token was a scheme/protocol-like word OR the composing has
-        // a TLD-style suffix.
-        val tlds = setOf("com", "org", "net", "io", "co", "us", "uk", "dev", "app", "ai")
-        val dotIdx = composing.indexOf('.')
-        if (dotIdx in 1 until composing.length - 2) {
-            val lastPart = composing.substring(dotIdx + 1).lowercase()
-            if (tlds.any { lastPart.startsWith(it) }) {
-                return Result(Kind.URL, suppressAutocorrect = true, suppressSuggestions = true)
-            }
-        }
-
-        // File path: starts with "/" or contains "/" in a Unix-path-like way.
-        if (first == '/' || (composing.contains('/') && composing.length > 1)) {
-            // Avoid false-positives like dates "12/25/2025" — only treat as
-            // path when there are no spaces and at least one segment is
-            // alphabetic.
-            if (!composing.contains(' ') && composing.any { it.isLetter() }) {
-                return Result(Kind.PATH, suppressAutocorrect = true, suppressSuggestions = true)
-            }
-        }
-
-        // Windows-style path "C:\...".
-        if (composing.length >= 3 && composing[1] == ':' && (composing[2] == '\\' || composing[2] == '/')) {
-            return Result(Kind.PATH, suppressAutocorrect = true, suppressSuggestions = true)
-        }
-
-        return Result.NONE
+        return Detection.NONE
     }
 
-    /** Convenience: returns true if the composing text is any URL/email/path/etc. */
-    fun isSpecialToken(composing: String): Boolean = detect(composing).kind != Kind.NONE
+    fun suppressAutocorrect(detection: Detection): Boolean {
+        // Autocorrect should be suppressed when the user is actively typing
+        // any URL/email/phone path. Path segments of URLs also shouldn't
+        // be "corrected" to dictionary words.
+        return detection.anyActive
+    }
+
+    fun suppressSuggestions(detection: Detection): Boolean {
+        // Suppress suggestions when typing an email or URL; phone numbers
+        // are short enough that suggestions would only get in the way.
+        return detection.isEmail || detection.isUrl || detection.isPhone || detection.isPathSegment
+    }
+
+    private fun lastToken(before: String): String {
+        if (before.isEmpty()) return ""
+        var end = before.length
+        while (end > 0 && before[end - 1].isWhitespace()) end -= 1
+        if (end == 0) return ""
+        var start = end
+        while (start > 0) {
+            val c = before[start - 1]
+            // Stop at whitespace; keep `.`, `/`, `@`, `:`, `-`, `+`, `(`, `)` so
+            // we can recognize URLs and emails as a single token.
+            if (c.isWhitespace()) break
+            start -= 1
+        }
+        return before.substring(start, end)
+    }
 }

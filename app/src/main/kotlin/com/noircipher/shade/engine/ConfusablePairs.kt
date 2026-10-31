@@ -1,215 +1,121 @@
 package com.noircipher.shade.engine
 
 /**
- * Detects common confusable word pairs and suggests the right one based on
- * context.
+ * #22 — Confusable pairs.
  *
- * Examples: `there`/`their`/`they're`, `your`/`you're`, `its`/`it's`,
- * `to`/`too`/`two`, `then`/`than`, `affect`/`effect`, `loose`/`lose`.
+ * Catches classic English homophone confusions: there/their/they're,
+ * your/you're, its/it's, to/too/two, then/than, affect/effect, etc.
  *
- * [suggestConfusable] returns the corrected form when the previous word (or
- * absence of one) clearly indicates which spelling the user meant.  Returns
- * `null` when the context is ambiguous so the caller falls through to the
- * default suggestion path.
+ * The decision to "correct" depends on the preceding word (context-sensitive).
+ * Returns the corrected word, or null when no correction applies.
  */
 object ConfusablePairs {
 
-    private data class Confusable(
-        val word: String,
-        val alternatives: List<String>,
-        /** Returns the suggested replacement, or null when ambiguous. */
-        val resolver: (prev: String?) -> String?
+    private data class Rule(
+        val typed: String,
+        val correction: String,
+        /** Optional context-gate: only correct when previous word matches one of these. */
+        val contextTrigger: Set<String> = emptySet(),
+        /** Avoid correcting when previous word is one of these. */
+        val contextBlock: Set<String> = emptySet()
     )
 
-    private val GROUPS: List<Confusable> = listOf(
-        Confusable("there", listOf("their", "they're")) { prev ->
-            // "there" = location/existence; "their" = possession; "they're" = they are
-            when {
-                prev == null -> "there"
-                prev == "is" || prev == "are" || prev == "was" || prev == "were" ||
-                    prev == "over" || prev == "right" || prev == "go" || prev == "down" -> "there"
-                prev == "that" || prev == "this" || prev == "what" || prev == "whose" ||
-                    prev == "is" || prev == "are" -> "there"
-                else -> null
-            }
-        },
-        Confusable("their", listOf("there", "they're")) { prev ->
-            // Possession usually follows a verb or preposition: "to their", "with their"
-            when {
-                prev == null -> null
-                prev == "to" || prev == "with" || prev == "of" || prev == "for" ||
-                    prev == "from" || prev == "by" || prev == "and" -> "their"
-                else -> null
-            }
-        },
-        Confusable("they're", listOf("there", "their")) { prev ->
-            // "they're going", "they're here"
-            when {
-                prev == null -> null
-                prev == "maybe" || prev == "perhaps" || prev == "guess" -> "they're"
-                else -> null
-            }
-        },
-        Confusable("your", listOf("you're")) { prev ->
-            // Possession: "is your", "to your", "with your"
-            when {
-                prev == null -> "your"
-                prev == "is" || prev == "are" || prev == "was" || prev == "were" ||
-                    prev == "to" || prev == "with" || prev == "for" || prev == "of" ||
-                    prev == "on" || prev == "in" || prev == "by" -> "your"
-                else -> null
-            }
-        },
-        Confusable("you're", listOf("your")) { prev ->
-            // "you're going", "you're right"
-            when {
-                prev == null -> null
-                prev == "guess" || prev == "think" || prev == "say" || prev == "maybe" -> "you're"
-                else -> null
-            }
-        },
-        Confusable("its", listOf("it's")) { prev ->
-            // Possession: "the dog and its", "on its"
-            when {
-                prev == null -> "its"
-                prev == "the" || prev == "a" || prev == "an" || prev == "this" ||
-                    prev == "that" || prev == "every" || prev == "on" || prev == "with" -> "its"
-                prev == "see" || prev == "know" || prev == "think" || prev == "guess" ||
-                    prev == "looks" || prev == "seems" -> "it's"
-                else -> null
-            }
-        },
-        Confusable("it's", listOf("its")) { prev ->
-            when {
-                prev == null -> "it's"
-                prev == "guess" || prev == "think" || prev == "know" || prev == "looks" -> "it's"
-                else -> null
-            }
-        },
-        Confusable("to", listOf("too", "two")) { prev ->
-            // "going to", "want to", "have to"
-            when {
-                prev == null -> "to"
-                prev == "going" || prev == "want" || prev == "have" || prev == "need" ||
-                    prev == "have" || prev == "got" || prev == "going" || prev == "want" ||
-                    prev == "try" || prev == "trying" || prev == "used" || prev == "going" ||
-                    prev == "go" || prev == "come" || prev == "listen" || prev == "talk" -> "to"
-                prev == "me" || prev == "you" || prev == "i" || prev == "she" || prev == "he" -> "too"
-                else -> "to"
-            }
-        },
-        Confusable("too", listOf("to", "two")) { prev ->
-            // "me too", "you too", "much too", "really too"
-            when {
-                prev == null -> null
-                prev == "me" || prev == "you" || prev == "i" || prev == "we" ||
-                    prev == "they" || prev == "him" || prev == "her" || prev == "us" -> "too"
-                prev == "much" || prev == "really" || prev == "way" -> "too"
-                else -> null
-            }
-        },
-        Confusable("then", listOf("than")) { prev ->
-            // "then" = time sequence; "than" = comparison
-            when {
-                prev == null -> "then"
-                prev == "and" || prev == "since" || prev == "now" || prev == "then" ||
-                    prev == "well" || prev == "so" || prev == "ok" || prev == "but" -> "then"
-                prev == "rather" || prev == "more" || prev == "less" || prev == "better" ||
-                    prev == "worse" || prev == "faster" || prev == "slower" || prev == "bigger" -> "than"
-                else -> "then"
-            }
-        },
-        Confusable("than", listOf("then")) { prev ->
-            when {
-                prev == null -> null
-                prev == "rather" || prev == "more" || prev == "less" || prev == "better" ||
-                    prev == "worse" || prev == "other" -> "than"
-                else -> null
-            }
-        },
-        Confusable("affect", listOf("effect")) { prev ->
-            // "affect" = verb; "effect" = noun
-            when {
-                prev == null -> null
-                prev == "will" || prev == "to" || prev == "can" || prev == "may" ||
-                    prev == "might" || prev == "could" || prev == "should" || prev == "would" -> "affect"
-                prev == "the" || prev == "an" || prev == "no" || prev == "any" ||
-                    prev == "some" || prev == "this" || prev == "that" -> "effect"
-                else -> null
-            }
-        },
-        Confusable("effect", listOf("affect")) { prev ->
-            when {
-                prev == null -> "effect"
-                prev == "the" || prev == "an" || prev == "no" || prev == "any" ||
-                    prev == "some" || prev == "this" || prev == "that" || prev == "side" -> "effect"
-                else -> null
-            }
-        },
-        Confusable("loose", listOf("lose")) { prev ->
-            when {
-                prev == null -> null
-                prev == "too" || prev == "very" || prev == "pretty" || prev == "rather" -> "loose"
-                prev == "will" || prev == "to" || prev == "didn't" || prev == "won't" ||
-                    prev == "can't" || prev == "going" || prev == "might" -> "lose"
-                else -> null
-            }
-        },
-        Confusable("lose", listOf("loose")) { prev ->
-            when {
-                prev == null -> "lose"
-                prev == "will" || prev == "to" || prev == "won't" || prev == "didn't" ||
-                    prev == "can't" || prev == "might" || prev == "could" -> "lose"
-                else -> null
-            }
-        },
-        Confusable("whose", listOf("who's")) { prev ->
-            when {
-                prev == null -> "whose"
-                prev == "anyone" || prev == "someone" || prev == "everyone" ||
-                    prev == "nobody" || prev == "people" -> "whose"
-                prev == "guess" || prev == "know" || prev == "wonder" -> "who's"
-                else -> null
-            }
-        },
-        Confusable("who's", listOf("whose")) { prev ->
-            when {
-                prev == null -> null
-                prev == "guess" || prev == "know" || prev == "wonder" -> "who's"
-                else -> null
-            }
-        },
-        Confusable("were", listOf("where", "we're")) { prev ->
-            when {
-                prev == null -> null
-                prev == "we" || prev == "they" || prev == "you" || prev == "there" -> "were"
-                prev == "anywhere" || prev == "somewhere" || prev == "nowhere" ||
-                    prev == "everywhere" || prev == "from" || prev == "to" -> "where"
-                else -> null
-            }
-        },
-        Confusable("where", listOf("were", "we're")) { prev ->
-            when {
-                prev == null -> "where"
-                prev == "anywhere" || prev == "somewhere" || prev == "nowhere" ||
-                    prev == "everywhere" || prev == "from" || prev == "to" ||
-                    prev == "know" || prev == "wonder" -> "where"
-                else -> null
-            }
-        }
+    private val rules: List<Rule> = listOf(
+        // there / their / they're
+        Rule("their", "there", contextTrigger = setOf("over", "is", "are", "be", "been", "go", "went", "here", "right", "anywhere", "nowhere", "somewhere", "everywhere")),
+        Rule("there", "their", contextTrigger = setOf("with", "and", "to", "for", "from", "by", "of", "about", "family", "house", "car", "dog", "cat", "names", "kids", "children", "parents", "friends")),
+        Rule("they're", "their", contextTrigger = setOf("with", "and", "to", "for", "from", "by", "of", "about")),
+        Rule("they're", "there", contextTrigger = setOf("over", "is", "are", "go", "be", "here", "right", "anywhere")),
+
+        // your / you're
+        Rule("your", "you're", contextTrigger = setOf("going", "welcome", "right", "the", "best", "here", "there", "invited", "awesome", "amazing", "great", "ready", "doing", "so")),
+        Rule("youre", "you're"),
+        Rule("youre", "your", contextBlock = setOf("going", "welcome", "right")),
+
+        // its / it's
+        Rule("its", "it's", contextTrigger = setOf("going", "been", "not", "so", "a", "the", "going", "ok", "okay", "true", "been", "getting", "looking", "nice", "fine", "great", "awesome", "ready")),
+
+        // to / too / two
+        Rule("to", "too", contextTrigger = setOf("want", "wanted", "needs", "need", "got", "have", "had", "late", "early", "good", "bad", "tired", "much", "many", "few", "easy", "hard", "expensive", "cheap")),
+
+        // then / than
+        Rule("then", "than", contextTrigger = setOf("more", "less", "better", "worse", "bigger", "smaller", "older", "younger", "faster", "slower", "rather", "other")),
+
+        // affect / effect
+        Rule("affect", "effect", contextTrigger = setOf("the", "a", "an", "no", "any", "some", "this", "that", "negative", "positive", "side", "good", "bad", "overall", "long-term", "short-term", "lasting")),
+        Rule("effect", "affect", contextTrigger = setOf("will", "would", "can", "could", "may", "might", "to", "going", "going to", "did", "didn't", "doesn't", "don't")),
+
+        // accept / except
+        Rule("accept", "except", contextTrigger = setOf("all", "everyone", "everybody", "nobody", "no-one", "the", "that", "this")),
+        Rule("except", "accept", contextTrigger = setOf("to", "won't", "won't", "didn't", "couldn't", "can't", "refused", "declined")),
+
+        // principle / principal
+        Rule("principle", "principal", contextTrigger = setOf("the", "school", "company", "investor", "investors", "loan")),
+
+        // whose / who's
+        Rule("whose", "who's", contextTrigger = setOf("going", "coming", "here", "there", "calling", "talking", "speaking")),
+        Rule("who's", "whose", contextTrigger = setOf("car", "house", "dog", "cat", "phone", "idea", "turn", "responsibility", "fault", "decision")),
+
+        // were / where / we're
+        Rule("were", "we're", contextTrigger = setOf("going", "coming", "here", "there", "going to", "about to", "trying")),
+        Rule("were", "where", contextTrigger = setOf("the", "a", "place", "location", "house", "school", "work", "home", "exactly")),
+        Rule("where", "were", contextTrigger = setOf("we", "they", "you", "kids", "children", "parents", "guys")),
+
+        // through / threw / thorough
+        Rule("threw", "through", contextTrigger = setOf("go", "going", "went", "come", "pass", "walk", "run", "look")),
+
+        // are / our
+        Rule("are", "our", contextTrigger = setOf("friends", "kids", "parents", "family", "team", "house", "car", "meeting", "schedule", "plans", "trip", "vacation")),
+        Rule("our", "are", contextTrigger = setOf("going", "coming", "here", "there", "ready", "ok", "okay", "fine", "good")),
+
+        // weather / whether
+        Rule("weather", "whether", contextTrigger = setOf("to", "or", "not", "depends", "decide", "decided", "know", "wonder", "depends", "on")),
+
+        // lose / loose
+        Rule("loose", "lose", contextTrigger = setOf("will", "won't", "didn't", "don't", "can't", "couldn't", "might", "may", "going", "to")),
+
+        // advice / advise
+        Rule("advice", "advise", contextTrigger = setOf("to", "i", "we", "they", "you", "should", "would", "can", "could")),
+
+        // then / than reverse
+        Rule("than", "then", contextTrigger = setOf("and", "so", "but", "we", "i", "you", "they", "first", "next", "after", "before", "now", "later"))
     )
 
-    private val BY_WORD: Map<String, Confusable> = GROUPS.associateBy { it.word }
+    private val confusableWords: Set<String> = rules.map { it.typed }.toSet()
+
+    fun isConfusable(typed: String): Boolean {
+        if (typed.isEmpty()) return false
+        return confusableWords.contains(typed.lowercase())
+    }
 
     /**
-     * If [word] is one of the confusable homophones, returns the right one
-     * based on the [previousWord] (or null if the previous word was a sentence
-     * start).  Returns null when no correction is needed or the context is
-     * ambiguous.
+     * @param typed the user's word
+     * @param prevWord the previous word in the sentence (or null at start)
+     * @return corrected word, or null when no rule applies.
      */
-    fun suggestConfusable(word: String, previousWord: String?): String? {
-        val lower = word.lowercase().trim()
-        val c = BY_WORD[lower] ?: return null
-        return c.resolver(previousWord?.lowercase()?.trim()?.takeIf { it.isNotEmpty() })
+    fun correct(typed: String, prevWord: String?): String? {
+        if (typed.isEmpty()) return null
+        val lower = typed.lowercase()
+        val prev = prevWord?.trim()?.lowercase()
+        for (rule in rules) {
+            if (rule.typed != lower) continue
+            if (prev != null) {
+                if (rule.contextBlock.contains(prev)) continue
+                if (rule.contextTrigger.isNotEmpty() && !rule.contextTrigger.contains(prev)) continue
+            } else {
+                // No context — only apply rules that don't require context.
+                if (rule.contextTrigger.isNotEmpty()) continue
+            }
+            return preserveCase(typed, rule.correction)
+        }
+        return null
+    }
+
+    private fun preserveCase(typed: String, replacement: String): String {
+        return when {
+            typed.length > 1 && typed.all { it.isUpperCase() } -> replacement.uppercase()
+            typed[0].isUpperCase() -> replacement.replaceFirstChar { it.uppercase() }
+            else -> replacement
+        }
     }
 }

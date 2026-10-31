@@ -4,17 +4,15 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Adapts the online ranker's learning rate based on the user's overall
- * acceptance rate.
+ * #16 — Acceptance rate adapter.
  *
- * When the user accepts suggestions frequently (high acceptance), the ranker
- * should learn faster — the user trusts it, so update weights more boldly.
- * When the user rarely accepts, the ranker should learn cautiously — its
- * current weights are clearly mis-calibrated, so each individual update
- * should be small to avoid overshooting.
+ * Tracks global suggestion acceptance rates (shown vs accepted) and turns
+ * the running rate into a learning-rate multiplier for the online ranker.
+ * High acceptance → bump the learning rate (the ranker's signal is good).
+ * Low acceptance → back off (signal is noisy).
  *
- * Schema: two integer counters (`shown` and `accepted`) persisted in a
- * SharedPreferences file.
+ * Persisted in SharedPreferences so the rate estimate is stable across
+ * sessions.
  */
 class AcceptanceRateAdapter(context: Context) {
 
@@ -22,53 +20,41 @@ class AcceptanceRateAdapter(context: Context) {
         context.getSharedPreferences("shade_acceptance_rate", Context.MODE_PRIVATE)
 
     @Synchronized
-    fun recordShown(now: Long = System.currentTimeMillis()) {
+    fun recordShown() {
         val shown = prefs.getInt(KEY_SHOWN, 0) + 1
-        prefs.edit().putInt(KEY_SHOWN, shown).putLong(KEY_LAST_UPDATE, now).apply()
+        prefs.edit().putInt(KEY_SHOWN, shown).apply()
     }
 
     @Synchronized
-    fun recordAccepted(now: Long = System.currentTimeMillis()) {
+    fun recordAccepted() {
         val accepted = prefs.getInt(KEY_ACCEPTED, 0) + 1
-        prefs.edit().putInt(KEY_ACCEPTED, accepted).putLong(KEY_LAST_UPDATE, now).apply()
+        prefs.edit().putInt(KEY_ACCEPTED, accepted).apply()
     }
 
-    /**
-     * Acceptance rate in [0, 1].  Returns 0.5 when there is not yet enough
-     * data (so the ranker's default learning rate is used).
-     */
     @Synchronized
     fun acceptanceRate(): Float {
         val shown = prefs.getInt(KEY_SHOWN, 0)
+        if (shown == 0) return 0.5f  // neutral prior
         val accepted = prefs.getInt(KEY_ACCEPTED, 0)
-        if (shown < MIN_SAMPLES) return 0.5f
-        return (accepted.toFloat() / shown).coerceIn(0f, 1f)
+        return (accepted.toFloat() / shown.toFloat()).coerceIn(0f, 1f)
     }
 
     /**
-     * Learning-rate multiplier for the online ranker.
-     * - acceptanceRate >= 0.6 → 1.5x (fast learning)
-     * - acceptanceRate <= 0.2 → 0.5x (cautious)
-     * - otherwise → 1.0x (default)
+     * Multiplier in roughly [0.5, 2.0]. A 50% acceptance rate maps to 1.0.
      */
     fun learningRateMultiplier(): Float {
         val rate = acceptanceRate()
-        return when {
-            rate >= 0.6f -> 1.5f
-            rate <= 0.2f -> 0.5f
-            else -> 1.0f
-        }
+        // Linear: 0% -> 0.5x, 50% -> 1.0x, 100% -> 1.5x
+        return (0.5f + rate).coerceIn(0.5f, 2.0f)
     }
 
     @Synchronized
-    fun clear() {
+    fun reset() {
         prefs.edit().clear().apply()
     }
 
     companion object {
         private const val KEY_SHOWN = "shown"
         private const val KEY_ACCEPTED = "accepted"
-        private const val KEY_LAST_UPDATE = "last_update"
-        private const val MIN_SAMPLES = 10
     }
 }

@@ -1,66 +1,79 @@
 package com.noircipher.shade.engine
 
-import android.util.LruCache
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Small LRU cache for suggestion-bar results.
+ * #11 — Suggestion cache.
  *
- * Computing suggestions for a given (prefix, context) is expensive — the
- * pipeline touches the dictionary, bigram model, neural model, and adaptive
- * stores.  When the user backspaces and re-types (or rotates the device),
- * the same input can be re-evaluated.  This cache stores the most recent
- * results keyed by a hash of (prefix, prev1, prev2, locale, packageHash).
+ * Memoizes suggestion-list lookups by (prev2, prev1, prefix). Short TTL
+ * keeps the cache from getting stale as the user types.
  *
- * The cache is intentionally small (32 entries) and entry values are shallow
- * copies — they should be treated as read-only.
+ * Thread-safe via ConcurrentHashMap. Lookups are O(1) and very cheap, so
+ * this can be hit on every keystroke.
  */
-class SuggestionCache(maxEntries: Int = DEFAULT_MAX_ENTRIES) {
+object SuggestionCache {
 
-    private data class Key(
-        val prefix: String,
-        val prev1: String?,
-        val prev2: String?,
-        val locale: String,
-        val packageHash: String
+    private const val TTL_MS = 1500L
+    private const val MAX_ENTRIES = 256
+
+    private data class Entry(
+        val candidates: List<String>,
+        val expiresAt: Long
     )
 
-    private val cache = LruCache<Key, List<String>>(maxEntries)
+    private val cache = ConcurrentHashMap<String, Entry>()
 
-    /** Stores [candidates] for the given context. */
-    fun put(
-        prefix: String,
-        prev1: String?,
-        prev2: String?,
-        locale: String,
-        packageHash: String,
-        candidates: List<String>
-    ) {
-        if (candidates.isEmpty()) return
-        cache.put(Key(prefix.lowercase(), prev1?.lowercase(), prev2?.lowercase(), locale, packageHash), ArrayList(candidates))
+    private fun key(prev2: String?, prev1: String?, prefix: String): String {
+        val sb = StringBuilder(24)
+        sb.append(prev2 ?: "").append('\u0001')
+        sb.append(prev1 ?: "").append('\u0001')
+        sb.append(prefix)
+        return sb.toString()
     }
 
-    /**
-     * Returns the cached candidates, or null when there is no entry for this
-     * context.  Callers must check the return value before using it.
-     */
-    fun get(
-        prefix: String,
-        prev1: String?,
-        prev2: String?,
-        locale: String,
-        packageHash: String
-    ): List<String>? {
-        return cache.get(Key(prefix.lowercase(), prev1?.lowercase(), prev2?.lowercase(), locale, packageHash))
+    fun get(prev2: String?, prev1: String?, prefix: String): List<String>? {
+        val k = key(prev2, prev1, prefix)
+        val e = cache[k] ?: return null
+        if (System.currentTimeMillis() > e.expiresAt) {
+            cache.remove(k)
+            return null
+        }
+        return e.candidates
     }
 
-    fun clear() {
-        cache.evictAll()
+    fun put(prev2: String?, prev1: String?, prefix: String, candidates: List<String>) {
+        val k = key(prev2, prev1, prefix)
+        if (cache.size >= MAX_ENTRIES) {
+            // Drop one expired entry to make room; if none expired, drop the
+            // oldest by expiry (linear scan but bounded by MAX_ENTRIES).
+            var oldestKey: String? = null
+            var oldestExp = Long.MAX_VALUE
+            val now = System.currentTimeMillis()
+            for ((ek, ev) in cache) {
+                if (now > ev.expiresAt) {
+                    cache.remove(ek)
+                    if (cache.size < MAX_ENTRIES) break
+                }
+                if (ev.expiresAt < oldestExp) {
+                    oldestExp = ev.expiresAt
+                    oldestKey = ek
+                }
+            }
+            oldestKey?.let { cache.remove(it) }
+        }
+        cache[k] = Entry(candidates, System.currentTimeMillis() + TTL_MS)
     }
 
-    /** Number of entries currently cached. */
-    fun size(): Int = cache.size()
+    fun invalidate() {
+        cache.clear()
+    }
 
-    companion object {
-        private const val DEFAULT_MAX_ENTRIES = 32
+    fun invalidatePrefix(prefix: String) {
+        if (prefix.isEmpty()) {
+            invalidate()
+            return
+        }
+        val toRemove = cache.keys.filter { it.endsWith("\u0001$prefix") }
+        for (k in toRemove) cache.remove(k)
     }
 }

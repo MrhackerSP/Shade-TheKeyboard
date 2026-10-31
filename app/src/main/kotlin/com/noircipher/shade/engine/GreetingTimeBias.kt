@@ -3,42 +3,44 @@ package com.noircipher.shade.engine
 import java.util.Calendar
 
 /**
- * Time-aware greeting words.
+ * #18 — Greeting / time-aware bias.
  *
- * Given the current hour of day (or a Calendar instance), returns the most
- * likely greeting the user would type, so the suggestion bar can surface it
- * as a quick-pick at the start of a message.
- *
- *   5–11  → "good morning"
- *   12–16 → "good afternoon"
- *   17–21 → "good evening"
- *   22–4  → "good night"
+ * Suggests words appropriate to the time of day (morning → coffee/commute,
+ * evening → dinner/movie, etc.) when the user is starting a new sentence.
  */
 object GreetingTimeBias {
 
-    fun timeAwareWords(hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)): List<String> {
-        return when (hourOfDay) {
-            in 5..11 -> listOf("good morning", "morning", "hello")
-            in 12..16 -> listOf("good afternoon", "afternoon", "hi")
-            in 17..21 -> listOf("good evening", "evening", "hey")
-            else -> listOf("good night", "night", "hey")
-        }
-    }
+    private val morningWords = listOf(
+        "morning", "coffee", "breakfast", "commute", "subway", "traffic",
+        "exercise", "run", "gym", "shower", "wakeup", "alarm", "early",
+        "today", "schedule", "meeting", "standup", "emails"
+    )
+    private val afternoonWords = listOf(
+        "lunch", "afternoon", "meeting", "call", "deadline", "afternoon",
+        "break", "snack", "exercise", "tea", "coffee", "stretch", "deadline",
+        "report", "review", "update"
+    )
+    private val eveningWords = listOf(
+        "evening", "dinner", "movie", "watch", "show", "tv", "Netflix",
+        "relax", "shower", "sleep", "tomorrow", "tonight", "tonight's",
+        "plans", "home", "tired", "exhausted", "wine", "beer"
+    )
+    private val nightWords = listOf(
+        "night", "sleep", "bed", "tomorrow", "morning", "tired", "rest",
+        "goodnight", "dream", "alarm", "early", "wake"
+    )
 
-    /**
-     * When the user has just typed the first word of a greeting ("good"),
-     * returns the time-appropriate completion.
-     */
-    fun completeGreeting(typed: String, hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)): String? {
-        val lower = typed.lowercase().trim()
-        if (lower == "good" || lower == "gud") {
-            return when (hourOfDay) {
-                in 5..11 -> "morning"
-                in 12..16 -> "afternoon"
-                in 17..21 -> "evening"
-                else -> "night"
-            }
+    fun timeAwareWords(prefix: String): List<String> {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        val candidates = when (hour) {
+            in 5..11 -> morningWords
+            in 12..16 -> afternoonWords
+            in 17..21 -> eveningWords
+            else -> nightWords
         }
-        return null
+        if (prefix.isEmpty()) return candidates.take(3)
+        val lower = prefix.lowercase()
+        return candidates.filter { it.startsWith(prefix, ignoreCase = true) ||
+            it.lowercase().startsWith(lower) }.take(3)
     }
 }

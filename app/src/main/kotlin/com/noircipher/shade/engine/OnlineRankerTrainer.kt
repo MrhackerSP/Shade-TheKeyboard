@@ -23,12 +23,34 @@ class OnlineRankerTrainer(context: Context) {
     private val weights = FloatArray(RankingFeatureExtractor.FEATURE_SIZE)
     private var bias = 0f
 
-    /** Multiplier applied to the per-step learning rate (see [setLearningRateMultiplier]). */
+    /**
+     * A multiplier in roughly [0.5, 2.0] that scales the learning rate based
+     * on suggestion acceptance rate. Set by [AcceptanceRateAdapter].
+     * Persisted across sessions so the value survives IME restarts.
+     */
     @Volatile
-    private var learningRateMultiplier: Float = 1.0f
+    private var learningRateMultiplier: Float = prefs.getFloat(LR_MULT_KEY, 1.0f)
+        .coerceIn(MIN_LR_MULT, MAX_LR_MULT)
 
-    /** Cached RNG for exploration (lazily seeded per-call so we don't keep state across config changes). */
-    private val explorationRng = java.util.Random()
+    fun setLearningRateMultiplier(mult: Float) {
+        learningRateMultiplier = mult.coerceIn(MIN_LR_MULT, MAX_LR_MULT)
+        prefs.edit().putFloat(LR_MULT_KEY, learningRateMultiplier).apply()
+    }
+
+    /**
+     * Multi-armed bandit exploration: returns true roughly one in
+     * [EXPLORE_INV] calls so we occasionally surface a less-likely
+     * candidate to learn whether it would have been accepted.
+     *
+     * Implemented as a deterministic PRNG seeded by uptime — no privacy
+     * implications, no persistent state.
+     */
+    fun shouldExplore(): Boolean {
+        // XOR with current thread id + uptime as entropy source.
+        val seed = System.nanoTime() xor Thread.currentThread().id xor 0x2545F4914F6CDD1DL
+        val x = (seed ushr 32).toInt() and 0x7FFFFFFF
+        return (x % EXPLORE_INV) == 0
+    }
 
     init {
         val savedVersion = prefs.getInt(SCHEMA_VERSION_KEY, -1)
@@ -57,26 +79,27 @@ class OnlineRankerTrainer(context: Context) {
     fun adapt(positive: FloatArray, negatives: List<FloatArray>, learningRate: Float = DEFAULT_LR) {
         require(positive.size == weights.size) { "Positive feature size mismatch" }
 
-        val effectiveLr = (learningRate * learningRateMultiplier).coerceIn(MIN_LR, MAX_LR)
+        // Apply the acceptance-rate-driven multiplier to the base learning rate.
+        val effectiveLR = (learningRate * learningRateMultiplier).coerceIn(MIN_LR, MAX_LR)
 
         val posScore = scoreRaw(positive)
         val gradPos = 1f - sigmoid(posScore)
         for (i in weights.indices) {
-            weights[i] = weights[i] * (1f - effectiveLr * L2_LAMBDA) * DECAY_FACTOR +
-                         effectiveLr * gradPos * positive[i]
+            weights[i] = weights[i] * (1f - effectiveLR * L2_LAMBDA) +
+                         effectiveLR * gradPos * positive[i]
         }
-        bias = bias * (1f - effectiveLr * L2_LAMBDA) * DECAY_FACTOR + effectiveLr * gradPos
+        bias = bias * (1f - effectiveLR * L2_LAMBDA) + effectiveLR * gradPos
 
         for (neg in negatives.take(MAX_NEGATIVES)) {
             if (neg.size != weights.size) continue
             val negScore = scoreRaw(neg)
             val gradNeg = -sigmoid(negScore)
             for (i in weights.indices) {
-                weights[i] = weights[i] * (1f - effectiveLr * L2_LAMBDA) * DECAY_FACTOR +
-                             effectiveLr * NEG_WEIGHT * gradNeg * neg[i]
+                weights[i] = weights[i] * (1f - effectiveLR * L2_LAMBDA) +
+                             effectiveLR * NEG_WEIGHT * gradNeg * neg[i]
             }
-            bias = bias * (1f - effectiveLr * L2_LAMBDA) * DECAY_FACTOR +
-                   effectiveLr * NEG_WEIGHT * gradNeg
+            bias = bias * (1f - effectiveLR * L2_LAMBDA) +
+                   effectiveLR * NEG_WEIGHT * gradNeg
         }
         persist()
     }
@@ -107,26 +130,6 @@ class OnlineRankerTrainer(context: Context) {
         }
     }
 
-    /**
-     * Whether the ranker should explore (i.e. surface a non-greedy suggestion
-     * to gather training signal).  ~5% of calls return true.
-     *
-     * The exploration rate is small enough not to annoy the user, but provides
-     * a steady trickle of off-policy feedback so weights don't get stuck.
-     */
-    @Synchronized
-    fun shouldExplore(): Boolean = explorationRng.nextFloat() < EXPLORATION_RATE
-
-    /**
-     * Sets the multiplier applied to the per-step learning rate.
-     * Driven by [AcceptanceRateAdapter] — when the user accepts suggestions
-     * frequently, the multiplier is > 1 so the ranker learns faster; when
-     * the user rarely accepts, it's < 1 so each individual update is small.
-     */
-    fun setLearningRateMultiplier(multiplier: Float) {
-        learningRateMultiplier = multiplier.coerceIn(0.1f, 5.0f)
-    }
-
     @Synchronized
     fun clear() {
         weights.fill(0f)
@@ -139,7 +142,9 @@ class OnlineRankerTrainer(context: Context) {
         private const val TAG = "OnlineRankerTrainer"
         private const val DEFAULT_LR = 0.03f
         private const val MIN_LR = 0.001f
-        private const val MAX_LR = 0.3f
+        private const val MAX_LR = 0.5f
+        private const val MIN_LR_MULT = 0.5f
+        private const val MAX_LR_MULT = 2.0f
         private const val L2_LAMBDA = 1e-4f
         private const val MAX_NEGATIVES = 3
         private const val NEG_WEIGHT = 0.5f
@@ -147,7 +152,7 @@ class OnlineRankerTrainer(context: Context) {
         private const val WEIGHTS_KEY = "weights"
         private const val BIAS_KEY = "bias"
         private const val SCHEMA_VERSION_KEY = "schema_version"
-        private const val DECAY_FACTOR = 0.999f
-        private const val EXPLORATION_RATE = 0.05f
+        private const val LR_MULT_KEY = "lr_multiplier"
+        private const val EXPLORE_INV = 20  // ~5% exploration rate
     }
 }

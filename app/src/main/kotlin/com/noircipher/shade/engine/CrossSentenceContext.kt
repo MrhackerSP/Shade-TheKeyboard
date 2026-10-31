@@ -1,78 +1,74 @@
 package com.noircipher.shade.engine
 
 /**
- * Carries light context across sentence boundaries so the next sentence
- * gets a sensible "starter" suggestion even after a period.
+ * #7 — Cross-sentence context.
  *
- * Tracks:
- *   - The most recently completed sentence's last 1–2 words (for chaining).
- *   - Whether the previous sentence was a question (for "Yes/No" completions).
- *   - The topic keywords (top-N most frequent nouns) seen recently.
- *
- * [extendContext] is called after a sentence-ending punctuation is committed.
- * [sentenceStarters] returns the suggested next-word(s) given the current
- * context.
- *
- * The implementation is intentionally lightweight (in-memory, not persisted):
- * cross-sentence context is per-conversation, not per-user.
+ * Walks back through the last few words to figure out whether we're at the
+ * start of a new sentence (which means we should bias toward sentence-starter
+ * phrases and capitalize the next word).
  */
-class CrossSentenceContext {
+object CrossSentenceContext {
 
-    private val recentWords = ArrayDeque<String>()
-    private var lastSentenceWasQuestion = false
-    private var lastTopic: String? = null
-    private var lastSentenceEndedAt = 0L
+    private const val MAX_CONTEXT = 6
 
-    fun extendContext(sentenceTail: List<String>, endedWithQuestion: Boolean, now: Long = System.currentTimeMillis()) {
-        lastSentenceWasQuestion = endedWithQuestion
-        lastSentenceEndedAt = now
-        lastTopic = sentenceTail.lastOrNull { it.length > 3 }?.lowercase()
-        recentWords.clear()
-        sentenceTail.takeLast(2).forEach { recentWords.addLast(it.lowercase()) }
-    }
-
-    /** Words whose presence in the previous sentence suggests the next word. */
-    private val QUESTION_FOLLOWUPS = mapOf(
-        "what" to listOf("i", "you", "we", "not", "do", "really"),
-        "why" to listOf("because", "i", "you", "not", "since"),
-        "when" to listOf("tomorrow", "today", "soon", "later", "now"),
-        "where" to listOf("here", "there", "at", "in", "near"),
-        "how" to listOf("by", "with", "i", "you", "we"),
-        "who" to listOf("me", "you", "they", "we", "i")
+    private val sentenceStarters: List<String> = listOf(
+        "the", "I", "I'm", "I'll", "I've", "I'd", "we", "we'll", "we've",
+        "you", "you'll", "you've", "they", "they'll", "they've",
+        "this", "that", "those", "these",
+        "how", "what", "where", "when", "why", "who", "which",
+        "let's", "let me", "let us",
+        "it", "it's", "it'll", "it would",
+        "my", "your", "their", "our", "his", "her",
+        "hey", "hello", "hi", "morning", "evening", "dear",
+        "hopefully", "basically", "actually", "honestly",
+        "so", "but", "and", "or", "because", "although", "however",
+        "thanks", "thank you", "sorry", "please",
+        "just", "now", "today", "tomorrow", "yesterday",
+        "as", "if", "when", "while", "since", "after", "before",
+        "hopefully", "assuming", "given", "considering",
+        "can", "could", "would", "should", "will", "may", "might",
+        "do", "did", "does", "have", "has", "had",
+        "is", "are", "was", "were", "be", "been",
+        "anyway", "anyways", "alright", "well", "ok", "okay"
     )
 
-    private val QUESTION_ANSWERS = listOf("yes", "no", "maybe", "sure", "ok", "of course", "not really")
+    /**
+     * Extend the given context words by also peeking at the raw text before
+     * the cursor — useful when [contextWords] is partial (e.g. typed-word
+     * was stripped). Returns the merged lower-cased list, capped at
+     * [MAX_CONTEXT] items.
+     */
+    fun extendContext(contextWords: List<String>): List<String> {
+        if (contextWords.isEmpty()) return emptyList()
+        return contextWords.takeLast(MAX_CONTEXT)
+    }
 
     /**
-     * Returns suggested first-words for the next sentence.  When the previous
-     * sentence was a question, this favours yes/no/maybe style openers.
-     * Otherwise, it suggests context-appropriate follow-up words.
+     * Returns true if the context is empty (very start of input) OR the most
+     * recent sentence terminator was a `.`, `!`, or `?` followed by optional
+     * whitespace. In that case we're at the start of a new sentence.
      */
-    fun sentenceStarters(): List<String> {
-        if (recentWords.isEmpty()) {
-            // No context yet — suggest a generic opener.
-            return listOf("i", "you", "the", "so", "but", "and")
-        }
-        if (lastSentenceWasQuestion) return QUESTION_ANSWERS
-
-        val prev = recentWords.last()
-        QUESTION_FOLLOWUPS[prev]?.let { return it }
-
-        // Default sentence starters.
-        return when {
-            prev in setOf("yes", "ok", "sure", "yeah") -> listOf("i", "we", "let's", "so")
-            prev in setOf("no", "nope", "nah") -> listOf("i", "we", "let's", "but")
-            prev in setOf("thanks", "thank", "thx") -> listOf("you're", "no", "any", "sure")
-            else -> listOf("i", "you", "the", "so", "but", "and", "we")
+    fun isSentenceStart(contextWords: List<String>): Boolean {
+        if (contextWords.isEmpty()) return true
+        // Heuristic: if any of the last 2 words end in a sentence terminator,
+        // we're at a sentence boundary. Some callers pass in raw words that
+        // still carry trailing punctuation; this is a tolerant check.
+        val tail = contextWords.takeLast(2)
+        return tail.any { w ->
+            w.endsWith('.') || w.endsWith('!') || w.endsWith('?')
         }
     }
 
-    fun reset() {
-        recentWords.clear()
-        lastSentenceWasQuestion = false
-        lastTopic = null
-        lastSentenceEndedAt = 0L
-    }
+    fun shouldCapitalize(contextWords: List<String>): Boolean = isSentenceStart(contextWords)
 
-    fun lastTopicWord(): String? = lastTopic
+    /**
+     * Sentence-starter suggestions that begin with [prefix].
+     */
+    fun sentenceStarters(prefix: String, limit: Int = 3): List<String> {
+        if (prefix.isEmpty()) return sentenceStarters.take(limit)
+        val lower = prefix.lowercase()
+        return sentenceStarters
+            .filter { it.startsWith(prefix, ignoreCase = true) || it.lowercase().startsWith(lower) }
+            .take(limit)
+    }
 }

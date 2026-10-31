@@ -1,52 +1,56 @@
 package com.noircipher.shade.engine
 
 /**
- * Recognises common slang / colloquial tokens that should NOT be autocorrected
- * to a "dictionary" spelling. The list covers informal English used in chat:
- * `gonna`, `wanna`, `cuz`, `tho`, `lol`, etc.
+ * #2 — Slang detector.
  *
- * When [shouldNotAutocorrect] returns `true`, the autocorrect pipeline should
- * treat the typed token as intentional and skip the dictionary correction step.
- *
- * This is purely a stop-list — it does not suggest slang, it only defends it
- * against being "corrected" away.
+ * Common informal words (gonna, wanna, lol, etc.) should NOT be "autocorrected"
+ * to formal English — they're intentional slang. Returning true for one of
+ * these words tells the autocorrect pipeline to leave the user's typing alone.
  */
 object SlangDetector {
 
-    private val SLANG: Set<String> = setOf(
-        // Contractions / informal grammar
-        "gonna", "wanna", "gotta", "lemme", "gimme", "dunno", "kinda", "sorta",
-        "outta", "coulda", "shoulda", "woulda", "musta", "lemme", "gimme",
-        "tryna", "fitna", "boutta", "oughta", "whatcha", "gotcha", "betcha",
-        // Common informal spellings
-        "cuz", "coz", "cause", "tho", "thru", "nite", "lite", "thx", "pls",
-        "plz", "ok", "okay", "k", "kk", "ya", "yea", "yeah", "yep", "yup",
-        "nope", "nah", "nahh", "yolo", "fomo",
-        // Onomatopoeia / laughter
-        "lol", "lmao", "lmfao", "rofl", "haha", "hehe", "hoho", "lolz", "kek",
-        "xd", "lolol", "hahaha", "bwahaha", "muahaha",
-        // Fillers / discourse markers
-        "hmm", "mm", "mmm", "huh", "uh", "um", "uhh", "umm", "ohh", "ahh",
-        "wow", "whoa", "woah", "oy", "oi", "psst", "ahem", "ugh", "meh", "eh",
-        // Internet abbreviations
-        "omg", "wtf", "smh", "tbh", "imo", "imho", "fyi", "icymi", "nvm",
-        "np", "yw", "rn", "ttyl", "brb", "bbl", "bbs", "afk", "idk", "idc",
-        "ikr", "irl", "nsfw", "tba", "tbd", "faq", "aka", "asap", "diy", "fog",
-        // Informal shortened forms
-        "bro", "bruh", "sis", "bestie", "besty", "babe", "hun", "luv", "ya",
-        // Misc
-        "yay", "woo", "yippee", "hooray", "hurrah", "woot", "yeehaw"
+    private val slang = HashSet(
+        listOf(
+            // Contractions-in-progress / informal contractions
+            "gonna", "wanna", "gotta", "kinda", "sorta", "lemme", "gimme",
+            "outta", "coulda", "woulda", "shoulda", "ain't", "y'all", "cuz",
+            "coz", "cus", "cause", "tho", "tho'", "ya", "yea", "yeah", "yep",
+            "nope", "nah", "nope", "uhhuh", "uhh", "uh", "hmm", "hmmm", "mmm",
+            "k", "kk", "ok", "okay", "okie", "okiez", "yo", "yooo",
+            // Internet slang / abbreviations
+            "lol", "lmao", "lmfao", "rofl", "omg", "omfg", "wtf", "stfu",
+            "afk", "brb", "bbl", "bbs", "ttyl", "ttfn", "cya", "cu",
+            "tbh", "imo", "imho", "iykyk", "fomo", "yolo", "smh", "ikr",
+            "rn", "nvm", "ikr", "ngl", "tbvh", "jk", "jkw", "btw",
+            "rn", "fr", "frfr", "hbu", "hby", "wbu", "wby", "wyd",
+            "wya", "y?", "n?", "u", "ur", "ya", "ya'll",
+            // Filler / interjections
+            "ugh", "meh", "bleh", "ughh", "ughhh", "eww", "ew", "ewww",
+            "haha", "hehe", "hihi", "hoho", "mwahaha", "hahaha",
+            "woot", "yay", "woohoo", "woo", "wee",
+            "duh", "obvs", "totes", "obvi", "adorbs", "amaze",
+            "kewl", "k", "kk", "okk", "okiee", "okiezz",
+            "sux", "suck", "sucks", "fail", "epic", "win",
+            // Caps-emphasis variants we shouldn't fight
+            "ok", "okay", "yeah", "yep", "nope", "wow", "hmm",
+            // Common Hinglish / Romanized slang that often trips up dictionaries
+            "acha", "achha", "accha", "theek", "thik", "haan", "nahi", "nahin",
+            "bhai", "yaar", "arre", "arey", "kya", "kyu", "kyun", "matlab"
+        )
     )
 
-    /** True when [typed] is a recognised slang token and should not be autocorrected. */
-    fun shouldNotAutocorrect(typed: String): Boolean {
-        if (typed.isEmpty()) return false
-        val lower = typed.lowercase()
-        // Allow trailing punctuation like "lol!" or "tho,".
-        val stripped = lower.trimEnd { it == '!' || it == '?' || it == '.' || it == ',' || it == ';' }
-        return stripped in SLANG
+    fun shouldNotAutocorrect(word: String): Boolean {
+        if (word.isEmpty()) return false
+        val lower = word.lowercase()
+        if (slang.contains(lower)) return true
+        // Repeated-letter emphasis: "soooo", "nooo", "ahhh", "lollll" — leave alone.
+        if (lower.length >= 4) {
+            val distinct = lower.toSet()
+            if (distinct.size <= 3) {
+                val last = lower.last()
+                if (lower.count { it == last } >= 3) return true
+            }
+        }
+        return false
     }
-
-    /** Number of recognised slang tokens (for tests / sanity checks). */
-    val size: Int get() = SLANG.size
 }

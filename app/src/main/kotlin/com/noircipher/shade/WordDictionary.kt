@@ -300,33 +300,6 @@ class WordDictionary(private val ctx: Context) {
 
     private val adj: Array<BooleanArray> = Array(26) { BooleanArray(26) }
 
-    /** Per-letter list of immediate QWERTY neighbours (left/right/up/down diagonals). */
-    private val qwertyNeighborMap: Map<Char, List<Char>> = buildMap {
-        val rows = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
-        for ((rIdx, row) in rows.withIndex()) {
-            for ((cIdx, ch) in row.withIndex()) {
-                val nb = ArrayList<Char>(8)
-                for (nr in (rIdx - 1)..(rIdx + 1)) {
-                    if (nr !in rows.indices) continue
-                    val otherRow = rows[nr]
-                    // On a staggered keyboard the columns visually shift by ~0.5
-                    // between rows, so widen the column window to ±1.
-                    for (nc in (cIdx - 1)..(cIdx + 1)) {
-                        if (nr == rIdx && nc == cIdx) continue
-                        if (nc !in otherRow.indices) continue
-                        nb.add(otherRow[nc])
-                    }
-                }
-                put(ch, nb)
-            }
-        }
-    }
-
-    /** Returns the QWERTY-neighbour letters for [c] (lowercased).  Empty for non-alpha. */
-    fun qwertyNeighbors(c: Char): List<Char> {
-        return qwertyNeighborMap[c.lowercaseChar()] ?: emptyList()
-    }
-
     init {
         val rows = arrayOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
         for (r1 in rows.indices) for (c1 in rows[r1].indices) {
@@ -365,6 +338,25 @@ class WordDictionary(private val ctx: Context) {
         return d[n][m]
     }
 
+    /**
+     * QWERTY-adjacent keys for a given character.
+     *
+     * A1 — used by [correction] to widen the candidate scan to neighboring
+     * prefix buckets. If the user typed 'v' but meant 'b' or 'f' (typical
+     * QWERTY slips), we still want to find a candidate.
+     */
+    fun qwertyNeighbors(c: String): List<String> {
+        if (c.isEmpty()) return emptyList()
+        val ch = c.lowercase()[0]
+        if (ch !in 'a'..'z') return emptyList()
+        val out = ArrayList<String>(4)
+        for (other in 'a'..'z') {
+            if (other == ch) continue
+            if (adj[ch - 'a'][other - 'a']) out.add(other.toString())
+        }
+        return out
+    }
+
     @Synchronized
     fun correction(word: String, isEnglishLocale: Boolean = true): String? {
         val w = word.lowercase()
@@ -376,13 +368,19 @@ class WordDictionary(private val ctx: Context) {
         if (contains(w)) return null
 
         if (w.length > 20) return null
-        // First try the strict same-first-letter bucket.
-        var candidates: Iterable<String> = prefix1[w.substring(0, 1)] ?: emptyList()
+
+        // A1 — search the typed first-letter's bucket PLUS neighbor buckets.
+        // Neighbor-bucket candidates get a 0.5f penalty so they only win
+        // when the typed bucket yields nothing better.
+        val firstChar = w.substring(0, 1)
+        val ownBucket: List<String> = prefix1[firstChar] ?: emptyList()
+        val neighborBuckets = qwertyNeighbors(firstChar).mapNotNull { prefix1[it] }
 
         var best: String? = null
         var bestScore = -1000f
         val d = Array(24) { FloatArray(24) }
-        for (cand in candidates) {
+
+        for (cand in ownBucket) {
             if (cand.length !in (w.length - 1)..(w.length + 1)) continue
             val freq = words[cand] ?: continue
             if (!within1(w, cand)) continue
@@ -392,27 +390,18 @@ class WordDictionary(private val ctx: Context) {
                 bestScore = score
             }
         }
-
-        // If no candidate matched the strict-prefix filter, relax the filter
-        // and also try QWERTY-neighbour first letters (e.g. "teh" → "the",
-        // "rirht" → "right").  This catches common fat-finger typos on the
-        // very first key of the word, which the strict-prefix bucket misses.
-        if (best == null && w.isNotEmpty()) {
-            for (neighbour in qwertyNeighbors(w[0])) {
-                val neighbourBucket: Iterable<String> = prefix1[neighbour.toString()] ?: continue
-                for (cand in neighbourBucket) {
-                    if (cand.length !in (w.length - 1)..(w.length + 1)) continue
-                    val freq = words[cand] ?: continue
-                    if (!within1(w.drop(1), cand.drop(1)) && !within1(w, cand)) continue
-                    val score = kotlin.math.ln(freq.toDouble()).toFloat() - 4f * editCost(w, cand, d)
-                    if (score > bestScore) {
-                        best = cand
-                        bestScore = score
-                    }
+        for (bucket in neighborBuckets) {
+            for (cand in bucket) {
+                if (cand.length !in (w.length - 1)..(w.length + 1)) continue
+                val freq = words[cand] ?: continue
+                if (!within1(w, cand)) continue
+                val score = kotlin.math.ln(freq.toDouble()).toFloat() - 3f * editCost(w, cand, d) - 0.5f
+                if (score > bestScore) {
+                    best = cand
+                    bestScore = score
                 }
             }
         }
-
         return best?.let { match(word, it, isEnglishLocale) }
     }
 
@@ -436,12 +425,9 @@ class WordDictionary(private val ctx: Context) {
     }
 
     private fun match(typed: String, w: String, isEnglishLocale: Boolean = true): String {
-        // The i → I autocorrect is English-locale-specific.  In other locales
-        // (e.g. Hindi, Italian) "i" is a perfectly valid lowercase word and
-        // should not be autocorrected.
-        if (isEnglishLocale && (w == "i" || w.startsWith("i'"))) {
-            return "I" + w.substring(1)
-        }
+        // A2 — gate the i→I capitalization on English locale. Other locales
+        // (Romanized Hindi, Hinglish) treat standalone 'i' as a real word.
+        if (isEnglishLocale && (w == "i" || w.startsWith("i'"))) return "I" + w.substring(1)
         return when {
             typed.length > 1 && typed.all { it.isUpperCase() } -> w.uppercase()
             typed[0].isUpperCase() -> w.replaceFirstChar { it.uppercase() }

@@ -47,9 +47,6 @@ class AppContextModel(context: Context) {
         }.orEmpty()
     }
 
-    /** Returns the SHA-256 hash of the currently-active package, or "" if none. */
-    fun currentPackageHash(): String = currentHash
-
     @Synchronized
     fun recordWord(word: String) {
         if (currentHash.isEmpty()) return
@@ -78,17 +75,19 @@ class AppContextModel(context: Context) {
     }
 
     /**
-     * Returns the top-N highest-scoring words for the current package hash.
-     * Used by [com.noircipher.shade.engine.PerAppVocabularySnapshot] to pre-load
-     * an in-memory cache of app-specific vocabulary for fast prefix lookup.
+     * Returns up to [limit] highest-scoring words for the current app whose
+     * lowercase form starts with [prefix] (case-insensitive). Exposed for
+     * per-app vocabulary snapshot lookups.
      */
     @Synchronized
-    fun topWords(limit: Int): List<String> {
+    fun topWordsForCurrentApp(prefix: String, limit: Int): List<String> {
         if (currentHash.isEmpty()) return emptyList()
         val app = apps[currentHash] ?: return emptyList()
-        return app.entries
-            .sortedByDescending { it.value }
-            .take(limit)
+        val p = prefix.trim().lowercase()
+        val src = if (p.isEmpty()) app.entries
+        else app.entries.filter { it.key.startsWith(p) }
+        return src.sortedByDescending { it.value }
+            .take(limit.coerceAtLeast(0))
             .map { it.key }
     }
 

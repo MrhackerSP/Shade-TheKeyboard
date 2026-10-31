@@ -27,27 +27,28 @@ class UserWordMemory(context: Context) {
     }
 
     /**
-     * Returns a snapshot of all known user-word scores as a map of
-     * plaintext-word → score in [0, 1].
+     * Snapshot of all user words with positive scores. Returns a fresh HashMap
+     * copy so callers can iterate without holding the prefs lock.
      *
-     * Used by [com.noircipher.shade.engine.UserVocabularyInjector] to merge
-     * user-learned words into the neural model's predictions.
+     * Returned map: word (lowercased) -> score in [0, 1].
      */
     @Synchronized
     fun snapshot(): Map<String, Float> {
-        val out = HashMap<String, Float>(prefs.all.size)
+        val out = HashMap<String, Float>()
         for ((k, v) in prefs.all) {
             if (v !is Int && v !is Long && v !is Float) continue
-            val word = k.removePrefix("w:")
-            if (word.isEmpty()) continue
-            val raw = when (v) {
+            val value = when (v) {
                 is Int -> v.toFloat()
                 is Long -> v.toFloat()
                 is Float -> v
                 else -> continue
             }
-            if (raw <= 0f) continue
-            out[word] = (raw / 25f).coerceIn(0f, 1f)
+            if (value <= 0) continue
+            // Decode the prefs key — it's stored as "w:<word>" so we just
+            // strip the prefix; no encryption layer on this prefs file.
+            val word = if (k.startsWith("w:")) k.substring(2).lowercase() else k.lowercase()
+            if (word.isEmpty() || word.length > 32) continue
+            out[word] = (value / 25f).coerceIn(0f, 1f)
         }
         return out
     }

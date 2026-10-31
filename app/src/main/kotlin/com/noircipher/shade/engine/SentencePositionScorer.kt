@@ -4,66 +4,52 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Tracks how often suggestions at each sentence position (beginning /
- * middle / end) get accepted vs. shown.
+ * #10 — Sentence-position scorer.
  *
- * The intuition is that users often accept different *kinds* of suggestions
- * at different positions: at the start of a sentence they want a "starter"
- * word, at the end they want a closer, in the middle they want a content
- * word.  This scorer lets the ranker weight position-dependent features.
+ * Tracks acceptance rates by sentence position (start, middle, end) so we
+ * can learn which suggestions work best where. Persists counts in
+ * SharedPreferences so they survive across sessions.
  *
- * Schema: per position bucket (0=beginning, 1=middle, 2=end), an integer
- * `shown` and `accepted` count are stored in a SharedPreferences file.
+ * Position is derived from the trailing context words. If the last word
+ * ends with `.`, `!`, or `?` (or there is no context at all), we're at
+ * START. Otherwise MIDDLE. We don't currently track END explicitly — it's
+ * folded into MIDDLE.
  */
 class SentencePositionScorer(context: Context) {
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("shade_sentence_position", Context.MODE_PRIVATE)
 
-    enum class Position { BEGINNING, MIDDLE, END }
+    enum class Position { START, MIDDLE, END }
 
-    fun classify(composingLength: Int, sentenceProgress: Float): Position {
-        // sentenceProgress is in [0, 1]: how far along the current sentence we are.
+    fun currentPosition(contextWords: List<String>): Position {
+        if (contextWords.isEmpty()) return Position.START
+        val last = contextWords.last()
         return when {
-            composingLength <= 1 && sentenceProgress < 0.15f -> Position.BEGINNING
-            sentenceProgress > 0.85f -> Position.END
+            last.endsWith('.') || last.endsWith('!') || last.endsWith('?') -> Position.START
             else -> Position.MIDDLE
         }
     }
 
-    @Synchronized
-    fun recordShown(position: Position) {
-        val key = shownKey(position)
-        prefs.edit().putInt(key, prefs.getInt(key, 0) + 1).apply()
-    }
-
-    @Synchronized
     fun recordAcceptance(position: Position) {
-        val key = acceptedKey(position)
-        prefs.edit().putInt(key, prefs.getInt(key, 0) + 1).apply()
+        val shown = prefs.getInt(keyShown(position), 0)
+        if (shown == 0) return  // Don't pollute acceptance stats before any shown.
+        val accepted = prefs.getInt(keyAccepted(position), 0) + 1
+        prefs.edit().putInt(keyAccepted(position), accepted).apply()
     }
 
-    /**
-     * Empirical acceptance rate for [position] in [0, 1].  Returns 0.5 when
-     * there is not yet enough data, so the ranker can ignore the feature.
-     */
-    @Synchronized
+    fun recordShown(position: Position) {
+        val shown = prefs.getInt(keyShown(position), 0) + 1
+        prefs.edit().putInt(keyShown(position), shown).apply()
+    }
+
     fun acceptanceRate(position: Position): Float {
-        val shown = prefs.getInt(shownKey(position), 0)
-        val accepted = prefs.getInt(acceptedKey(position), 0)
-        if (shown < MIN_SAMPLES) return 0.5f
-        return (accepted.toFloat() / shown).coerceIn(0f, 1f)
+        val shown = prefs.getInt(keyShown(position), 0)
+        if (shown == 0) return 0f
+        val accepted = prefs.getInt(keyAccepted(position), 0)
+        return (accepted.toFloat() / shown.toFloat()).coerceIn(0f, 1f)
     }
 
-    @Synchronized
-    fun clear() {
-        prefs.edit().clear().apply()
-    }
-
-    private fun shownKey(p: Position) = "p_${p.ordinal}_shown"
-    private fun acceptedKey(p: Position) = "p_${p.ordinal}_accepted"
-
-    companion object {
-        private const val MIN_SAMPLES = 5
-    }
+    private fun keyShown(p: Position) = "shown_${p.name}"
+    private fun keyAccepted(p: Position) = "accepted_${p.name}"
 }

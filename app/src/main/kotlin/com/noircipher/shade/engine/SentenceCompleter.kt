@@ -1,100 +1,141 @@
 package com.noircipher.shade.engine
 
 /**
- * Multi-token sentence completion templates triggered by a partial phrase.
+ * #21 — Sentence completer.
  *
- * Examples:
- *   "How are you"            → "doing today?"
- *   "I'll be there"          → "in 20 minutes"
- *   "Let me know"            → "if you need anything"
- *   "Talk to you"            → "soon"
+ * Suggests multi-word sentence completions when the user has typed a
+ * recognizable sentence-starter. For example:
+ *   "how are you" → "doing today?" / "doing?"
+ *   "i'll be there" → "in 20 minutes" / "soon"
  *
- * The matcher is a simple case-insensitive suffix check: the candidate is
- * returned when [typed] (lowercased, trimmed) ends with the trigger phrase.
+ * Completions are templates, not literal commits — callers should treat
+ * them as one-tap inserts that replace the trailing word(s) the user
+ * already typed.
  */
 object SentenceCompleter {
 
-    private data class Template(val trigger: String, val completion: String)
+    private data class Template(
+        val trigger: List<String>,
+        val completions: List<String>
+    )
 
-    private val TEMPLATES: List<Template> = listOf(
-        Template("how are you", "doing today?"),
-        Template("how are you doing", "today?"),
-        Template("how have you been", "lately?"),
-        Template("what's up", "with you?"),
-        Template("what are you doing", "this weekend?"),
-        Template("i'll be there", "in 20 minutes"),
-        Template("i'll be there", "soon"),
-        Template("i'll be right", "back"),
-        Template("i'm on my", "way"),
-        Template("i'm looking forward", "to it"),
-        Template("i'm sorry", "to hear that"),
-        Template("i'm sorry", "about that"),
-        Template("let me know", "if you need anything"),
-        Template("let me know", "what you think"),
-        Template("let me know", "when you're free"),
-        Template("let me know", "if that works"),
-        Template("feel free", "to reach out"),
-        Template("feel free", "to ask"),
-        Template("feel free", "to let me know"),
-        Template("talk to you", "soon"),
-        Template("talk to you", "later"),
-        Template("get back", "to me"),
-        Template("get back", "to you"),
-        Template("can we", "reschedule?"),
-        Template("can we", "meet up?"),
-        Template("can you", "send me the details?"),
-        Template("could you", "let me know?"),
-        Template("would you", "mind helping?"),
-        Template("would you", "like to join?"),
-        Template("do you", "want to grab coffee?"),
-        Template("do you", "have a minute?"),
-        Template("do you", "have time?"),
-        Template("i hope", "you're doing well"),
-        Template("i hope", "to see you soon"),
-        Template("hope you're", "doing well"),
-        Template("hope to", "see you soon"),
-        Template("have a great", "day"),
-        Template("have a great", "weekend"),
-        Template("have a good", "one"),
-        Template("have a nice", "day"),
-        Template("looking forward", "to seeing you"),
-        Template("looking forward", "to hearing from you"),
-        Template("looking forward", "to it"),
-        Template("just checking", "in"),
-        Template("just wanted", "to check in"),
-        Template("just wanted", "to let you know"),
-        Template("just wanted", "to say"),
-        Template("just a quick", "reminder"),
-        Template("just a quick", "heads up"),
-        Template("thank you", "so much"),
-        Template("thank you", "for your help"),
-        Template("thank you", "for reaching out"),
-        Template("thanks for", "letting me know"),
-        Template("thanks for", "the update"),
-        Template("thanks for", "getting back to me"),
-        Template("i appreciate", "your help"),
-        Template("i appreciate", "it"),
-        Template("glad to", "hear that"),
-        Template("glad to", "see you"),
-        Template("nice to", "meet you"),
-        Template("nice to", "see you"),
-        Template("it was nice", "talking to you"),
-        Template("it was great", "meeting you"),
-        Template("see you", "soon"),
-        Template("see you", "later"),
-        Template("see you", "tomorrow")
+    private val templates: List<Template> = listOf(
+        Template(listOf("how", "are", "you"), listOf(
+            "doing today?", "doing?", "doing", "feeling today?", "been?"
+        )),
+        Template(listOf("how", "have", "you"), listOf(
+            "been?", "been doing?"
+        )),
+        Template(listOf("how", "do", "you"), listOf(
+            "do?", "feel about that?"
+        )),
+        Template(listOf("how's", "it", "going"), listOf(
+            "?", "with you?"
+        )),
+        Template(listOf("what", "are", "you"), listOf(
+            "doing?", "up to?", "doing today?", "doing tomorrow?"
+        )),
+        Template(listOf("what", "do", "you"), listOf(
+            "think?", "mean?", "need?", "want?"
+        )),
+        Template(listOf("what", "time"), listOf(
+            "works for you?", "should we meet?", "is good?"
+        )),
+        Template(listOf("i'll", "be", "there"), listOf(
+            "in 20 minutes", "in a few minutes", "soon", "shortly",
+            "in about 10 minutes", "as soon as I can"
+        )),
+        Template(listOf("i'm", "on", "my"), listOf(
+            "way", "way now", "way there"
+        )),
+        Template(listOf("let", "me", "know"), listOf(
+            "if you need anything", "what you think", "when you're ready",
+            "if that works", "what works"
+        )),
+        Template(listOf("let", "me", "check"), listOf(
+            "and get back to you", "and confirm", "and let you know"
+        )),
+        Template(listOf("i", "hope"), listOf(
+            "you're well", "you're doing well", "this helps", "that works"
+        )),
+        Template(listOf("hope"), listOf(
+            "you're well", "you're doing well", "this helps", "that works",
+            "you had a good weekend"
+        )),
+        Template(listOf("sorry"), listOf(
+            "for the delay", "I missed this", "about that", "for the inconvenience"
+        )),
+        Template(listOf("thanks"), listOf(
+            "for letting me know", "for the heads up", "for your help",
+            "for getting back to me", "for the update", "in advance"
+        )),
+        Template(listOf("thank", "you"), listOf(
+            "so much", "for your help", "for letting me know",
+            "for getting back to me", "for the update"
+        )),
+        Template(listOf("just", "wanted", "to"), listOf(
+            "let you know", "check in", "follow up", "confirm", "say hi"
+        )),
+        Template(listOf("just", "checking"), listOf(
+            "in", "to see how you're doing", "on this", "if you got this"
+        )),
+        Template(listOf("feel", "free", "to"), listOf(
+            "reach out", "let me know", "ask", "reply", "call me"
+        )),
+        Template(listOf("please", "let", "me"), listOf(
+            "know", "know if you have questions", "know what works"
+        )),
+        Template(listOf("looking", "forward", "to"), listOf(
+            "hearing from you", "seeing you", "meeting you", "talking to you"
+        )),
+        Template(listOf("talk", "to", "you"), listOf(
+            "soon", "later", "tomorrow"
+        )),
+        Template(listOf("see", "you"), listOf(
+            "soon", "later", "tomorrow", "then"
+        )),
+        Template(listOf("have", "a", "good"), listOf(
+            "one", "day", "weekend", "week", "evening"
+        )),
+        Template(listOf("have", "a", "great"), listOf(
+            "day", "weekend", "week"
+        )),
+        Template(listOf("good", "luck"), listOf(
+            "with everything", "today", "tomorrow", "with that"
+        )),
+        Template(listOf("congratulations"), listOf(
+            "on the new job", "on the new role", "on the launch",
+            "on your engagement", "on your wedding"
+        ))
     )
 
     /**
-     * Returns the completion for [typed], or null when no template matches.
-     * The match is a case-insensitive exact-suffix check on the trimmed input.
+     * @param contextWords lower-cased context words before the cursor.
+     * @param limit max number of completions.
+     * @return matching multi-word completions, or empty.
      */
-    fun complete(typed: String): String? {
-        if (typed.length < 3) return null
-        val lower = typed.lowercase().trim()
-        for (t in TEMPLATES) {
-            if (lower.endsWith(t.trigger)) return t.completion
+    fun suggest(contextWords: List<String>, limit: Int = 3): List<String> {
+        if (contextWords.isEmpty()) return emptyList()
+        val tail = contextWords.takeLast(4)
+        val matches = ArrayList<String>()
+        for (t in templates) {
+            if (matches.size >= limit) break
+            if (endsWith(tail, t.trigger)) {
+                for (c in t.completions) {
+                    if (matches.size >= limit) break
+                    matches.add(c)
+                }
+            }
         }
-        return null
+        return matches
+    }
+
+    private fun endsWith(context: List<String>, trigger: List<String>): Boolean {
+        if (context.size < trigger.size) return false
+        val start = context.size - trigger.size
+        for (i in trigger.indices) {
+            if (!context[start + i].equals(trigger[i], ignoreCase = true)) return false
+        }
+        return true
     }
 }

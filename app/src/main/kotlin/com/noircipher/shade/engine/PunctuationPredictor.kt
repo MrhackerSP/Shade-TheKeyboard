@@ -1,99 +1,69 @@
 package com.noircipher.shade.engine
 
 /**
- * Predicts the most likely next punctuation mark based on the previous token
- * and overall sentence state.
+ * #24 — Punctuation predictor.
  *
- * Examples:
- *   "Hello" → ","
- *   "What"  → "?"
- *   "Thanks" → "."
- *   "Hmm"   → "..."
- *
- * Returns the predicted punctuation character (without a leading space), or
- * null when nothing applies.  The caller is responsible for handling the
- * surrounding whitespace (e.g. collapse the existing trailing space and
- * append the punctuation).
+ * Suggests punctuation to follow the current context — e.g. "Hello" → ",",
+ * "What" → "?". Used as a soft hint by the suggestion bar; callers decide
+ * whether to surface the hint or not.
  */
 object PunctuationPredictor {
 
-    private data class Rule(val token: String, val punctuation: String)
-
-    private val RULES: List<Rule> = listOf(
-        // Greetings → comma
-        Rule("hi", ","),
-        Rule("hello", ","),
-        Rule("hey", ","),
-        Rule("good", ","),
-        Rule("dear", ","),
-        Rule("morning", ","),
-        Rule("evening", ","),
-        Rule("afternoon", ","),
-        Rule("night", ","),
-        // Question words → question mark
-        Rule("what", "?"),
-        Rule("why", "?"),
-        Rule("when", "?"),
-        Rule("where", "?"),
-        Rule("who", "?"),
-        Rule("how", "?"),
-        Rule("which", "?"),
-        Rule("whose", "?"),
-        Rule("whom", "?"),
-        Rule("is", "?"),
-        Rule("are", "?"),
-        Rule("was", "?"),
-        Rule("were", "?"),
-        Rule("do", "?"),
-        Rule("does", "?"),
-        Rule("did", "?"),
-        Rule("can", "?"),
-        Rule("could", "?"),
-        Rule("would", "?"),
-        Rule("should", "?"),
-        Rule("will", "?"),
-        Rule("shall", "?"),
-        Rule("may", "?"),
-        Rule("might", "?"),
-        Rule("have", "?"),
-        Rule("has", "?"),
-        Rule("had", "?"),
-        // Closers → period
-        Rule("thanks", "."),
-        Rule("thank", "."),
-        Rule("appreciate", "."),
-        Rule("great", "."),
-        Rule("perfect", "."),
-        Rule("awesome", "."),
-        Rule("cool", "."),
-        Rule("nice", "."),
-        Rule("ok", "."),
-        Rule("okay", "."),
-        Rule("agreed", "."),
-        Rule("sounds", "."),
-        Rule("got", "."),
-        Rule("bye", "."),
-        Rule("goodbye", "."),
-        Rule("later", "."),
-        // Hesitation → ellipsis
-        Rule("hmm", "..."),
-        Rule("umm", "..."),
-        Rule("uhh", "..."),
-        Rule("well", "..."),
-        Rule("so", "..."),
-        Rule("actually", "...")
+    private val direct: Map<String, String> = mapOf(
+        "hello" to ",",
+        "hi" to ",",
+        "hey" to ",",
+        "dear" to ",",
+        "thanks" to ".",
+        "thank you" to ".",
+        "thankyou" to ".",
+        "ok" to ".",
+        "okay" to ".",
+        "sure" to ".",
+        "yes" to ".",
+        "no" to ".",
+        "yep" to ".",
+        "nope" to ".",
+        "got it" to ".",
+        "gotcha" to ".",
+        "cool" to ".",
+        "great" to ".",
+        "awesome" to ".",
+        "perfect" to ".",
+        "bye" to "!",
+        "goodbye" to "!",
+        "good night" to "!",
+        "goodnight" to "!",
+        "wow" to "!",
+        "yay" to "!",
+        "woohoo" to "!"
     )
 
-    private val BY_TOKEN: Map<String, String> = RULES.associate { it.token to it.punctuation }
+    private val questionStarters: Set<String> = setOf(
+        "what", "whats", "what's", "where", "where's", "when", "when's",
+        "why", "why's", "who", "who's", "how", "how's", "is", "are", "was",
+        "were", "do", "does", "did", "can", "could", "would", "should",
+        "will", "shall", "have", "has", "had", "am", "may", "might", "must",
+        "whose", "which", "whom"
+    )
 
     /**
-     * Returns the predicted punctuation for the [previousToken], or null when
-     * no rule applies.  The token should be lower-cased and stripped of
-     * surrounding whitespace/punctuation before lookup.
+     * @return a punctuation character to follow the last context word,
+     *   or null when no suggestion applies.
      */
-    fun predict(previousToken: String?): String? {
-        if (previousToken == null) return null
-        val key = previousToken.lowercase().trim().trimEnd(',', '.', '?', '!', ';', ':')
-        return BY_TOKEN[key]
+    fun suggestPunctuation(contextWords: List<String>): String? {
+        if (contextWords.isEmpty()) return null
+        val last = contextWords.last().trim().trimEnd('.', ',', '!', '?', ':', ';').lowercase()
+        if (last.isEmpty()) return null
+        // Direct match wins first.
+        direct[last]?.let { return it }
+        // 2-word match (e.g. "good night")
+        if (contextWords.size >= 2) {
+            val two = "${contextWords[contextWords.size - 2].lowercase()} $last"
+            direct[two]?.let { return it }
+        }
+        // Question word → "?"
+        if (questionStarters.contains(last)) return "?"
+        return null
     }
 }

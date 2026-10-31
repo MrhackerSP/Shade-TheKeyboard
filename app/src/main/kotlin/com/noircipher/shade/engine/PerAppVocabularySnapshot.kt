@@ -1,48 +1,50 @@
 package com.noircipher.shade.engine
 
-import android.content.Context
-import android.util.LruCache
-
 /**
- * Pre-loads the top-N words for each app the user types in, so suggestions can
- * be biased toward app-specific vocabulary without paying the cost of a
- * per-keystroke SharedPreferences lookup.
+ * #20 — Per-app vocabulary snapshot.
  *
- * The snapshot is a small in-memory cache keyed by the (SHA-256-hashed)
- * package name.  On a package change, the snapshot is populated from the
- * persisted [AppContextModel] SharedPreferences store.
+ * Wraps an [AppContextModel] to provide fast lookups of the most-frequent
+ * words for the current app, or for a given prefix within the current app.
+ *
+ * Tracks the current app hash so that switching apps triggers a fresh
+ * snapshot fetch. The underlying model handles persistence.
  */
 class PerAppVocabularySnapshot(private val appContextModel: AppContextModel) {
 
-    private val cache = LruCache<String, List<String>>(MAX_APPS)
+    private var currentAppHash: String = ""
 
-    /** Marks [packageHash] as the active app; pre-loads its top words. */
-    fun activate(packageHash: String, topWords: List<String>) {
-        if (packageHash.isEmpty()) return
-        cache.put(packageHash, topWords.distinct().take(MAX_WORDS_PER_APP))
+    fun onEnterApp(appHash: String) {
+        if (appHash == currentAppHash) return
+        currentAppHash = appHash
     }
 
     /**
-     * Returns the top-N words for [packageHash] that start with [prefix], or
-     * an empty list when no snapshot is available.
+     * Top-K words for the current app. We don't keep a materialized list
+     * here — we just iterate the model. The model's internal map is keyed
+     * on the current hash, so we ask it to score a sliding candidate list.
+     *
+     * For simplicity, returns the empty list when no app is active.
      */
-    fun wordsForPrefix(packageHash: String, prefix: String): List<String> {
-        if (packageHash.isEmpty() || prefix.isEmpty()) return emptyList()
-        val snapshot = cache.get(packageHash) ?: return emptyList()
-        val p = prefix.lowercase()
-        return snapshot.filter { it.startsWith(p) }
+    fun topWords(): List<String> {
+        if (currentAppHash.isEmpty()) return emptyList()
+        return appContextModel.topWordsForCurrentApp("", 5)
     }
 
-    /** Returns true when a snapshot for [packageHash] is loaded. */
-    fun hasSnapshot(packageHash: String): Boolean =
-        packageHash.isNotEmpty() && cache.get(packageHash) != null
-
-    fun reset() {
-        cache.evictAll()
+    /**
+     * Returns up to [limit] words for [prefix] that the user has used
+     * frequently in the current app. Returns empty if no app is active.
+     */
+    fun wordsForPrefix(prefix: String, limit: Int = 5): List<String> {
+        if (currentAppHash.isEmpty()) return emptyList()
+        return appContextModel.topWordsForCurrentApp(prefix, limit)
     }
 
-    companion object {
-        private const val MAX_APPS = 8
-        private const val MAX_WORDS_PER_APP = 60
+    /**
+     * Score an individual candidate word in the current app. Used by
+     * callers that already have a candidate list and want to bias it.
+     */
+    fun score(candidate: String): Float {
+        if (currentAppHash.isEmpty()) return 0f
+        return appContextModel.score(candidate)
     }
 }

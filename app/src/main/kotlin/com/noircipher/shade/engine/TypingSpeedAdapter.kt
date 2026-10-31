@@ -1,72 +1,76 @@
 package com.noircipher.shade.engine
 
 import android.os.SystemClock
+import java.util.ArrayDeque
 
 /**
- * Adapts autocorrect aggressiveness to the user's current typing speed.
+ * #19 — Typing speed adapter.
  *
- * Fast typing: the user knows what they want; autocorrect should be
- *   conservative (higher confidence threshold) so it doesn't override
- *   deliberately-typed words.
- * Slow typing: the user is picking letters carefully; typos are more likely,
- *   so autocorrect can be more aggressive (lower threshold).
- *
- * The adapter tracks keystroke timestamps and exposes a multiplier for the
- * autocorrect confidence threshold (e.g. 1.0 = no adjustment, >1.0 = stricter
- * autocorrect, <1.0 = more aggressive).
+ * Tracks keystroke intervals on the main thread (single-threaded, no
+ * synchronization needed). Classifies the user as fast / slow / normal,
+ * and produces a confidence-threshold adjustment: when typing fast (likely
+ * error-prone), raise the autocorrect threshold a little; when typing
+ * deliberately, lower it a little.
  */
-class TypingSpeedAdapter {
+object TypingSpeedAdapter {
 
-    private val recentKeystrokes = LongArray(WINDOW_SIZE)
-    private var nextIndex = 0
-    private var filled = 0
+    private const val WINDOW = 8
+    private const val FAST_INTERVAL_MS = 90L
+    private const val SLOW_INTERVAL_MS = 350L
 
-    /** Called on every keystroke (or composing-text update). */
-    fun onKeystroke(now: Long = SystemClock.elapsedRealtime()) {
-        recentKeystrokes[nextIndex] = now
-        nextIndex = (nextIndex + 1) % WINDOW_SIZE
-        if (filled < WINDOW_SIZE) filled++
+    private val intervals = ArrayDeque<Long>()
+    private var lastKeystrokeNs: Long = 0L
+
+    fun onKeystroke() {
+        val now = SystemClock.uptimeMillis()
+        if (lastKeystrokeNs != 0L) {
+            val delta = now - lastKeystrokeNs
+            if (delta in 1..5000) {
+                intervals.addLast(delta)
+                while (intervals.size > WINDOW) intervals.removeFirst()
+            }
+        }
+        lastKeystrokeNs = now
     }
 
-    /** Median inter-keystroke interval in ms, or 0 when not enough data. */
-    fun medianIntervalMs(): Long {
-        if (filled < 2) return 0L
-        val intervals = ArrayList<Long>(filled - 1)
-        // Walk in insertion order to compute consecutive intervals.
-        val startIdx = (nextIndex - filled + WINDOW_SIZE) % WINDOW_SIZE
-        var prev = recentKeystrokes[startIdx]
-        for (i in 1 until filled) {
-            val idx = (startIdx + i) % WINDOW_SIZE
-            val cur = recentKeystrokes[idx]
-            intervals.add(cur - prev)
-            prev = cur
-        }
-        intervals.sort()
-        return intervals[intervals.size / 2]
+    private fun averageIntervalMs(): Long {
+        if (intervals.isEmpty()) return 0L
+        var sum = 0L
+        for (v in intervals) sum += v
+        return sum / intervals.size
+    }
+
+    fun isFastTyping(): Boolean {
+        val avg = averageIntervalMs()
+        return avg != 0L && avg <= FAST_INTERVAL_MS
+    }
+
+    fun isSlowTyping(): Boolean {
+        val avg = averageIntervalMs()
+        return avg >= SLOW_INTERVAL_MS
     }
 
     /**
-     * Multiplier for the autocorrect confidence threshold.
-     * - Fast typers (< 110ms median) → 1.20 (stricter).
-     * - Normal typers (110-250ms) → 1.00.
-     * - Slow typers (> 250ms) → 0.85 (more aggressive).
+     * Positive = stricter (raise threshold). Negative = more permissive.
+     * Range roughly [-0.05, +0.05].
      */
     fun confidenceThresholdAdjustment(): Float {
-        val median = medianIntervalMs()
-        if (median <= 0L) return 1.0f
+        val avg = averageIntervalMs()
+        if (avg == 0L) return 0f
         return when {
-            median < 110L -> 1.20f
-            median > 250L -> 0.85f
-            else -> 1.0f
-        }.coerceIn(0.7f, 1.3f)
+            avg <= FAST_INTERVAL_MS -> 0.05f   // raise threshold
+            avg >= SLOW_INTERVAL_MS -> -0.05f  // lower threshold
+            else -> {
+                // Linear interpolation in [-0.05, +0.05].
+                val t = (avg - FAST_INTERVAL_MS).toFloat() /
+                    (SLOW_INTERVAL_MS - FAST_INTERVAL_MS).toFloat()
+                (0.05f * (1f - t) - 0.05f * t).coerceIn(-0.05f, 0.05f)
+            }
+        }
     }
 
     fun reset() {
-        nextIndex = 0
-        filled = 0
-    }
-
-    companion object {
-        private const val WINDOW_SIZE = 12
+        intervals.clear()
+        lastKeystrokeNs = 0L
     }
 }
