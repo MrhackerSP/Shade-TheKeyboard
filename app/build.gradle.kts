@@ -14,6 +14,7 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -60,6 +61,11 @@ android {
         buildConfig = true
     }
 
+    // Keep model assets uncompressed so AssetMmap can memory-map them.
+    androidResources {
+        noCompress += listOf("ort", "tflite", "onnx")
+    }
+
     packaging {
         resources {
             excludes += setOf(
@@ -87,6 +93,9 @@ kotlin {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core:1.6.1")
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.appcompat:appcompat:1.8.0")
     implementation("androidx.preference:preference-ktx:1.2.1")

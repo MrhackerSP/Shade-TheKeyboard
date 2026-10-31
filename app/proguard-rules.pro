@@ -18,3 +18,8 @@
 
 # Keep preference XML inflation
 -keep class * extends androidx.preference.Preference { *; }
+# ONNX Runtime / TensorFlow Lite JNI entry points
+-keep class ai.onnxruntime.** { *; }
+-keep class org.tensorflow.lite.** { *; }
+-keepclassmembers class ai.onnxruntime.** { *; }
+-keepclassmembers class org.tensorflow.lite.** { *; }
