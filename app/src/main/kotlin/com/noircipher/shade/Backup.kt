@@ -153,72 +153,68 @@ object Backup {
         false
     }
 
-    fun import(ctx: Context, uri: Uri, passphrase: String): Boolean = try {
-        val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return false
-        // Only encrypted (SHD1) backups are accepted; plaintext JSON is not supported.
-        if (bytes.size < 4 || String(bytes.copyOfRange(0, 4), Charsets.US_ASCII) != MAGIC) return false
-        val text = decrypt(bytes, passphrase) ?: return false
-        val root = JSONObject(text)
-        val version = root.optInt("version", 1)
+    fun import(ctx: Context, uri: Uri, passphrase: String): Boolean {
+        return try {
+            val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return false
+            // Only encrypted (SHD1) backups are accepted; plaintext JSON is not supported.
+            if (bytes.size < 4 || String(bytes.copyOfRange(0, 4), Charsets.US_ASCII) != MAGIC) return false
+            val text = decrypt(bytes, passphrase) ?: return false
+            val root = JSONObject(text)
+            val version = root.optInt("version", 1)
 
-        // Default preference set.
-        val edit = PreferenceManager.getDefaultSharedPreferences(ctx).edit()
-        val p = root.getJSONObject("prefs")
-        for (k in p.keys()) {
-            val o = p.getJSONObject(k)
-            when (o.getString("t")) {
-                "b" -> edit.putBoolean(k, o.getBoolean("v"))
-                "i" -> edit.putInt(k, o.getInt("v"))
-                "l" -> edit.putLong(k, o.getLong("v"))
-                "f" -> edit.putFloat(k, o.getDouble("v").toFloat())
-                "s" -> edit.putString(k, o.getString("v"))
-                "ss" -> {
-                    val a = o.getJSONArray("v")
-                    edit.putStringSet(k, (0 until a.length()).map { a.getString(it) }.toSet())
-                }
-            }
-        }
-        edit.apply()
-
-        // Legacy user_words store.
-        val we = ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE).edit().clear()
-        val words = root.optJSONObject("words")
-        if (words != null) for (w in words.keys()) {
-            // Store as Float so WordDictionary.learn() (which uses Float)
-            // reads them back correctly. Older buggy v1 exports stored Int
-            // — accept those too via toDouble().
-            we.putFloat(w, words.getDouble(w).toFloat())
-        }
-        we.apply()
-
-        // Adaptive-learning stores. Only restored if the backup is v2+ and
-        // includes an `adaptive` block. v1 backups leave the existing
-        // adaptive state untouched.
-        val adaptive = root.optJSONObject("adaptive")
-        if (adaptive != null) {
-            for (file in ADAPTIVE_PREFS_FILES) {
-                val entries = adaptive.optJSONObject(file) ?: continue
-                val sp = ctx.getSharedPreferences(file, Context.MODE_PRIVATE)
-                val e = sp.edit().clear()
-                for (k in entries.keys()) {
-                    val o = entries.getJSONObject(k)
-                    when (o.getString("t")) {
-                        "b" -> e.putBoolean(k, o.getBoolean("v"))
-                        "i" -> e.putInt(k, o.getInt("v"))
-                        "l" -> e.putLong(k, o.getLong("v"))
-                        "f" -> e.putFloat(k, o.getDouble("v").toFloat())
-                        "s" -> e.putString(k, o.getString("v"))
-                        "ss" -> {
-                            val a = o.getJSONArray("v")
-                            e.putStringSet(k, (0 until a.length()).map { a.getString(it) }.toSet())
-                        }
+            // Default preference set.
+            val edit = PreferenceManager.getDefaultSharedPreferences(ctx).edit()
+            val p = root.getJSONObject("prefs")
+            for (k in p.keys()) {
+                val o = p.getJSONObject(k)
+                when (o.getString("t")) {
+                    "b" -> edit.putBoolean(k, o.getBoolean("v"))
+                    "i" -> edit.putInt(k, o.getInt("v"))
+                    "l" -> edit.putLong(k, o.getLong("v"))
+                    "f" -> edit.putFloat(k, o.getDouble("v").toFloat())
+                    "s" -> edit.putString(k, o.getString("v"))
+                    "ss" -> {
+                        val a = o.getJSONArray("v")
+                        edit.putStringSet(k, (0 until a.length()).map { a.getString(it) }.toSet())
                     }
                 }
-                e.apply()
             }
+            edit.apply()
+
+            // Legacy user_words store.
+            val we = ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE).edit().clear()
+            val words = root.optJSONObject("words")
+            if (words != null) for (w in words.keys()) {
+                we.putFloat(w, words.getDouble(w).toFloat())
+            }
+            we.apply()
+
+            // Adaptive-learning stores.
+            val adaptive = root.optJSONObject("adaptive")
+            if (adaptive != null) {
+                for (file in ADAPTIVE_PREFS_FILES) {
+                    val entries = adaptive.optJSONObject(file) ?: continue
+                    val sp = ctx.getSharedPreferences(file, Context.MODE_PRIVATE)
+                    val e = sp.edit().clear()
+                    for (k in entries.keys()) {
+                        val o = entries.getJSONObject(k)
+                        when (o.getString("t")) {
+                            "b" -> e.putBoolean(k, o.getBoolean("v"))
+                            "i" -> e.putInt(k, o.getInt("v"))
+                            "l" -> e.putLong(k, o.getLong("v"))
+                            "f" -> e.putFloat(k, o.getDouble("v").toFloat())
+                            "s" -> e.putString(k, o.getString("v"))
+                            "ss" -> {
+                                val a = o.getJSONArray("v")
+                                e.putStringSet(k, (0 until a.length()).map { a.getString(it) }.toSet())
+                            }
+                        }
+                    }
+                    e.apply()
+                }
+            }
+            true
+        } catch (_: Exception) {
+            false
         }
-        true
-    } catch (_: Exception) {
-        false
     }
-}

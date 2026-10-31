@@ -51,6 +51,7 @@ import com.noircipher.shade.analytics.TypingStatsStore
 import com.noircipher.shade.emoji.EmojiPredictionEngine
 import com.noircipher.shade.engine.GrammarEngine
 import com.noircipher.shade.engine.HeuristicSuggestionEngine
+import com.noircipher.shade.engine.CandidateRanker
 import com.noircipher.shade.engine.TfliteCandidateRankingScorer
 import com.noircipher.shade.engine.TfliteContextEncoder
 import com.noircipher.shade.engine.EmojiPredictor

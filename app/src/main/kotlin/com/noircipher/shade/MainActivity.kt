@@ -86,9 +86,11 @@ class MainActivity : AppCompatActivity() {
         val selected: Boolean
         try {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            enabled = imm.enabledInputMethodList.any { it.packageName == packageName }
+            val isEnabled = imm.enabledInputMethodList.any { it.packageName == packageName }
             val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-            selected = current?.startsWith("$packageName/") == true
+            val isSelected = current?.startsWith("$packageName/") == true
+            enabled = isEnabled
+            selected = isSelected
         } catch (_: Exception) {
             enabled = false
             selected = false

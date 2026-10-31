@@ -85,7 +85,7 @@ class AdaptiveWordMemory(context: Context) {
     @Synchronized
     fun score(word: String): Float {
         val entry = values[word.trim().lowercase()] ?: return 0f
-        val days = ((System.currentTimeMillis() - entry.lastUsed) / DAY_MS).coerceAtLeast(0f)
+        val days = ((System.currentTimeMillis() - entry.lastUsed) / DAY_MS.toFloat()).coerceAtLeast(0f)
         val decay = when {
             days < 1f  -> 1.0f
             days < 7f  -> 0.9f
