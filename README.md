@@ -2,6 +2,18 @@
 
 An original, privacy-first Android keyboard written from scratch in Kotlin. (MIT licensed).
 
+## Building a release APK / AAB
+
+See **[RELEASE_GUIDE.md](RELEASE_GUIDE.md)** for step-by-step instructions on
+generating a release keystore and producing a signed, Play-Store-ready build.
+
+Quick start:
+```sh
+cp keystore.properties.example keystore.properties  # then fill in your keystore paths
+./gradlew :app:assembleRelease                       # produces app-release.apk
+./gradlew :app:bundleRelease                         # produces app-release.aab (for Play Store)
+```
+
 ## Features
 **Typing**
 - Layouts: QWERTY, QWERTZ, AZERTY, Dvorak, Colemak, plus a **custom layout** text format

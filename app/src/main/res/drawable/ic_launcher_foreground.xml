@@ -1,0 +1,25 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Original 96dp design translated by +6,+6 to center in the
+         108dp adaptive-icon canvas. The launcher applies its own shape
+         mask (circle / squircle / etc.) on top. -->
+    <group
+        android:translateX="6"
+        android:translateY="6">
+        <!-- Blue circle background (blends with ic_launcher_background) -->
+        <path
+            android:fillColor="#3B6FD4"
+            android:pathData="M48,48m-48,0a48,48 0 1,1 96,0a48,48 0 1,1 -96,0" />
+        <!-- White keyboard body -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M22,32h52a4,4 0 0 1 4,4v24a4,4 0 0 1 -4,4H22a4,4 0 0 1 -4,-4V36a4,4 0 0 1 4,-4z" />
+        <!-- Blue keys -->
+        <path
+            android:fillColor="#3B6FD4"
+            android:pathData="M24,38h6v6h-6zM33,38h6v6h-6zM42,38h6v6h-6zM51,38h6v6h-6zM60,38h6v6h-6zM69,38h3v6h-3zM24,47h6v6h-6zM33,47h6v6h-6zM42,47h6v6h-6zM51,47h6v6h-6zM60,47h12v6H60zM30,56h36v5H30z" />
+    </group>
+</vector>
