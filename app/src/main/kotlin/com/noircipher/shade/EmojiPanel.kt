@@ -5,6 +5,7 @@ import android.graphics.drawable.GradientDrawable
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
@@ -243,9 +244,24 @@ class EmojiPanel(
         }
         // The base (no modifier) first, then the 5 Fitzpatrick variants.
         val variants = listOf(base) + skinTones.map { base + it }
+        // IMPORTANT: the popup must NOT be focusable. A focusable PopupWindow
+        // steals window focus from the IME, which makes the framework restart
+        // the input view (onStartInputView with restarting=true) — that resets
+        // the panel to NONE, hiding the emoji grid and showing the letter
+        // keyboard behind the popup. A non-focusable popup keeps the IME's
+        // focus; child click handlers still fire because the popup window still
+        // receives touches on its own content.
         val popup = PopupWindow(container, ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT, true)
+            ViewGroup.LayoutParams.WRAP_CONTENT, false)
+        popup.isOutsideTouchable = true
+        popup.isFocusable = false
         popup.elevation = dp(6f).toFloat()
+        popup.setTouchInterceptor { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                popup.dismiss()
+                true
+            } else false
+        }
         variants.forEach { variant ->
             val tv = TextView(context).apply {
                 text = variant

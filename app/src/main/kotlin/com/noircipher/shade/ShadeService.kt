@@ -94,7 +94,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private class UndoEntry(
         val charsCommitted: Int,
-        val restore: String
+        val restore: String,
+        // Absolute cursor position right after the commit this entry undoes.
+        // backspace() uses this to skip stale undo entries when the cursor has
+        // since moved elsewhere (prevents deleting the wrong characters).
+        val cursorAtCommit: Int = -1
     )
 
     private data class CorrectionEvent(
@@ -148,6 +152,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var autoShifted = false
     private var lastShiftTime = 0L
     private var lastSpaceTime = 0L
+    // Tracks when the user has explicitly pressed shift to turn OFF auto-caps
+    // (so smart-correction's sentence-end auto-capitalisation does not override
+    // their choice). Cleared when sentence-ending punctuation is committed, so
+    // auto-caps can apply again for the following sentence.
+    private var userShiftOverride = false
     private var justAutoSpaced = false
     private val composing = StringBuilder()
     private var canCompose = true
@@ -222,6 +231,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private val tail = StringBuilder(16)
     private var cursorPos = -1
     private var selectionEnd = -1
+    // Absolute end position of the composing region, as reported by the
+    // framework in onUpdateSelection(). Used by backspace() to detect when the
+    // user has moved the cursor *inside* an active composing word (so we delete
+    // at the cursor instead of always chopping the last composing char and
+    // snapping the cursor to the end).
+    private var composingEnd = -1
     private var tailValid = false
 
     private val serviceJob = SupervisorJob()
@@ -502,10 +517,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         tailValid = false
         cursorPos = -1
         selectionEnd = -1
+        composingEnd = -1
         justAutoSpaced = false
         lastSpaceTime = 0L
         shiftState = 0
         autoShifted = false
+        userShiftOverride = false
         toolbarOpen = prefs.getBoolean("toolbar_open_default", false)
         pendingDeleteWords = 0
         deletePreviewActive = false
@@ -580,6 +597,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         tailValid = false
         cursorPos = -1
         selectionEnd = -1
+        composingEnd = -1
+        userShiftOverride = false
         mode = Mode.LETTERS
         lastAppliedInputType = -1
         pendingDeleteWords = 0
@@ -595,6 +614,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         undoStack.clear()
         tail.setLength(0)
         tailValid = false
+        composingEnd = -1
+        userShiftOverride = false
         pendingDeleteWords = 0
         deletePreviewActive = false
 
@@ -636,6 +657,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             selectionEnd = newSelEnd
             tailValid = false
         }
+        // Track the composing-region end so backspace() can tell whether the
+        // cursor still sits at the end of the composing word or has been moved
+        // elsewhere by the user.
+        composingEnd = candidatesEnd
         if (composing.isNotEmpty() &&
             (candidatesStart == -1 || newSelStart < candidatesStart || newSelStart > candidatesEnd)
         ) {
@@ -1197,7 +1222,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun pushUndo(charsCommitted: Int, restore: String) {
         if (charsCommitted <= 0 && restore.isEmpty()) return
         if (undoStack.size >= MAX_UNDO) undoStack.removeLast()
-        undoStack.offerLast(UndoEntry(charsCommitted, restore))
+        // Record the cursor position the commit is expected to leave the caret
+        // at. backspace() checks this before replaying the undo, so a stale
+        // entry (cursor has since moved elsewhere) is skipped instead of
+        // deleting the wrong characters at the new caret position.
+        val expectedCursor = if (cursorPos >= 0) cursorPos + charsCommitted else -1
+        undoStack.offerLast(UndoEntry(charsCommitted, restore, expectedCursor))
     }
 
     private fun commitSmart(text: String, charsCommitted: Int) {
@@ -1459,7 +1489,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
             val sentenceEnd = smartCorrectionOn && canCompose &&
                 text.length == 1 && text[0].isLowerCase() &&
-                composing.isEmpty() && atSentenceEndBeforeCursor()
+                composing.isEmpty() && atSentenceEndBeforeCursor() &&
+                !userShiftOverride
             if (sentenceEnd) {
                 val upper = text.uppercase()
                 lastCorrectionEvent = null
@@ -1495,7 +1526,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         ic.commitText(" ", 1)
                         appendTail(" ")
                         pushUndo(1, "")
-                        if (c == '.' || c == '!' || c == '?') resetBigramContext()
+                        if (c == '.' || c == '!' || c == '?') {
+                            resetBigramContext()
+                            // A sentence has ended: allow auto-caps to apply
+                            // again for the start of the next sentence, even
+                            // if the user had pressed shift-off for this one.
+                            userShiftOverride = false
+                        }
                     }
                 }
             } finally {
@@ -1586,6 +1623,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun onShift() {
         val now = SystemClock.uptimeMillis()
+        val prev = shiftState
         shiftState = when {
             shiftState == 2 -> 0
             shiftState == 1 && now - lastShiftTime < 350 -> 2
@@ -1595,6 +1633,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         autoShifted = false
         lastShiftTime = now
         kb.shiftState = shiftState
+        // Track explicit user intent for lowercase at an auto-caps position.
+        // When the user turns shift OFF manually we set the override so neither
+        // updateShiftFromCaps() nor the sentenceEnd smart-correction branch
+        // capitalise the next letter over their choice. Turning shift back ON
+        // (single or caps-lock) clears the override.
+        if (shiftState == 0 && prev != 0) userShiftOverride = true
+        else if (shiftState != 0) userShiftOverride = false
     }
 
     private fun backspace() {
@@ -1605,8 +1650,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (tryRevertLastCorrectionEvent()) return
 
         if (undoStack.isNotEmpty() && composing.isEmpty()) {
-            val undo = undoStack.pollLast()
-            if (undo != null) {
+            val undo = undoStack.peekLast()
+            // Only replay the undo if the caret still sits at the position the
+            // original commit left it at. If the user has since moved the caret
+            // elsewhere, the undo entry is stale and replaying it would delete
+            // the wrong characters at the new caret position — fall through to a
+            // plain KEYCODE_DEL at the caret instead. (cursorAtCommit < 0 means
+            // we never recorded a position — accept the undo as before.)
+            val caretMatches = undo == null ||
+                undo.cursorAtCommit < 0 || undo.cursorAtCommit == cursorPos
+            if (undo != null && caretMatches) {
+                undoStack.pollLast()
                 ic.beginBatchEdit()
                 try {
                     if (undo.charsCommitted > 0) {
@@ -1627,10 +1681,23 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
 
         if (composing.isNotEmpty()) {
-            composing.deleteCharAt(composing.length - 1)
-            if (composing.isEmpty()) ic.commitText("", 1)
-            else ic.setComposingText(composing.toString(), 1)
-            popTail(1)
+            // If the user has moved the caret away from the end of the composing
+            // region (e.g. tapped back into the middle of the word being typed),
+            // deleting the last composing char and re-setting composing text would
+            // snap the caret to the end and delete the wrong character. Instead,
+            // finish composing and let a standard KEYCODE_DEL delete at the caret.
+            val cursorAtComposingEnd = composingEnd < 0 || cursorPos < 0 || cursorPos == composingEnd
+            if (cursorAtComposingEnd) {
+                composing.deleteCharAt(composing.length - 1)
+                if (composing.isEmpty()) ic.commitText("", 1)
+                else ic.setComposingText(composing.toString(), 1)
+                popTail(1)
+            } else {
+                ic.finishComposingText()
+                composing.clear()
+                sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+                popTail(1)
+            }
         } else {
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
             popTail(1)
@@ -1661,6 +1728,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     pushUndo(2, "  ")
                     lastSpaceTime = 0L
                     resetBigramContext()
+                    // Double-space produced a sentence end: allow auto-caps for
+                    // the next sentence (mirrors the punctuation branch above).
+                    userShiftOverride = false
                     return
                 }
             }
@@ -1859,7 +1929,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 (ei.inputType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT
             ) {
                 val caps = ic.getCursorCapsMode(ei.inputType)
-                if (caps != 0 && shiftState == 0) { shiftState = 1; autoShifted = true }
+                // Respect an explicit user request for lowercase: if the user
+                // pressed shift to turn auto-caps OFF, don't silently re-arm
+                // shift on the next updateShiftFromCaps() call.
+                if (caps != 0 && shiftState == 0 && !userShiftOverride) { shiftState = 1; autoShifted = true }
                 else if (caps == 0 && autoShifted && shiftState == 1) { shiftState = 0; autoShifted = false }
             }
         }
