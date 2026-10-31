@@ -4,6 +4,8 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
+import android.util.Log
+import com.noircipher.shade.engine.AssetMmap
 import java.nio.IntBuffer
 
 class OnnxNwpPredictor(
@@ -19,15 +21,30 @@ class OnnxNwpPredictor(
             "languages/en/model_nwp_en.onnx"
         )
         var lastError: Exception? = null
-        val modelBytes = candidates.firstNotNullOfOrNull { path ->
+        val modelBytes: ByteArray? = candidates.firstNotNullOfOrNull { path ->
             try {
-                context.assets.open(path).readBytes()
+                AssetMmap.load(context, path).let { buf ->
+                    val arr = ByteArray(buf.remaining())
+                    buf.get(arr)
+                    arr
+                }
             } catch (e: Exception) {
                 lastError = e
                 null
             }
+        } ?: candidates.firstNotNullOfOrNull { path ->
+            try {
+                context.assets.open(path).use { it.readBytes() }
+            } catch (e: Exception) {
+                null
+            }
         } ?: throw (lastError ?: IllegalStateException("No NWP model asset found"))
-        environment.createSession(modelBytes, OrtSession.SessionOptions())
+
+        val opts = OrtSession.SessionOptions().apply {
+            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ORT_ENABLE_ALL)
+            setIntraOpNumThreads(2)
+        }
+        environment.createSession(modelBytes, opts)
     }
 
     private val inputName: String = session.inputNames.firstOrNull()
@@ -66,7 +83,8 @@ class OnnxNwpPredictor(
     override fun close() {
         try {
             session.close()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("OnnxNwpPredictor", "session.close() failed", e)
         }
     }
 }

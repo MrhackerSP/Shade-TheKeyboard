@@ -3,8 +3,6 @@ package com.noircipher.shade.engine
 import android.content.Context
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 class TfliteEmotionScorer(
     context: Context,
@@ -15,7 +13,7 @@ class TfliteEmotionScorer(
     private val labels: List<Pair<String, List<String>>> = try {
         context.assets.open(labelsPath).bufferedReader().useLines { lines ->
             lines.mapNotNull { line ->
-                val parts = line.split('	')
+                val parts = line.split('\t')
                 val label = parts.getOrNull(0) ?: return@mapNotNull null
                 val emojis = parts.getOrNull(1)?.split('|')?.filter { it.isNotEmpty() }.orEmpty()
                 if (emojis.isEmpty()) null else label to emojis
@@ -31,8 +29,8 @@ class TfliteEmotionScorer(
     )
 
     private val interpreter: Interpreter? = try {
-        val bytes = context.assets.open(modelPath).readBytes()
-        Interpreter(ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.nativeOrder()).put(bytes))
+        val modelBuffer = AssetMmap.load(context, modelPath)
+        Interpreter(modelBuffer)
     } catch (_: Exception) { null }
 
     override val isAvailable: Boolean

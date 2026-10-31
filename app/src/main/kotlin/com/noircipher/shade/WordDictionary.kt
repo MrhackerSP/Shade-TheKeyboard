@@ -2,8 +2,16 @@ package com.noircipher.shade
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 /**
  * In-memory dictionary with a prefix index for O(k) suggestions and
@@ -19,6 +27,39 @@ import kotlinx.coroutines.withContext
  * on mid-range devices.
  */
 class WordDictionary(private val ctx: Context) {
+
+    private val keyAlias = "shade_user_words_key"
+
+    private fun secretKey(): SecretKey {
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (ks.getEntry(keyAlias, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        generator.init(
+            KeyGenParameterSpec.Builder(keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setKeySize(256)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .build()
+        )
+        return generator.generateKey()
+    }
+
+    private fun encrypt(plain: String): String? = try {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey())
+        val iv = cipher.iv
+        val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
+        Base64.encodeToString(iv + encrypted, Base64.NO_WRAP)
+    } catch (_: Exception) { null }
+
+    private fun decrypt(stored: String): String? = try {
+        val bytes = Base64.decode(stored, Base64.NO_WRAP)
+        val iv = bytes.copyOfRange(0, 12)
+        val payload = bytes.copyOfRange(12, bytes.size)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, iv))
+        String(cipher.doFinal(payload), Charsets.UTF_8)
+    } catch (_: Exception) { null }
 
     private val words: MutableMap<String, Long> = HashMap()
     private val prefix1: MutableMap<String, MutableList<String>> = HashMap()
@@ -139,14 +180,21 @@ class WordDictionary(private val ctx: Context) {
     }
 
     fun reloadUser() {
-        val m = HashMap<String, Float>()
+        user.clear()
         for ((k, v) in prefs.all) {
-            when (v) {
-                is Float -> m[k] = v
-                is Int -> m[k] = v.toFloat()
+            if (v !is Float && v !is Int && v !is Long) continue
+            val score = when (v) {
+                is Float -> v
+                is Int -> v.toFloat()
+                is Long -> v.toFloat()
+                else -> continue
             }
+            // Decrypt the prefs key to recover the plaintext word; fall back
+            // to plaintext for legacy entries written before encryption.
+            val word = decrypt(k) ?: k
+            if (word.isEmpty() || word.length > 32) continue
+            user[word] = score
         }
-        user = m
         rebuildUserPrefixIndex()
     }
 
@@ -163,7 +211,10 @@ class WordDictionary(private val ctx: Context) {
         val old = user[w] ?: 0f
         val score = old * DECAY + 1f
         user[w] = score
-        prefs.edit().putFloat(w, score).apply()
+        // Encrypt the word before using as prefs key — so plaintext typed words
+        // don't appear in SharedPreferences XML on disk.
+        val encKey = encrypt(w) ?: w  // fall back to plaintext if encryption fails
+        prefs.edit().putFloat(encKey, score).apply()
 
         if (w.isNotEmpty()) {
             val k1 = w.substring(0, 1)
@@ -249,6 +300,33 @@ class WordDictionary(private val ctx: Context) {
 
     private val adj: Array<BooleanArray> = Array(26) { BooleanArray(26) }
 
+    /** Per-letter list of immediate QWERTY neighbours (left/right/up/down diagonals). */
+    private val qwertyNeighborMap: Map<Char, List<Char>> = buildMap {
+        val rows = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+        for ((rIdx, row) in rows.withIndex()) {
+            for ((cIdx, ch) in row.withIndex()) {
+                val nb = ArrayList<Char>(8)
+                for (nr in (rIdx - 1)..(rIdx + 1)) {
+                    if (nr !in rows.indices) continue
+                    val otherRow = rows[nr]
+                    // On a staggered keyboard the columns visually shift by ~0.5
+                    // between rows, so widen the column window to ±1.
+                    for (nc in (cIdx - 1)..(cIdx + 1)) {
+                        if (nr == rIdx && nc == cIdx) continue
+                        if (nc !in otherRow.indices) continue
+                        nb.add(otherRow[nc])
+                    }
+                }
+                put(ch, nb)
+            }
+        }
+    }
+
+    /** Returns the QWERTY-neighbour letters for [c] (lowercased).  Empty for non-alpha. */
+    fun qwertyNeighbors(c: Char): List<Char> {
+        return qwertyNeighborMap[c.lowercaseChar()] ?: emptyList()
+    }
+
     init {
         val rows = arrayOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
         for (r1 in rows.indices) for (c1 in rows[r1].indices) {
@@ -288,17 +366,18 @@ class WordDictionary(private val ctx: Context) {
     }
 
     @Synchronized
-    fun correction(word: String): String? {
+    fun correction(word: String, isEnglishLocale: Boolean = true): String? {
         val w = word.lowercase()
 
-        contractions[w]?.let { return match(word, it) }
+        contractions[w]?.let { return match(word, it, isEnglishLocale) }
 
         if (w.length < 3 || !w.all { isWordChar(it) }) return null
         if (w.any { it.code > 0x24F }) return null
         if (contains(w)) return null
 
         if (w.length > 20) return null
-        val candidates: Iterable<String> = prefix1[w.substring(0, 1)] ?: emptyList()
+        // First try the strict same-first-letter bucket.
+        var candidates: Iterable<String> = prefix1[w.substring(0, 1)] ?: emptyList()
 
         var best: String? = null
         var bestScore = -1000f
@@ -313,7 +392,28 @@ class WordDictionary(private val ctx: Context) {
                 bestScore = score
             }
         }
-        return best?.let { match(word, it) }
+
+        // If no candidate matched the strict-prefix filter, relax the filter
+        // and also try QWERTY-neighbour first letters (e.g. "teh" → "the",
+        // "rirht" → "right").  This catches common fat-finger typos on the
+        // very first key of the word, which the strict-prefix bucket misses.
+        if (best == null && w.isNotEmpty()) {
+            for (neighbour in qwertyNeighbors(w[0])) {
+                val neighbourBucket: Iterable<String> = prefix1[neighbour.toString()] ?: continue
+                for (cand in neighbourBucket) {
+                    if (cand.length !in (w.length - 1)..(w.length + 1)) continue
+                    val freq = words[cand] ?: continue
+                    if (!within1(w.drop(1), cand.drop(1)) && !within1(w, cand)) continue
+                    val score = kotlin.math.ln(freq.toDouble()).toFloat() - 4f * editCost(w, cand, d)
+                    if (score > bestScore) {
+                        best = cand
+                        bestScore = score
+                    }
+                }
+            }
+        }
+
+        return best?.let { match(word, it, isEnglishLocale) }
     }
 
     private fun within1(a: String, b: String): Boolean {
@@ -335,8 +435,13 @@ class WordDictionary(private val ctx: Context) {
         return s.substring(i) == l.substring(i + 1)
     }
 
-    private fun match(typed: String, w: String): String {
-        if (w == "i" || w.startsWith("i'")) return "I" + w.substring(1)
+    private fun match(typed: String, w: String, isEnglishLocale: Boolean = true): String {
+        // The i → I autocorrect is English-locale-specific.  In other locales
+        // (e.g. Hindi, Italian) "i" is a perfectly valid lowercase word and
+        // should not be autocorrected.
+        if (isEnglishLocale && (w == "i" || w.startsWith("i'"))) {
+            return "I" + w.substring(1)
+        }
         return when {
             typed.length > 1 && typed.all { it.isUpperCase() } -> w.uppercase()
             typed[0].isUpperCase() -> w.replaceFirstChar { it.uppercase() }
@@ -359,8 +464,8 @@ class WordDictionary(private val ctx: Context) {
     suspend fun suggestAsync(prefix: String, max: Int): List<String> =
         withContext(Dispatchers.Default) { suggest(prefix, max) }
 
-    suspend fun correctionAsync(word: String): String? =
-        withContext(Dispatchers.Default) { synchronized(this) { correction(word) } }
+    suspend fun correctionAsync(word: String, isEnglishLocale: Boolean = true): String? =
+        withContext(Dispatchers.Default) { synchronized(this) { correction(word, isEnglishLocale) } }
 
     @Synchronized
     fun exportUser(): Map<String, Float> = HashMap(user)

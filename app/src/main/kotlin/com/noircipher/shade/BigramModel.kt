@@ -1,9 +1,18 @@
 package com.noircipher.shade
 
 import android.content.Context
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import android.util.Log
 import org.json.JSONObject
 import java.io.File
+import java.security.KeyStore
 import java.util.concurrent.ConcurrentHashMap
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 /**
  * On-device bigram/trigram next-word predictor with decayed counts.
@@ -14,6 +23,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class BigramModel(private val ctx: Context) {
 
+    private val keyAlias = "shade_bigram_key"
+
     private val bigrams = ConcurrentHashMap<String, HashMap<String, Float>>()
     private val trigrams = ConcurrentHashMap<String, HashMap<String, Float>>()
     private val bigramTotals = ConcurrentHashMap<String, Float>()
@@ -21,6 +32,37 @@ class BigramModel(private val ctx: Context) {
 
     private val store = File(ctx.filesDir, "ngram.json")
     private var dirty = false
+
+    private fun secretKey(): SecretKey {
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (ks.getEntry(keyAlias, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        generator.init(
+            KeyGenParameterSpec.Builder(keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setKeySize(256)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .build()
+        )
+        return generator.generateKey()
+    }
+
+    private fun encrypt(plain: String): String? = try {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey())
+        val iv = cipher.iv
+        val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
+        Base64.encodeToString(iv + encrypted, Base64.NO_WRAP)
+    } catch (_: Exception) { null }
+
+    private fun decrypt(stored: String): String? = try {
+        val bytes = Base64.decode(stored, Base64.NO_WRAP)
+        val iv = bytes.copyOfRange(0, 12)
+        val payload = bytes.copyOfRange(12, bytes.size)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, iv))
+        String(cipher.doFinal(payload), Charsets.UTF_8)
+    } catch (_: Exception) { null }
 
     /** Read-only next-word table bundled with the app: word -> best next words, best first. */
     @Volatile private var staticNext: Map<String, Array<String>> = emptyMap()
@@ -127,10 +169,18 @@ class BigramModel(private val ctx: Context) {
             }
             root.put("b", b)
             root.put("t", t)
+            val json = root.toString()
+            val encrypted = encrypt(json)
             val tmp = store.resolveSibling(store.name + ".tmp")
-            tmp.writeText(root.toString())
+            if (encrypted != null) {
+                tmp.writeText(encrypted)
+            } else {
+                // Fall back to plaintext if encryption fails (e.g., key not available)
+                Log.w("BigramModel", "Encryption failed; falling back to plaintext")
+                tmp.writeText(json)
+            }
             if (!tmp.renameTo(store)) {
-                store.writeText(root.toString())
+                store.writeText(if (encrypted != null) encrypted else json)
             }
             dirty = false
         } catch (_: Exception) {}
@@ -165,7 +215,9 @@ class BigramModel(private val ctx: Context) {
     private fun load() {
         if (!store.exists()) return
         try {
-            val root = JSONObject(store.readText())
+            val raw = store.readText() ?: return
+            val json = decrypt(raw) ?: raw  // fall back to plaintext if decrypt fails
+            val root = JSONObject(json)
             root.optJSONObject("b")?.let { b ->
                 for (k in b.keys()) {
                     val o = b.getJSONObject(k)
@@ -194,7 +246,12 @@ class BigramModel(private val ctx: Context) {
                     trigramTotals[k] = total
                 }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w("BigramModel", "Failed to load bigrams; starting fresh", e)
+            // Keep the unreadable file (e.g. Keystore key lost) instead of letting the
+            // next save() overwrite it silently.
+            try { store.renameTo(java.io.File(store.parentFile, store.name + ".bad")) } catch (_: Exception) {}
+        }
     }
 
     fun clear() {

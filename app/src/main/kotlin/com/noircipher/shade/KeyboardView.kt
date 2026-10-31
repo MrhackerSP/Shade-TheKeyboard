@@ -74,7 +74,11 @@ class KeyboardView(context: Context) : View(context) {
     var typingBurstEnabled = false
 
     var bgBitmap: Bitmap? = null
-        set(v) { field = v; invalidate() }
+        set(v) {
+            field?.let { if (!it.isRecycled) it.recycle() }
+            field = v
+            invalidate()
+        }
 
     var trackpadEnabled = true
     private var trackpadActive = false
@@ -82,7 +86,7 @@ class KeyboardView(context: Context) : View(context) {
     private var trackpadStartY = 0f
     private var trackpadLastSentX = 0f
     private var trackpadLastSentY = 0f
-    private val trackpadStep = 22f
+    private val trackpadStep by lazy { dp(7f) }  // ~22 px on xxhdpi, density-aware
 
     private var deleteSlideActive = false
     private var deleteSlideStartX = 0f
@@ -192,6 +196,10 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    private val audioManager by lazy {
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+
     private class Pointer {
         var key: Key? = null
         var downX = 0f
@@ -213,7 +221,7 @@ class KeyboardView(context: Context) : View(context) {
 
     private val pointers = SparseArray<Pointer>()
     private var slidePointerId = -1
-    private val slidePath = ArrayList<FloatArray>()
+    private val slidePath = ArrayDeque<FloatArray>()
 
     private fun obtainPointer(k: Key?, x: Float, y: Float): Pointer {
         val p = pointerPool.pollFirst() ?: Pointer()
@@ -272,6 +280,9 @@ class KeyboardView(context: Context) : View(context) {
             interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener {
                 splitProgress = it.animatedValue as Float
+                // TODO(perf): layoutKeys() runs every frame (~11 passes over ~40 keys).
+                // Acceptable for a one-time user-initiated toggle, but could precompute
+                // start/end layouts and interpolate offsets if this becomes hot.
                 layoutKeys()
                 invalidate()
             }
@@ -289,6 +300,9 @@ class KeyboardView(context: Context) : View(context) {
             interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener {
                 oneHandedProgress = it.animatedValue as Float
+                // TODO(perf): layoutKeys() runs every frame (~11 passes over ~40 keys).
+                // Acceptable for a one-time user-initiated toggle, but could precompute
+                // start/end layouts and interpolate offsets if this becomes hot.
                 layoutKeys()
                 invalidate()
             }
@@ -369,21 +383,38 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun hit(x: Float, y: Float): Key? {
         if (rows.isEmpty()) return null
-        val ri = rows.indices.minByOrNull { i ->
+        // Find the row whose vertical span is closest to y — manual loop, no allocation.
+        var bestRow = -1
+        var bestRowDist = Float.MAX_VALUE
+        for (i in rows.indices) {
             val k = rows[i][0]
-            when {
+            val d = when {
                 y < k.top -> k.top - y
                 y > k.bottom -> y - k.bottom
                 else -> 0f
             }
-        } ?: return null
-        return rows[ri].filter { it.kind != KeyKind.SPACER }.minByOrNull { k ->
-            when {
+            if (d < bestRowDist) {
+                bestRowDist = d
+                bestRow = i
+            }
+        }
+        if (bestRow < 0) return null
+        // Find the key in that row whose horizontal span is closest to x.
+        var bestKey: Key? = null
+        var bestKeyDist = Float.MAX_VALUE
+        for (k in rows[bestRow]) {
+            if (k.kind == KeyKind.SPACER) continue
+            val d = when {
                 x < k.left -> k.left - x
                 x > k.right -> x - k.right
                 else -> 0f
             }
+            if (d < bestKeyDist) {
+                bestKeyDist = d
+                bestKey = k
+            }
         }
+        return bestKey
     }
 
     private fun display(s: String): String {
@@ -529,12 +560,17 @@ class KeyboardView(context: Context) : View(context) {
         outerRadius: Float,
         which: KeyOuterCorner
     ) {
-        val r = floatArrayOf(
-            outerRadius, outerRadius,
-            outerRadius, outerRadius,
-            outerRadius, outerRadius,
-            outerRadius, outerRadius
-        )
+        // 8 radii: [tl_x, tl_y, tr_x, tr_y, br_x, br_y, bl_x, bl_y]
+        val r = FloatArray(8) { radius }
+        when (which) {
+            KeyOuterCorner.BOTTOM_LEFT -> {
+                r[6] = outerRadius; r[7] = outerRadius   // bottom-left
+            }
+            KeyOuterCorner.BOTTOM_RIGHT -> {
+                r[4] = outerRadius; r[5] = outerRadius   // bottom-right
+            }
+            KeyOuterCorner.NONE -> { /* all radius */ }
+        }
         path.reset()
         path.addRoundRect(rect, r, Path.Direction.CW)
         c.drawPath(path, fill)
@@ -751,6 +787,10 @@ class KeyboardView(context: Context) : View(context) {
         previewAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = ShadeMotion.KEY_POPUP_IN_MS
             interpolator = ShadeMotion.FAST_OUT_SLOW_IN
+            // TODO(perf): this animates only previewKey's popup, but calls whole-view
+            // invalidate(). Could use a dirty rect = previewKey.invalidateRect expanded
+            // upward by ~80 dp (popup bubble extends above the key). Skipped for now
+            // — animators are short (40–180 ms) and SurfaceFlinger handles dirty tracking.
             addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             start()
         }
@@ -1073,7 +1113,7 @@ class KeyboardView(context: Context) : View(context) {
 
             slidePointerId = id
             slidePath.clear()
-            slidePath.add(floatArrayOf(x, y))
+            slidePath.addLast(floatArrayOf(x, y))
         }
         feedback(k)
         onKeyBurst()
@@ -1107,6 +1147,9 @@ class KeyboardView(context: Context) : View(context) {
         shiftTapAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = ShadeMotion.KEY_POPUP_IN_MS
             interpolator = ShadeMotion.FAST_OUT_SLOW_IN
+            // TODO(perf): shiftTapProgress only affects the shift key's drawing; the
+            // whole-view invalidate() here could be replaced with a dirty rect covering
+            // the shift key's invalidateRect. Skipped for now — animator is short.
             addUpdateListener {
                 shiftTapProgress = it.animatedValue as Float
                 invalidate()
@@ -1181,8 +1224,8 @@ class KeyboardView(context: Context) : View(context) {
         val p = pointers.get(id) ?: return
         val k = p.key ?: return
         if (id == slidePointerId && k.kind == KeyKind.CHAR) {
-            slidePath.add(floatArrayOf(x, y))
-            if (slidePath.size > 240) slidePath.removeAt(0)
+            slidePath.addLast(floatArrayOf(x, y))
+            if (slidePath.size > 240) slidePath.removeFirst()
         }
         if (altShown) {
             p.lastX = x
@@ -1197,6 +1240,7 @@ class KeyboardView(context: Context) : View(context) {
                 cancelLong(p)
                 hidePreview()
                 p.lastX = x
+            p.lastY = y
                 startTrail(p.downX, p.downY)
             }
             if (p.swiping) {
@@ -1241,7 +1285,7 @@ class KeyboardView(context: Context) : View(context) {
     }
 
 
-    private fun slidePathSpread(path: List<FloatArray>): Float {
+    private fun slidePathSpread(path: Collection<FloatArray>): Float {
         if (path.isEmpty()) return 0f
         var minX = Float.MAX_VALUE
         var maxX = -Float.MAX_VALUE
@@ -1368,7 +1412,7 @@ class KeyboardView(context: Context) : View(context) {
             }
         }
         if (sound) {
-            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val am = audioManager
             am.playSoundEffect(
                 when {
                     k.kind == KeyKind.SPACE -> AudioManager.FX_KEYPRESS_SPACEBAR
@@ -1436,6 +1480,8 @@ class KeyboardView(context: Context) : View(context) {
         altItems = emptyList()
         trailActive = false
         deleteSlideActive = false
+        bgBitmap?.let { if (!it.isRecycled) it.recycle() }
+        bgBitmap = null
     }
 
     fun release() {

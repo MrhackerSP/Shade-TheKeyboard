@@ -2,20 +2,20 @@ package com.noircipher.shade.engine
 
 import android.content.Context
 import org.tensorflow.lite.Interpreter
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
+/**
+ * Encodes a word-index into a 96-dim context embedding via TFLite.
+ * Post-fix: model loaded via [AssetMmap] (memory-mapped).
+ */
 class TfliteContextEncoder(
     context: Context,
     modelPath: String = "ranking/context_encoder_hi_xa.tflite"
 ) : ContextEncoder {
 
     private val interpreter: Interpreter = run {
-        val bytes = context.assets.open(modelPath).readBytes()
+        val modelBuffer = AssetMmap.load(context, modelPath)
         Interpreter(
-            ByteBuffer.allocateDirect(bytes.size)
-                .order(ByteOrder.nativeOrder())
-                .put(bytes),
+            modelBuffer,
             Interpreter.Options().apply {
                 numThreads = 2
             }
@@ -44,5 +44,4 @@ class TfliteContextEncoder(
     override fun close() {
         interpreter.close()
     }
-
 }
