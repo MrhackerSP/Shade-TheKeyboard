@@ -38,8 +38,15 @@
     <string name="scr_toolbar_sum">Toolbar keys and clipboard history</string>
     <string name="scr_feedback">Feedback</string>
     <string name="scr_feedback_sum">Vibration, sound, long-press delay, animations</string>
+
+    <!-- IME subtypes -->
+    <string name="subtype_en_US">English (US)</string>
+    <string name="subtype_hi">हिन्दी (Hindi)</string>
+    <string name="subtype_hinglish">Hinglish</string>
     <string name="scr_backup">Backup &amp; restore</string>
     <string name="scr_backup_sum">Export or import settings, learned words, and training data</string>
+    <string name="scr_learning">Adaptive learning</string>
+    <string name="scr_learning_sum">Recency, autocorrect-undo, app context, calibration, online ranker</string>
 
     <!-- Layouts -->
     <string name="pref_layout">Layout</string>
@@ -117,15 +124,46 @@
 
     <!-- Backup -->
     <string name="pref_backup_export">Back up</string>
-    <string name="pref_backup_sum">Saves settings and learned words to a file you choose</string>
+    <string name="pref_backup_sum">Saves settings and learned words to a passphrase-encrypted file you choose</string>
     <string name="pref_backup_import">Restore</string>
     <string name="backup_done">Backup saved</string>
     <string name="restore_done">Restored. Reopen the keyboard to apply.</string>
     <string name="backup_failed">That did not work</string>
+    <string name="backup_not_supported">Not a Shade encrypted backup (.shdbak). Older plain JSON backups are no longer supported.</string>
+    <string name="backup_wrong_passphrase">Wrong passphrase or damaged backup file</string>
+    <string name="backup_pass_title_export">Encrypt backup</string>
+    <string name="backup_pass_title_import">Backup passphrase</string>
+    <string name="backup_pass_warning">Choose a passphrase of at least 8 characters. Keep it safe: without it this backup cannot be restored.</string>
+    <string name="backup_pass_hint">Passphrase</string>
+    <string name="backup_pass_confirm_hint">Confirm passphrase</string>
+    <string name="backup_pass_short">Enter a passphrase of at least 8 characters</string>
+    <string name="backup_pass_mismatch">Passphrases do not match</string>
+
+    <!-- Adaptive learning -->
+    <string name="pref_learning_master">Adaptive learning</string>
+    <string name="pref_learning_master_sum">Allow the keyboard to learn from what you type. Disabled automatically in incognito mode and password fields.</string>
+    <string name="pref_learning_adaptive">Recency-weighted words</string>
+    <string name="pref_learning_adaptive_sum">Recently-typed words surface faster; stale ones fade</string>
+    <string name="pref_learning_appctx">Per-app vocabulary</string>
+    <string name="pref_learning_appctx_sum">Bias suggestions toward what you typically type in each app (package name is hashed)</string>
+    <string name="pref_learning_suppressor">Autocorrect undo</string>
+    <string name="pref_learning_suppressor_sum">Stop repeating an autocorrect you keep reverting</string>
+    <string name="pref_learning_calibrator">Confidence calibration</string>
+    <string name="pref_learning_calibrator_sum">Adjust autocorrect confidence to match your acceptance patterns</string>
+    <string name="pref_learning_ranker">Online ranker training</string>
+    <string name="pref_learning_ranker_sum">Fine-tune the candidate ranker based on which suggestions you accept</string>
+    <string name="pref_learning_clear_all">Clear all adaptive learning data</string>
+    <string name="pref_learning_clear_all_confirm">Delete all adaptive learning data? This includes recency scores, app-context vocabularies, autocorrect suppressions, calibration history, and online-ranker weights.</string>
+    <string name="pref_learning_clear_adaptive">Clear recency-weighted words</string>
+    <string name="pref_learning_clear_appctx">Clear per-app vocabulary</string>
+    <string name="pref_learning_clear_suppressor">Clear autocorrect suppressions</string>
+    <string name="pref_learning_clear_calibrator">Clear calibration history</string>
+    <string name="pref_learning_clear_ranker">Reset ranker weights</string>
+    <string name="pref_learning_cleared">Adaptive learning data cleared</string>
 
     <!-- Training data contribution -->
     <string name="pref_contribute">Contribute anonymized typing data</string>
-    <string name="pref_contribute_sum">On by default. Shade periodically saves your learned words and n-gram counts to a file on this device so future versions can be trained on real typing. No sentences, no clipboard, no personal identifiers. Turn off to stop and delete.</string>
+    <string name="pref_contribute_sum">Shade periodically saves your learned words and n-gram counts to a file on this device so future versions can be trained on real typing. Includes a stable per-install device ID (SHA-256 hash of a random UUID) so exports from the same install can be correlated. No sentences, no clipboard, no email or name. Turn off to stop and delete.</string>
     <string name="pref_export_training">Export training data now</string>
     <string name="pref_export_training_sum">Write your learned words and n-gram counts to a file you choose</string>
     <string name="pref_clear_training">Delete saved training data</string>
@@ -220,6 +258,7 @@
         <item>Undo</item>
         <item>Incognito</item>
         <item>One-handed</item>
+        <item>Voice</item>
         <item>Settings</item>
     </string-array>
     <string-array name="tool_values">
@@ -235,6 +274,7 @@
         <item>undo</item>
         <item>incognito</item>
         <item>onehand</item>
+        <item>voice</item>
         <item>settings</item>
     </string-array>
 
@@ -261,6 +301,10 @@
     <string name="pref_emoji">Emoji &amp; GIFs</string>
     <string name="pref_backup">Backup &amp; restore</string>
     <string name="settings_coming_soon">Coming soon</string>
+    <string name="pref_voice_input">Voice typing</string>
+    <string name="pref_voice_input_sum">Tap the mic to dictate. Audio is processed by Android\'s system speech recognizer (Shade itself never sends audio to any server).</string>
+    <string name="voice_input_unavailable">Voice input unavailable on this device</string>
+    <string name="voice_input_perm_denied">Microphone permission denied. Enable it in Android Settings to use voice typing.</string>
     <string name="pref_neural_predictions">Neural predictions</string>
     <string name="pref_neural_predictions_sum">Use an on-device ONNX model for smarter suggestions</string>
 
@@ -272,4 +316,13 @@
     <string name="typing_stats_title">Typing insights</string>
     <string name="typing_stats_toggle">Enable typing insights</string>
     <string name="typing_stats_clear">Clear typing data</string>
+
+    <!-- Emoji panel -->
+    <string name="emoji_search_hint">Search emoji</string>
+    <string name="emoji_recent">Recent</string>
+    <string name="emoji_no_results">No matching emoji</string>
+
+    <!-- Onboarding -->
+    <string name="try_keyboard">Try the keyboard</string>
+    <string name="set_as_default">Set as default</string>
 </resources>

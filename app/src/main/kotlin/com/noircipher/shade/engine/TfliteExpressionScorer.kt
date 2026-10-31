@@ -3,8 +3,6 @@ package com.noircipher.shade.engine
 import android.content.Context
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 class TfliteExpressionScorer(
     context: Context,
@@ -17,7 +15,7 @@ class TfliteExpressionScorer(
     private val concepts: List<Concept> = try {
         context.assets.open(conceptListPath).bufferedReader().useLines { lines ->
             lines.mapNotNull { line ->
-                val parts = line.split('	')
+                val parts = line.split('\t')
                 val id = parts.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
                 val name = parts.getOrNull(1) ?: return@mapNotNull null
                 val emojis = parts.getOrNull(2)?.split('|')?.filter { it.isNotEmpty() }.orEmpty()
@@ -27,8 +25,8 @@ class TfliteExpressionScorer(
     } catch (_: Exception) { emptyList() }
 
     private val interpreter: Interpreter? = try {
-        val bytes = context.assets.open(modelPath).readBytes()
-        Interpreter(ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.nativeOrder()).put(bytes))
+        val modelBuffer = AssetMmap.load(context, modelPath)
+        Interpreter(modelBuffer)
     } catch (_: Exception) { null }
 
     private val semanticIndex: Int = findOutput("semantic_output")

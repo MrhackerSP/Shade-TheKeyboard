@@ -2,8 +2,23 @@
 <input-method xmlns:android="http://schemas.android.com/apk/res/android"
     android:settingsActivity="com.noircipher.shade.SettingsActivity"
     android:supportsSwitchingToNextInputMethod="true">
+
     <subtype
         android:imeSubtypeLocale="en_US"
         android:imeSubtypeMode="keyboard"
-        android:label="English (US)" />
+        android:label="@string/subtype_en_US"
+        android:isAsciiCapable="true" />
+
+    <subtype
+        android:imeSubtypeLocale="hi"
+        android:imeSubtypeMode="keyboard"
+        android:label="@string/subtype_hi"
+        android:isAsciiCapable="false" />
+
+    <subtype
+        android:imeSubtypeLocale="hi_ZZ"
+        android:imeSubtypeMode="keyboard"
+        android:label="@string/subtype_hinglish"
+        android:isAsciiCapable="true" />
+
 </input-method>

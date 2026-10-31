@@ -63,32 +63,40 @@ class NeuralVocabulary private constructor(
         limit: Int,
         prefix: String? = null
     ): List<Pair<String, Float>> {
-        if (!logits.indices.any()) return emptyList()
-        if (limit <= 0) return emptyList()
+        if (logits.isEmpty() || limit <= 0) return emptyList()
 
         val probabilities = softmax(logits)
         val wantedPrefix = prefix?.lowercase()
-        val candidates = ArrayList<Triple<Int, String, Float>>()
 
-        // Some ONNX models omit the empty placeholder ID 0. When that happens,
-        // shift model output indices by one so class 0 maps to vocabulary ID 1.
         val placeholderOffset = if (
             idToToken.firstOrNull().isNullOrEmpty() &&
             logits.size == idToToken.size - 1
         ) 1 else 0
 
+        val heap = java.util.PriorityQueue<Pair<Float, Int>>(limit + 1) { a, b ->
+            a.first.compareTo(b.first)
+        }
         for (outputId in probabilities.indices) {
             val id = outputId + placeholderOffset
             val token = idToToken.getOrNull(id) ?: continue
             if (isSpecialToken(token)) continue
             if (wantedPrefix != null && !token.startsWith(wantedPrefix)) continue
-            candidates.add(Triple(id, token, probabilities[outputId]))
+            val p = probabilities[outputId]
+            if (heap.size < limit) {
+                heap.offer(p to id)
+            } else if (p > (heap.peek()?.first ?: Float.NEGATIVE_INFINITY)) {
+                heap.poll()
+                heap.offer(p to id)
+            }
         }
 
-        return candidates
-            .sortedByDescending { it.third }
-            .take(limit)
-            .map { it.second to it.third }
+        val out = ArrayList<Pair<String, Float>>(heap.size)
+        for ((_, id) in heap) {
+            val token = idToToken.getOrNull(id) ?: continue
+            out.add(token to probabilities[id - placeholderOffset])
+        }
+        out.sortByDescending { it.second }
+        return out
     }
 
     private fun isSpecialToken(token: String): Boolean =
@@ -119,8 +127,8 @@ class NeuralVocabulary private constructor(
             var sequentialId = 0
 
             text.lineSequence().forEach { line ->
-                if ('	' in line) {
-                    val parts = line.split('	')
+                if ('\t' in line) {
+                    val parts = line.split('\t')
                     val id = parts.getOrNull(0)?.toIntOrNull() ?: sequentialId
                     val token = parts.getOrElse(2) { parts.last() }
                     byId[id] = token
@@ -165,8 +173,8 @@ class NeuralVocabulary private constructor(
                         var sequentialId = 0
 
                         reader.forEachLine { line ->
-                            if ('	' in line) {
-                                val parts = line.split('	')
+                            if ('\t' in line) {
+                                val parts = line.split('\t')
                                 val id = parts.getOrNull(0)?.toIntOrNull() ?: sequentialId
                                 val token = parts.getOrElse(2) { parts.last() }
                                 byId[id] = token

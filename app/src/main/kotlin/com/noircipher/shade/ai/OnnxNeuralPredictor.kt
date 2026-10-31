@@ -5,6 +5,8 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
 import android.content.Context
+import android.util.Log
+import com.noircipher.shade.engine.AssetMmap
 import java.nio.LongBuffer
 
 class OnnxNeuralPredictor(
@@ -24,15 +26,30 @@ class OnnxNeuralPredictor(
             add("neural/model.ort")
         }
         var lastError: Exception? = null
-        val modelBytes = candidates.firstNotNullOfOrNull { path ->
+        val modelBytes: ByteArray? = candidates.firstNotNullOfOrNull { path ->
             try {
-                context.assets.open(path).readBytes()
+                AssetMmap.load(context, path).let { buf ->
+                    val arr = ByteArray(buf.remaining())
+                    buf.get(arr)
+                    arr
+                }
             } catch (e: Exception) {
                 lastError = e
                 null
             }
+        } ?: candidates.firstNotNullOfOrNull { path ->
+            try {
+                context.assets.open(path).use { it.readBytes() }
+            } catch (e: Exception) {
+                null
+            }
         } ?: throw (lastError ?: IllegalStateException("No ONNX model asset found"))
-        environment.createSession(modelBytes, OrtSession.SessionOptions())
+
+        val opts = OrtSession.SessionOptions().apply {
+            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ORT_ENABLE_ALL)
+            setIntraOpNumThreads(2)
+        }
+        environment.createSession(modelBytes, opts)
     }
 
     private val inputName: String = session.inputNames.firstOrNull()
@@ -89,7 +106,8 @@ class OnnxNeuralPredictor(
     override fun close() {
         try {
             session.close()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("OnnxNeuralPredictor", "session.close() failed", e)
         }
     }
 }

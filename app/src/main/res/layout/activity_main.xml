@@ -167,6 +167,18 @@
                 android:padding="14dp"
                 android:textColor="@color/settings_title"
                 android:textColorHint="@color/settings_subtitle" />
+
+            <Button
+                android:id="@+id/btn_try"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_app_button"
+                android:text="@string/try_keyboard"
+                android:textAllCaps="false"
+                android:textColor="#000000"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <Button
