@@ -291,13 +291,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         dict = WordDictionary(this)
         voice = VoiceInputController(this) { text -> commitVoiceText(text) }
-        dict.bigramModel = BigramModel(this)
         clips = ClipboardStore(this)
-        clips.cleanupExpired()
         cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         try { cm.addPrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
 
         val locale = dictIds()
+        // Heavy disk/Keystore work stays off the main thread so the keyboard can
+        // appear immediately; until it finishes the features simply skip the model.
+        scope.launch(Dispatchers.Default) {
+            try { dict.bigramModel = BigramModel(this@ShadeService) } catch (_: Throwable) {}
+            try { clips.cleanupExpired() } catch (_: Throwable) {}
+        }
         scope.launch(Dispatchers.Default) {
             configureLocaleAssets(locale)
         }
@@ -1379,10 +1383,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    private val sensitiveKeyRegex = Regex("""(pass(word)?|pwd|token|secret|api[_-]?key|otp|pin)\s*[:=]""")
+
     private fun isLikelySensitiveText(text: String): Boolean {
         val lower = text.lowercase()
         if (lower.startsWith("http://") || lower.startsWith("https://") || lower.contains("://")) return false
-        if (Regex("""(pass(word)?|pwd|token|secret|api[_-]?key|otp|pin)\s*[:=]""").containsMatchIn(lower)) return true
+        if (sensitiveKeyRegex.containsMatchIn(lower)) return true
         if (!text.contains(" ") && text.length >= 10 && text.any { it.isLetter() } && text.any { it.isDigit() } && text.any { !it.isLetterOrDigit() }) return true
         return false
     }
@@ -2217,6 +2223,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             reloadNeuralEngine(desiredNeuralLocale(emptyList(), locale))
         }
         warmUpNeuralEngines()
+        // Build per-app helper objects now (background) so the first keyboard open
+        // doesn't pay for loading them on the main thread.
+        try { appContextModel; perAppVocabSnapshot } catch (_: Throwable) {}
     }
 
     private fun warmUpNeuralEngines() {

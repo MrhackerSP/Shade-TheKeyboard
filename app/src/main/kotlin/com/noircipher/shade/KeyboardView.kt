@@ -1175,6 +1175,11 @@ class KeyboardView(context: Context) : View(context) {
         if (trackpadActive) return handleTrackpad(e)
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                // Deliver touch events as they arrive instead of batching them to the
+                // next frame - lowers key-press latency (same trick Gboard uses).
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                    try { requestUnbufferedDispatch(e) } catch (_: Throwable) {}
+                }
                 val i = e.actionIndex
                 down(e.getPointerId(i), e.getX(i), e.getY(i))
             }

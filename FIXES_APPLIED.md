@@ -139,7 +139,7 @@ This document lists every fix applied to this build. 50+ fixes across 6 priority
 - Hindi/Hinglish UI translations for settings strings
 - `TypingHeatmapView` still hardcodes QWERTY layout
 - App theme hardcodes black (defeats `Theme.AppCompat.DayNight`)
-- T6/T7/T8/T9 (model retraining work — see lora-termux/ for T7 scaffold)
+- T6/T7/T8/T9 (model retraining work)
 - `ShadeService.kt` god class split (2,300+ lines → multiple coordinators)
 - Full `AccessibilityNodeProvider` for TalkBack (Tier C from the upgrade list)
 
@@ -150,8 +150,8 @@ These are nice-to-haves and don't block shipping.
 ```bash
 unzip Shade-TheKeyboard-FINAL.zip -d Shade-TheKeyboard-FINAL
 cd Shade-TheKeyboard-FINAL
+./gradlew test
 ./gradlew assembleDebug
-./gradlew connectedDebugAndroidTest
 ```
 
 ---
@@ -473,3 +473,43 @@ running the full pipeline.
   0.03f` and just multiplies it by the new multiplier — existing
   callers see no behavior change unless they pass a multiplier.
 
+
+
+---
+
+# Audit follow-up fixes
+
+1. **Learned-word storage rewritten.** The old store used random-IV AES-GCM ciphertext as the
+   SharedPreferences *key*, so every learn() created a new entry (unbounded growth, scores never
+   accumulated, Keystore call on the typing path). Words now live in one Keystore-encrypted file
+   (`user_words.enc`, `EncryptedMapFile`), saved on a background thread with a 2 s debounce. Legacy data
+   is migrated once (`UserWordCodec.fromLegacyEntries`, duplicates collapse to the max score).
+2. **Backup / export fixed.** Backups (schema v3) store plain words inside the passphrase-encrypted file,
+   so they restore on a new phone; v1/v2 backups are decoded when the key is readable and dropped otherwise.
+   `TrainingExport` read ciphertext keys (dropped by its own filter), copied the n-gram file undecrypted,
+   and closed the zip stream while writing the word list, so exports never worked. All three are fixed.
+3. **No plaintext fallback.** `BigramModel` / learned words fail closed when encryption is unavailable.
+   `UserWordMemory` (previously plaintext `w:<word>` prefs) is now encrypted and is cleared by
+   "Clear learned data".
+4. **Honest labels.** The "Contribute anonymized typing data" toggle is now "Keep local learning
+   snapshots", the per-install device ID was removed, and voice typing is disclosed as using the system
+   recognizer (which may use the network). Voice now prefers offline recognition and sets the language.
+5. **Release signing** no longer falls back to the debug keystore; without `keystore.properties` the release
+   build is unsigned.
+6. **16 KB page size:** ONNX Runtime 1.17.3 -> 1.23.2 and TensorFlow Lite 2.16.1 -> LiteRT 1.4.0
+   (`com.google.ai.edge.litert`). Needs an on-device regression test of every model.
+7. **Main-thread work:** `onDestroy()` no longer saves n-grams on the main thread.
+8. **CI:** `ci.yml` + `build.yml` merged into one workflow (tests, lint, debug build); least-privilege token.
+9. **ProGuard:** `Log.w` / `Log.e` are no longer stripped from release builds.
+10. **Tests:** added `UserWordCodecTest` (round trip, legacy migration regression, untrusted input).
+    Removed unused `androidTest` dependencies.
+
+
+## Startup-speed pass
+- SecureStore / ClipboardStore: Keystore key is cached in memory (was looked up on every decrypt).
+- ClipboardStore.load(): parsed clips are cached until the stored data changes (the clipboard chip no longer decrypts every clip each time the keyboard opens).
+- BigramModel loading and clipboard cleanup moved off the main thread (ShadeService.onCreate).
+- Sensitive-text regex compiled once.
+- Added baseline profile + androidx.profileinstaller.
+- KeyboardView: requestUnbufferedDispatch on touch-down (lower key latency).
+- ShadeService: per-app helper objects pre-built in the background.

@@ -37,7 +37,7 @@ class WordDictionary(private val ctx: Context) {
     private val userPrefix1: MutableMap<String, MutableList<String>> = HashMap()
     private val userPrefix2: MutableMap<String, MutableList<String>> = HashMap()
 
-    var bigramModel: BigramModel? = null
+    @Volatile var bigramModel: BigramModel? = null
 
     private val contractions: Map<String, String> = mapOf(
         "dont" to "don't", "cant" to "can't", "wont" to "won't",

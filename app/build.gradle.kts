@@ -14,25 +14,24 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release signing comes ONLY from keystore.properties. Without it the release
+    // build is left unsigned (app-release-unsigned.apk) on purpose: it must never be
+    // silently signed with the debug key and then shipped by mistake.
+    val keystoreProps = rootProject.file("keystore.properties")
+    val hasReleaseKeystore = keystoreProps.exists()
+
     signingConfigs {
-        create("release") {
-            val propsFile = rootProject.file("keystore.properties")
-            if (propsFile.exists()) {
+        if (hasReleaseKeystore) {
+            create("release") {
                 val props = Properties().apply {
-                    propsFile.inputStream().use { load(it) }
+                    keystoreProps.inputStream().use { load(it) }
                 }
                 storeFile = file(props["storeFile"] as String)
                 storePassword = props["storePassword"] as String
                 keyAlias = props["keyAlias"] as String
                 keyPassword = props["keyPassword"] as String
-            } else {
-                storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
-                storePassword = "android"
-                keyAlias = "androiddebugkey"
-                keyPassword = "android"
             }
         }
     }
@@ -45,7 +44,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseKeystore) signingConfig = signingConfigs.getByName("release")
         }
         debug {
             isMinifyEnabled = false
@@ -93,15 +92,13 @@ kotlin {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test:runner:1.6.2")
-    androidTestImplementation("androidx.test:core:1.6.1")
     implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.appcompat:appcompat:1.8.0")
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.asynclayoutinflater:asynclayoutinflater:1.1.0")
     implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.3")
-    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.23.2")
+    implementation("com.google.ai.edge.litert:litert:1.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }

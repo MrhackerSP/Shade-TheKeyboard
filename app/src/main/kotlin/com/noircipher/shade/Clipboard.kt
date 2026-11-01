@@ -63,7 +63,14 @@ class ClipboardStore(private val ctx: Context) {
 
     private fun keyStore(): KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
+    @Volatile private var cachedKey: SecretKey? = null
+
     private fun secretKey(): SecretKey {
+        cachedKey?.let { return it }
+        return loadOrCreateKey().also { cachedKey = it }
+    }
+
+    private fun loadOrCreateKey(): SecretKey {
         val ks = keyStore()
         (ks.getEntry(keyAlias, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
 
@@ -89,6 +96,7 @@ class ClipboardStore(private val ctx: Context) {
             val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
             Base64.encodeToString(iv + encrypted, Base64.NO_WRAP)
         } catch (_: Exception) {
+            cachedKey = null
             null
         }
     }
@@ -102,31 +110,74 @@ class ClipboardStore(private val ctx: Context) {
             cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, iv))
             String(cipher.doFinal(payload), Charsets.UTF_8)
         } catch (_: Exception) {
+            cachedKey = null
             null
         }
     }
 
+    // Decrypting every clip is slow, so the parsed list is reused until the stored
+    // JSON actually changes (this also notices changes made by another instance).
+    private var cachedRaw: String? = null
+    private var cachedClips: List<Clip> = emptyList()
+
     @Synchronized
     fun load(): MutableList<Clip> {
-        val out = ArrayList<Clip>()
         val now = System.currentTimeMillis()
+        val raw = prefs.getString("items", "[]") ?: "[]"
+        val all: List<Clip> = if (raw == cachedRaw) {
+            cachedClips
+        } else {
+            parseHadFallback = false
+            val parsed = parseAll(raw)
+            if (parsed != null) {
+                if (!parseHadFallback) {
+                    cachedRaw = raw
+                    cachedClips = parsed
+                }
+                parsed
+            } else {
+                return ArrayList(parseAllLenient(raw).filter { it.pinned || now - it.time <= UNPINNED_TTL_MS })
+            }
+        }
+        return ArrayList(all.filter { it.pinned || now - it.time <= UNPINNED_TTL_MS })
+    }
+
+    private fun parseAll(raw: String): List<Clip>? = try {
+        parseItems(raw)
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun parseAllLenient(raw: String): List<Clip> {
+        val out = ArrayList<Clip>()
         try {
-            val arr = JSONArray(prefs.getString("items", "[]"))
+            val arr = JSONArray(raw)
             for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                val text = decrypt(o.getString("t")) ?: o.getString("t")
-                val image = o.optString("img").takeIf { it.isNotEmpty() }?.let { decrypt(it) ?: it }
-                val clip = Clip(
-                    text = text,
-                    image = image,
-                    mime = o.optString("mime", if (image != null) "image/*" else "text/plain"),
-                    pinned = o.optBoolean("p"),
-                    time = o.optLong("ts")
-                )
-                if (clip.pinned || now - clip.time <= UNPINNED_TTL_MS) out.add(clip)
+                try { out.add(parseOne(arr.getJSONObject(i))) } catch (_: Exception) { break }
             }
         } catch (_: Exception) {}
         return out
+    }
+
+    private fun parseItems(raw: String): List<Clip> {
+        val arr = JSONArray(raw)
+        val out = ArrayList<Clip>(arr.length())
+        for (i in 0 until arr.length()) out.add(parseOne(arr.getJSONObject(i)))
+        return out
+    }
+
+    private var parseHadFallback = false
+
+    private fun parseOne(o: JSONObject): Clip {
+        val text = decrypt(o.getString("t")) ?: o.getString("t").also { parseHadFallback = true }
+        val image = o.optString("img").takeIf { it.isNotEmpty() }?.let { decrypt(it) ?: it.also { parseHadFallback = true } }
+        return Clip(
+            text = text,
+            image = image,
+            mime = o.optString("mime", if (image != null) "image/*" else "text/plain"),
+            pinned = o.optBoolean("p"),
+            time = o.optLong("ts")
+        )
     }
 
     @Synchronized

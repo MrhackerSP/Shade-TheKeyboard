@@ -24,7 +24,15 @@ object SecureStore {
     private const val IV_SIZE = 12
     private const val TAG_BITS = 128
 
+    // Keystore lookups are slow (can be tens of ms); keep the key handle in memory.
+    private val keyCache = java.util.concurrent.ConcurrentHashMap<String, SecretKey>()
+
     private fun secretKey(alias: String): SecretKey {
+        keyCache[alias]?.let { return it }
+        return loadOrCreateKey(alias).also { keyCache[alias] = it }
+    }
+
+    private fun loadOrCreateKey(alias: String): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (ks.getEntry(alias, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
@@ -44,6 +52,7 @@ object SecureStore {
         val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
         Base64.encodeToString(cipher.iv + encrypted, Base64.NO_WRAP)
     } catch (_: Exception) {
+        keyCache.remove(alias)
         null
     }
 
@@ -61,6 +70,7 @@ object SecureStore {
             String(cipher.doFinal(bytes.copyOfRange(IV_SIZE, bytes.size)), Charsets.UTF_8)
         }
     } catch (_: Exception) {
+        keyCache.remove(alias)
         null
     }
 }
