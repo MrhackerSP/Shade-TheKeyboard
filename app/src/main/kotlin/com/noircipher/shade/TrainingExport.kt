@@ -8,16 +8,15 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.io.OutputStreamWriter
-import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * Exports Shade's locally-learned data in a training-friendly format.
+ * Exports Shade's locally-learned data to a file on this device. NOTHING is uploaded:
+ * the app has no INTERNET permission. The user shares the file manually if they choose to.
  *
  * Two modes:
  *  - exportToUri(): user-initiated, writes to a chosen file via SAF.
@@ -26,10 +25,11 @@ import java.util.zip.ZipOutputStream
  *    since the last export.
  *
  * Only aggregated statistics are exported:
- *  - user_words: word → frequency (from SharedPreferences)
- *  - ngram.json: bigram/trigram counts (from BigramModel)
+ *  - user_words: word → frequency (decrypted from the encrypted store)
+ *  - ngram.json: bigram/trigram counts (decrypted from BigramModel's store)
  *
- * No raw typing history, no sentence reconstruction, no clipboard.
+ * No raw typing history and no clipboard. Note that trigram counts can still hint at
+ * phrases, so treat an export as personal data. No device ID is included.
  */
 object TrainingExport {
 
@@ -89,8 +89,7 @@ object TrainingExport {
     }
 
     fun hasTrainingData(ctx: Context): Boolean {
-        val userPrefs = ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE)
-        if (userPrefs.all.size >= 5) return true
+        if ((WordDictionary.openUserStore(ctx).load()?.size ?: 0) >= 5) return true
         val ngram = File(ctx.filesDir, "ngram.json")
         return ngram.exists() && ngram.length() > 64
     }
@@ -110,7 +109,6 @@ object TrainingExport {
             put("exported_at", System.currentTimeMillis())
             put("locale", prefs.getString("locale", "en") ?: "en")
             put("layout", prefs.getString("layout", "qwerty") ?: "qwerty")
-            put("device_id", deviceHash(ctx))
             put("app_version", BuildConfig.VERSION_NAME)
         }
         zip.putNextEntry(ZipEntry("meta.json"))
@@ -122,38 +120,28 @@ object TrainingExport {
     }
 
     private fun writeUserWords(ctx: Context, zip: ZipOutputStream) {
-        val prefs = ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE)
-        val entries = prefs.all
-            .mapNotNull { (k, v) ->
-                val freq = when (v) {
-                    is Float -> v
-                    is Int -> v.toFloat()
-                    else -> null
-                } ?: return@mapNotNull null
-                if (!k.all { WordDictionary.isWordChar(it) }) return@mapNotNull null
-                if (k.length < 2 || k.length > 32) return@mapNotNull null
-                k to freq
-            }
-            .sortedByDescending { it.second }
+        val entries = WordDictionary.openUserStore(ctx).load().orEmpty()
+            .entries
+            .filter { UserWordCodec.isValidWord(it.key) }
+            .sortedByDescending { it.value }
 
         zip.putNextEntry(ZipEntry("user_words.txt"))
-        OutputStreamWriter(zip, Charsets.UTF_8).use { w ->
-            for ((word, freq) in entries) {
-                w.write(word)
-                w.write("\t")
-                w.write(freq.toString())
-                w.write("\n")
-            }
+        val w = OutputStreamWriter(zip, Charsets.UTF_8)
+        for ((word, freq) in entries) {
+            w.write(word)
+            w.write("\t")
+            w.write(freq.toString())
+            w.write("\n")
         }
+        w.flush() // don't close: that would close the zip stream
         zip.closeEntry()
     }
 
     private fun writeNgram(ctx: Context, zip: ZipOutputStream) {
-        val f = File(ctx.filesDir, "ngram.json")
-        if (!f.exists()) return
-        if (f.length() > 5_000_000L) return
+        val json = BigramModel.readPersistedJson(ctx) ?: return
+        if (json.length > 5_000_000) return
         zip.putNextEntry(ZipEntry("ngram.json"))
-        f.inputStream().use { it.copyTo(zip) }
+        zip.write(json.toByteArray(Charsets.UTF_8))
         zip.closeEntry()
     }
 
@@ -166,17 +154,5 @@ object TrainingExport {
         for (i in MAX_KEPT_EXPORTS until files.size) {
             files[i].delete()
         }
-    }
-
-    private fun deviceHash(ctx: Context): String {
-        val prefs = ctx.getSharedPreferences("export_meta", Context.MODE_PRIVATE)
-        var id = prefs.getString("install_id", null)
-        if (id == null) {
-            id = UUID.randomUUID().toString()
-            prefs.edit().putString("install_id", id).apply()
-        }
-        val md = MessageDigest.getInstance("SHA-256")
-        val digest = md.digest(id.toByteArray())
-        return digest.joinToString("") { "%02x".format(it) }.take(16)
     }
 }

@@ -2,16 +2,8 @@ package com.noircipher.shade
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.security.KeyStore
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 /**
  * In-memory dictionary with a prefix index for O(k) suggestions and
@@ -28,46 +20,20 @@ import javax.crypto.spec.GCMParameterSpec
  */
 class WordDictionary(private val ctx: Context) {
 
-    private val keyAlias = "shade_user_words_key"
-
-    private fun secretKey(): SecretKey {
-        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (ks.getEntry(keyAlias, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        generator.init(
-            KeyGenParameterSpec.Builder(keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                .setKeySize(256)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .build()
-        )
-        return generator.generateKey()
-    }
-
-    private fun encrypt(plain: String): String? = try {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, secretKey())
-        val iv = cipher.iv
-        val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
-        Base64.encodeToString(iv + encrypted, Base64.NO_WRAP)
-    } catch (_: Exception) { null }
-
-    private fun decrypt(stored: String): String? = try {
-        val bytes = Base64.decode(stored, Base64.NO_WRAP)
-        val iv = bytes.copyOfRange(0, 12)
-        val payload = bytes.copyOfRange(12, bytes.size)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, iv))
-        String(cipher.doFinal(payload), Charsets.UTF_8)
-    } catch (_: Exception) { null }
-
     private val words: MutableMap<String, Long> = HashMap()
     private val prefix1: MutableMap<String, MutableList<String>> = HashMap()
     private val prefix2: MutableMap<String, MutableList<String>> = HashMap()
     private var loadedId: String? = null
 
-    private val prefs: SharedPreferences = ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE)
+    // Learned words live in ONE encrypted file (see EncryptedMapFile). The old
+    // SharedPreferences store is only read once, to migrate legacy data.
+    private val userStore = openUserStore(ctx)
+    private val legacyPrefs: SharedPreferences = ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE)
     private var user: MutableMap<String, Float> = HashMap()
+    private var userDirty = false
+    private var userVersion = 0L
+    private var userStamp = -1L
+    private val userSaver = DebouncedSaver(SAVE_DELAY_MS) { flushUser() }
     private val userPrefix1: MutableMap<String, MutableList<String>> = HashMap()
     private val userPrefix2: MutableMap<String, MutableList<String>> = HashMap()
 
@@ -179,23 +145,62 @@ class WordDictionary(private val ctx: Context) {
         for (list in userPrefix2.values) list.sortByDescending { user[it] ?: 0f }
     }
 
+    /**
+     * Re-reads the learned words if the file changed on disk (backup restore,
+     * "clear learned data"). Unsaved in-memory changes always win.
+     */
+    @Synchronized
     fun reloadUser() {
-        user.clear()
-        for ((k, v) in prefs.all) {
-            if (v !is Float && v !is Int && v !is Long) continue
-            val score = when (v) {
-                is Float -> v
-                is Int -> v.toFloat()
-                is Long -> v.toFloat()
-                else -> continue
-            }
-            // Decrypt the prefs key to recover the plaintext word; fall back
-            // to plaintext for legacy entries written before encryption.
-            val word = decrypt(k) ?: k
-            if (word.isEmpty() || word.length > 32) continue
-            user[word] = score
-        }
+        if (userDirty) return
+        val stamp = userStore.stamp()
+        if (stamp == userStamp) return
+        user = userStore.load() ?: migrateLegacyUsers()
+        userStamp = userStore.stamp()
         rebuildUserPrefixIndex()
+    }
+
+    /** One-time import of the old SharedPreferences store (random-IV ciphertext keys). */
+    private fun migrateLegacyUsers(): MutableMap<String, Float> {
+        val all = legacyPrefs.all
+        if (all.isEmpty()) return HashMap()
+        val migrated = UserWordCodec.fromLegacyEntries(all) { key ->
+            SecureStore.decrypt(USER_KEY_ALIAS, key) ?: key
+        }
+        // Only drop the legacy data once the encrypted copy is safely on disk.
+        if (migrated.isEmpty() || userStore.save(migrated)) {
+            legacyPrefs.edit().clear().apply()
+        }
+        return migrated
+    }
+
+    private fun markUserDirty() {
+        userDirty = true
+        userVersion++
+        userSaver.request()
+    }
+
+    /** Writes pending learned words (background thread). Safe to call any time. */
+    fun flushUser() {
+        val snapshot: Map<String, Float>
+        val version: Long
+        synchronized(this) {
+            if (!userDirty) return
+            snapshot = HashMap(user)
+            version = userVersion
+        }
+        if (userStore.save(snapshot)) {
+            synchronized(this) {
+                if (userVersion == version) userDirty = false
+                userStamp = userStore.stamp()
+            }
+        }
+    }
+
+    /** Flushes learned words and n-grams on a background thread; never blocks the caller. */
+    fun shutdown() {
+        userSaver.shutdown()
+        val bm = bigramModel ?: return
+        Thread { try { bm.save() } catch (_: Exception) {} }.apply { isDaemon = true; start() }
     }
 
     @Synchronized
@@ -211,10 +216,8 @@ class WordDictionary(private val ctx: Context) {
         val old = user[w] ?: 0f
         val score = old * DECAY + 1f
         user[w] = score
-        // Encrypt the word before using as prefs key — so plaintext typed words
-        // don't appear in SharedPreferences XML on disk.
-        val encKey = encrypt(w) ?: w  // fall back to plaintext if encryption fails
-        prefs.edit().putFloat(encKey, score).apply()
+        pruneUserWordsIfNeeded()
+        markUserDirty()
 
         if (w.isNotEmpty()) {
             val k1 = w.substring(0, 1)
@@ -227,6 +230,14 @@ class WordDictionary(private val ctx: Context) {
             }
         }
         bigramModel?.observe(prev2, prev1, w)
+    }
+
+    /** Keeps the learned-word list bounded: drops the lowest-scored 10% when it grows too large. */
+    private fun pruneUserWordsIfNeeded() {
+        if (user.size <= MAX_USER_WORDS) return
+        val drop = user.entries.sortedBy { it.value }.take(user.size / 10).map { it.key }
+        for (w in drop) user.remove(w)
+        rebuildUserPrefixIndex()
     }
 
     fun suggest(prefix: String, max: Int): List<String> {
@@ -459,15 +470,18 @@ class WordDictionary(private val ctx: Context) {
     companion object {
         private const val DECAY = 0.99f
         private const val MAX_WORDS = 300000
+        private const val MAX_USER_WORDS = 20000
+        private const val SAVE_DELAY_MS = 2000L
+        private const val USER_FILE = "user_words.enc"
+        const val USER_KEY_ALIAS = "shade_user_words_key"
+
+        fun openUserStore(ctx: Context) = EncryptedMapFile(ctx, USER_FILE, USER_KEY_ALIAS)
 
         /** Letters, apostrophes and combining marks (needed for Hindi vowel signs). */
-        fun isWordChar(c: Char): Boolean {
-            if (c == '\'' || c.isLetter()) return true
-            val t = Character.getType(c)
-            return t == Character.NON_SPACING_MARK.toInt() || t == Character.COMBINING_SPACING_MARK.toInt()
-        }
+        fun isWordChar(c: Char): Boolean = UserWordCodec.isWordChar(c)
 
         fun clearLearned(ctx: Context) {
+            openUserStore(ctx).delete()
             ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE).edit().clear().apply()
         }
     }

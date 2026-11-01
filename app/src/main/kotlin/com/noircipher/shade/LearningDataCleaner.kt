@@ -6,6 +6,7 @@ import com.noircipher.shade.engine.AppContextModel
 import com.noircipher.shade.engine.AutocorrectSuppressor
 import com.noircipher.shade.engine.ConfidenceCalibrator
 import com.noircipher.shade.engine.OnlineRankerTrainer
+import com.noircipher.shade.engine.UserWordMemory
 
 object LearningDataCleaner {
 
@@ -23,6 +24,7 @@ object LearningDataCleaner {
         AutocorrectSuppressor(ctx).clear()
         ConfidenceCalibrator(ctx).clear()
         OnlineRankerTrainer(ctx).clear()
+        UserWordMemory(ctx).clear()
     }
 
     fun clearOne(ctx: Context, prefsFile: String) {

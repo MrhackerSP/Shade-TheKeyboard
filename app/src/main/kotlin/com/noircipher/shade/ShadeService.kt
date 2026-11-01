@@ -305,7 +305,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onDestroy() {
         try { cm.removePrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
-        dict.bigramModel?.save()
+        dict.shutdown() // flushes learned words + n-grams on a background thread
         suggestJob?.cancel()
         suggestDebounceJob?.cancel()
         correctionJob?.cancel()
@@ -677,6 +677,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         if (this::dict.isInitialized) {
             scope.launch(Dispatchers.IO) {
+                try { dict.flushUser() } catch (t: Throwable) { Log.e("ShadeService", "Failed to save learned words", t) }
                 try { dict.bigramModel?.save() } catch (t: Throwable) { Log.e("ShadeService", "Failed to save bigrams", t) }
             }
         }
@@ -1071,6 +1072,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 if (v == null) {
                     Toast.makeText(this, R.string.voice_input_unavailable, Toast.LENGTH_SHORT).show()
                 } else {
+                    v.languageTag = when (dictIds().split(',').firstOrNull()?.trim()?.lowercase()) {
+                        "hi" -> "hi-IN"
+                        "hinglish", "hg" -> "en-IN"
+                        else -> null
+                    }
                     v.start()
                 }
             }

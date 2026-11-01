@@ -18,6 +18,10 @@ import org.json.JSONObject
 /**
  * Backup / restore of settings and learned words as a single JSON file.
  *
+ * Schema v3: learned words are stored as plain words (the whole file is passphrase-
+ * encrypted). v1/v2 stored Keystore ciphertext keys, which only restore on the same device.
+ * N-gram predictions are not part of the backup; they are re-learned quickly.
+ *
  * Schema v2: includes the 5 adaptive-learning SharedPreferences stores
  * (shade_adaptive_words, shade_app_context, shade_autocorrect_suppressor,
  * shade_confidence_calibrator, shade_online_ranker) in addition to the
@@ -34,7 +38,7 @@ import org.json.JSONObject
  */
 object Backup {
 
-    private const val SCHEMA_VERSION = 2
+    private const val SCHEMA_VERSION = 3
 
     /** SharedPreferences files included in the backup. */
     private val ADAPTIVE_PREFS_FILES = LearningDataCleaner.ADAPTIVE_PREFS_FILES
@@ -110,15 +114,11 @@ object Backup {
                 p.put(k, o)
             }
 
+            // Plain words (the file as a whole is passphrase-encrypted), so a backup
+            // restores on a new phone. The on-device store is Keystore-bound and can't move.
             val words = JSONObject()
-            val userWordsPrefs = ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE)
-            for ((w, n) in userWordsPrefs.all) {
-                when (n) {
-                    is Float -> words.put(w, n.toDouble())
-                    is Int -> words.put(w, n.toDouble())
-                    is Long -> words.put(w, n.toDouble())
-                }
-            }
+            val liveWords = WordDictionary.openUserStore(ctx).load().orEmpty()
+            for ((w, n) in liveWords) words.put(w, n.toDouble())
 
             val adaptive = JSONObject()
             for (file in ADAPTIVE_PREFS_FILES) {
@@ -178,13 +178,22 @@ object Backup {
             }
             edit.apply()
 
-            // Legacy user_words store.
-            val we = ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE).edit().clear()
+            // Learned words. v1/v2 backups may hold ciphertext keys from the old store:
+            // decode what this device's key can read, silently drop the rest.
             val words = root.optJSONObject("words")
-            if (words != null) for (w in words.keys()) {
-                we.putFloat(w, words.getDouble(w).toFloat())
+            if (words != null) {
+                val raw = HashMap<String, Float>()
+                for (w in words.keys()) raw[w] = words.getDouble(w).toFloat()
+                val restored = if (version >= 3) {
+                    UserWordCodec.sanitize(raw)
+                } else {
+                    UserWordCodec.fromLegacyEntries(raw) { k ->
+                        SecureStore.decrypt(WordDictionary.USER_KEY_ALIAS, k) ?: k
+                    }
+                }
+                if (!WordDictionary.openUserStore(ctx).save(restored)) return false
+                ctx.getSharedPreferences("user_words", Context.MODE_PRIVATE).edit().clear().apply()
             }
-            we.apply()
 
             // Adaptive-learning stores.
             val adaptive = root.optJSONObject("adaptive")
