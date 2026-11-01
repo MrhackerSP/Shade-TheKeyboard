@@ -1077,7 +1077,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             "emoji" -> transitionToPanel(Panel.EMOJI)
             "voice" -> {
                 if (!prefs.getBoolean("voice_input", true)) return
-                val v = voice
+                val v: VoiceInputController? = voice
                 if (v == null) {
                     Toast.makeText(this, R.string.voice_input_unavailable, Toast.LENGTH_SHORT).show()
                 } else {
@@ -1271,9 +1271,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (active) {
             // Show a toast hint so the user knows what to do
             Toast.makeText(this, R.string.resize_handle_hint, Toast.LENGTH_SHORT).show()
-            // Force the keyboard to be visible so the user sees the live preview
+            // Force the keyboard to be visible so the user sees the live preview.
+            // InputMethodService.getWindow() returns the Dialog hosting the IME;
+            // its Window's attributes carry the token the system needs.
+            val imeWindow = window?.window
+            val token = imeWindow?.attributes?.token
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.showSoftInputFromInputMethod(window?.attributes?.token, 0)
+            if (token != null && imm != null) {
+                imm.showSoftInputFromInputMethod(token, 0)
+            } else {
+                // Fallback: request show via the input connection
+                showWindow(true)
+            }
         }
     }
     private var resizeModeActive = false
