@@ -945,15 +945,22 @@ class KeyboardView(context: Context) : View(context) {
         val cell = min(dp(52f), (width - dp(8f)) / altCols)
         val pw = cell * altCols
         val ph = cell * altRows
-        val leftMode = k.centerX < width / 2f
-        val origin = (if (leftMode) k.left else k.right - pw)
+
+        // Center the accent popup on the pressed key (like Gboard/SwiftKey),
+        // then clamp so it doesn't go off-screen. Previously this opened from
+        // the key's left/right edge depending on which screen half the key
+        // was in, which made it appear "somewhere left" of the key.
+        val keyCenter = k.centerX
+        val origin = (keyCenter - pw / 2f)
             .coerceIn(0f, maxOf(0f, (width - pw).toFloat()))
 
-        altItems = if (leftMode) chars else chars.reversed()
+        altItems = chars
         altOriginX = origin
         altCell = cell
         altTop = (k.top - dp(6f) - ph).coerceAtLeast(dp(2f))
         altShown = true
+        // Map the initial touch position to the accent grid, using the
+        // centered origin so the selection follows the finger correctly.
         val startCol = ((p.lastX - origin) / cell).toInt().coerceIn(0, altCols - 1)
         val startRow = ((p.lastY - altTop) / cell).toInt().coerceIn(0, altRows - 1)
         altSel = (startRow * altCols + startCol).coerceIn(0, n - 1)

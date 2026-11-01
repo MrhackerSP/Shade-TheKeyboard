@@ -79,6 +79,7 @@
             android:defaultValue="true"
             android:key="popup_preview"
             android:title="@string/pref_popup"
+            android:summary="@string/pref_popup_sum"
             app:iconSpaceReserved="false" />
         <ListPreference
             android:defaultValue="off"
@@ -96,6 +97,15 @@
             android:title="@string/pref_split"
             app:iconSpaceReserved="false"
             app:useSimpleSummaryProvider="true" />
+        <SeekBarPreference
+            android:defaultValue="0"
+            android:key="keyboard_offset_y"
+            android:max="300"
+            android:title="@string/pref_float_offset"
+            android:summary="@string/pref_float_offset_sum"
+            app:iconSpaceReserved="false"
+            app:min="0"
+            app:showSeekBarValue="true" />
         <Preference
             android:key="bg_pick"
             android:title="@string/pref_bg_pick"

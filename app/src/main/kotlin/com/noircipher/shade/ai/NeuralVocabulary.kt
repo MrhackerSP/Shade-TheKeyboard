@@ -109,10 +109,19 @@ class NeuralVocabulary private constructor(
         var max = Float.NEGATIVE_INFINITY
         for (v in logits) if (v > max) max = v
 
+        // Neural improvement #6 — temperature sharpening.
+        // T < 1 sharpens the distribution: good predictions get higher
+        // probability, bad ones get suppressed. The raw softmax over a 20K-
+        // token vocab is very flat (top prediction often p=0.05), which makes
+        // the ranker's confidence threshold unreliable. T=0.7 concentrates
+        // probability mass on the top candidates so the ranker's
+        // `neuralScore > 0.0025` threshold actually means something.
+        val temperature = 0.7f
+
         val out = FloatArray(logits.size)
         var sum = 0f
         for (i in logits.indices) {
-            val e = kotlin.math.exp((logits[i] - max).coerceAtMost(80f))
+            val e = kotlin.math.exp(((logits[i] - max) / temperature).coerceAtMost(80f))
             out[i] = e
             sum += e
         }

@@ -70,8 +70,14 @@
     <string name="pref_key_borders">Key borders</string>
     <string name="pref_hints">Show number hints</string>
     <string name="pref_popup">Key preview popup</string>
+    <string name="pref_popup_sum">Show a popup of the character above the key as you press it</string>
     <string name="pref_one_handed">One-handed mode</string>
     <string name="pref_split">Split keyboard</string>
+    <string name="pref_float_offset">Floating position</string>
+    <string name="pref_float_offset_sum">Lift the keyboard up from the bottom of the screen (0 = docked). Drag the handle above the keyboard for live control.</string>
+    <string name="keyboard_docked">Keyboard docked to bottom</string>
+    <string name="keyboard_size_reset">Keyboard size reset to default</string>
+    <string name="resize_handle_hint">Drag to resize • Long-press then drag to move</string>
     <string name="pref_bg_pick">Background image</string>
     <string name="pref_bg_sum">Choose a picture to show behind the keys</string>
     <string name="pref_bg_clear">Remove background image</string>

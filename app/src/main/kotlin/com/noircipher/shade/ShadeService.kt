@@ -134,6 +134,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private lateinit var root: LinearLayout
     private lateinit var strip: LinearLayout
     private lateinit var toggle: TextView
+    // SwiftKey-style drag handle above the keyboard. Dragging vertically
+    // resizes the keyboard (adjusts key_height live). Long-pressing then
+    // dragging moves the keyboard up from the bottom (floating offset).
+    private lateinit var resizeHandle: View
     private lateinit var slotFrame: FrameLayout
     private lateinit var slotRow: LinearLayout
     private lateinit var slotOldRow: LinearLayout
@@ -219,6 +223,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var numberRow = false
     private var toolbarOpen = false
     private var layoutName = "qwerty"
+    // Vertical floating offset in pixels — how far the keyboard is lifted from
+    // the bottom of the screen. 0 = docked to bottom (default). Positive
+    // values float the keyboard up so the user can position it wherever is
+    // comfortable, like SwiftKey's "undock" feature.
+    private var keyboardOffsetY = 0f
     private var candidates: List<String> = emptyList()
     private var info: EditorInfo? = null
     private var bgBmp: Bitmap? = null
@@ -435,9 +444,38 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             addView(clipPanel, FrameLayout.LayoutParams(MATCH, MATCH))
         }
 
+        // SwiftKey-style resize/float handle — a thin drag bar between the
+        // suggestion strip and the keyboard. Dragging it up/down resizes the
+        // keyboard live (adjusts key_height). Long-pressing then dragging
+        // moves the keyboard up from the bottom (floating offset).
+        resizeHandle = android.widget.FrameLayout(this).apply {
+            // Semi-transparent background so the handle area is visible
+            background = GradientDrawable().apply {
+                cornerRadius = 0f
+                setColor(0x11000000)
+            }
+            isClickable = true
+            isFocusable = false
+            // Centered grip bar (visual indicator that this is draggable)
+            val grip = View(context).apply {
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(2f).toFloat()
+                    setColor(0x44888888)
+                }
+                val gripSize = dp(4f).toInt()
+                val gripWidth = dp(40f).toInt()
+                layoutParams = android.widget.FrameLayout.LayoutParams(gripWidth, gripSize).apply {
+                    gravity = Gravity.CENTER
+                }
+            }
+            addView(grip)
+            setOnTouchListener(ResizeHandleTouchListener())
+        }
+
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(strip, LinearLayout.LayoutParams(MATCH, dp(52f).toInt()))
+            addView(resizeHandle, LinearLayout.LayoutParams(MATCH, dp(14f).toInt()))
             addView(content, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
         }
 
@@ -480,7 +518,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                             break
                         }
                     }
-                    if (imeVisible) {
+                    if (imeVisible && keyboardOffsetY == 0f) {
+                        // Only apply the IME inset translation when the keyboard
+                        // is docked (not floating). When floating, the root's
+                        // translationY already positions the keyboard and the
+                        // inset animation would fight it.
                         val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
                         kb.translationY = imeBottom.toFloat()
                     }
@@ -757,6 +799,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         rebuildToolbar()
         refreshStrip()
         root.post { applyOneHandedToStrip() }
+
+        // Restore the saved floating offset (if the user previously undocked
+        // the keyboard). Called after layout so translationY is applied to
+        // the final measured view.
+        keyboardOffsetY = prefs.getFloat("keyboard_offset_y", 0f)
+        root.post { applyKeyboardOffset() }
 
         applyMode(mode, force = true)
     }
@@ -1044,21 +1092,156 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         applyOneHandedToStrip()
     }
 
+    // ------------------------------------------------------------------ resize & float
+
+    /**
+     * Touch listener for the drag handle above the keyboard.
+     *
+     * Two modes (like SwiftKey):
+     *  - **Short drag**: resizes the keyboard vertically. Dragging up
+     *    shrinks the keyboard, dragging down enlarges it. The new height
+     *    is persisted to `key_height` and applied live.
+     *  - **Long-press then drag**: moves the keyboard up from the bottom
+     *    (floating / undocked mode). The offset is persisted to
+     *    `keyboard_offset_y` and applied as a translationY on the root view.
+     *
+     * The mode is determined by whether the user long-pressed (≥400ms)
+     * before moving, or started moving immediately.
+     */
+    private inner class ResizeHandleTouchListener : View.OnTouchListener {
+        private var downY = 0f
+        private var downTime = 0L
+        private var startKeyHeight = 50
+        private var startOffsetY = 0f
+        private var isFloatMode = false
+        private var longPressFired = false
+        private val longPressTimeout = 400L
+        private val longPressCheck = Handler(Looper.getMainLooper())
+        private val longPressRunnable = Runnable {
+            longPressFired = true
+            isFloatMode = true
+            kb.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        }
+
+        override fun onTouch(v: View, event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downY = event.rawY
+                    downTime = SystemClock.uptimeMillis()
+                    startKeyHeight = prefs.getInt("key_height", 50)
+                    startOffsetY = prefs.getFloat("keyboard_offset_y", 0f)
+                    isFloatMode = false
+                    longPressFired = false
+                    longPressCheck.postDelayed(longPressRunnable, longPressTimeout)
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dy = event.rawY - downY  // positive = finger moved down
+                    if (!longPressFired && kotlin.math.abs(dy) > dp(10f)) {
+                        // User started moving before long-press fired — treat
+                        // as resize, not float.
+                        longPressCheck.removeCallbacks(longPressRunnable)
+                        isFloatMode = false
+                    }
+                    if (isFloatMode) {
+                        // Floating: dragging UP (dy < 0) moves keyboard UP.
+                        // Clamp to [0, screen_height * 0.5] so it can't go
+                        // off-screen or more than half-way up.
+                        val newOffset = (startOffsetY - dy).coerceAtLeast(0f)
+                        val maxOffset = resources.displayMetrics.heightPixels * 0.5f
+                        val clamped = newOffset.coerceAtMost(maxOffset)
+                        keyboardOffsetY = clamped
+                        applyKeyboardOffset()
+                    } else {
+                        // Resize: dragging UP (dy < 0) makes keyboard TALLER.
+                        // Each dp of drag = ~0.5 dp of key height change.
+                        val heightDelta = (-dy / dp(2f)).toInt()
+                        val newHeight = (startKeyHeight + heightDelta)
+                            .coerceIn(36, 80)
+                        if (newHeight != prefs.getInt("key_height", 50)) {
+                            prefs.edit().putInt("key_height", newHeight).apply()
+                            // Apply live without full applyPrefs() (which reloads locale assets)
+                            applyKeyHeight()
+                        }
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    longPressCheck.removeCallbacks(longPressRunnable)
+                    // Persist the floating offset
+                    if (isFloatMode) {
+                        prefs.edit().putFloat("keyboard_offset_y", keyboardOffsetY).apply()
+                    }
+                    // Haptic feedback on release
+                    v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    /** Applies the current [keyboardOffsetY] as a translation on the root view. */
+    private fun applyKeyboardOffset() {
+        if (this::root.isInitialized == false) return
+        // Negative translationY moves the view UP, so we negate the offset.
+        root.translationY = -keyboardOffsetY
+    }
+
+    /**
+     * Applies the current `key_height` preference to the keyboard, emoji panel,
+     * and clip panel — without the full locale-asset reload that applyPrefs()
+     * triggers. Called from the resize drag handler for live resizing.
+     */
+    private fun applyKeyHeight() {
+        if (this::kb.isInitialized == false) return
+        val keyH = prefs.getInt("key_height", 50)
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val factor = if (landscape) 0.65f else 1f
+        val contentH = (dp(keyH.toFloat()) * (if (numberRow) 4.7f else 4f) * factor).toInt()
+        kb.contentHeightPx = contentH
+        (kb.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
+        if (this::emoji.isInitialized) {
+            (emoji.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
+        }
+        if (this::clipPanel.isInitialized) {
+            (clipPanel.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
+        }
+        kb.requestLayout()
+    }
+
     private fun showOneHandedMenu() {
         val popup = PopupMenu(this, toggle)
         popup.menu.add(0, 1, 0, "One-handed: Left")
         popup.menu.add(0, 2, 1, "One-handed: Right")
         popup.menu.add(0, 3, 2, "One-handed: Off")
+        popup.menu.add(0, 4, 3, "Dock keyboard (reset position)")
+        popup.menu.add(0, 5, 4, "Reset keyboard size")
         popup.setOnMenuItemClickListener { item ->
-            val next = when (item.itemId) {
-                1 -> "left"
-                2 -> "right"
-                else -> "off"
+            when (item.itemId) {
+                1, 2, 3 -> {
+                    val next = when (item.itemId) {
+                        1 -> "left"; 2 -> "right"; else -> "off"
+                    }
+                    prefs.edit().putString("one_handed", next).apply()
+                    val side = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
+                    kb.setOneHandedAnimated(side)
+                    applyOneHandedToStrip()
+                }
+                4 -> {
+                    // Dock: reset the floating offset to 0
+                    keyboardOffsetY = 0f
+                    prefs.edit().putFloat("keyboard_offset_y", 0f).apply()
+                    applyKeyboardOffset()
+                    Toast.makeText(this, R.string.keyboard_docked, Toast.LENGTH_SHORT).show()
+                }
+                5 -> {
+                    // Reset key height to default (50)
+                    prefs.edit().putInt("key_height", 50).apply()
+                    applyKeyHeight()
+                    Toast.makeText(this, R.string.keyboard_size_reset, Toast.LENGTH_SHORT).show()
+                }
             }
-            prefs.edit().putString("one_handed", next).apply()
-            val side = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
-            kb.setOneHandedAnimated(side)
-            applyOneHandedToStrip()
             true
         }
         popup.show()
@@ -2267,10 +2450,23 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 if (!isActive) return@launch
                 suggestJob = scope.launch(Dispatchers.Default) {
                     val neuralNext = withContext(Dispatchers.Default) {
-                        neural
-                            ?.predictNext(context, null, 6)
-                            ?.map { it.first }
-                            .orEmpty()
+                        // Neural improvement #3 — use beam search for phrase
+                        // suggestions when the user has multi-word suggestions
+                        // enabled. Beam search produces 2-word continuations
+                        // ("are you", "to see") that greedy single-token
+                        // prediction misses. Falls back to greedy for
+                        // word-by-word mode (faster, single-word results).
+                        if (phraseSuggestionsOn) {
+                            (neural as? NeuralPredictionEngine)
+                                ?.predictNextBeam(context, null, 8)
+                                ?.map { it.first }
+                                .orEmpty()
+                        } else {
+                            neural
+                                ?.predictNext(context, null, 6)
+                                ?.map { it.first }
+                                .orEmpty()
+                        }
                     }
                     val dictionaryNext = prev1
                         ?.let { dict.predictNext(prev2, it, 8) }
@@ -2385,7 +2581,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 } else stage2
 
                 var ranked = withContext(Dispatchers.Default) {
-                    neural?.rerankPrefix(neuralCtx, effectivePrefix, stage3)
+                    // Neural improvement #5 — pass bigram scores into the neural
+                    // reranker so it can do log-linear interpolation instead of
+                    // independent ranking. The bigram model catches user-specific
+                    // phrases and rare words the neural model misses.
+                    val bigramScores = dict.bigramModel
+                        ?.predict(prev2, prev1, stage3.size * 2)
+                        ?.associate { it.first.lowercase() to it.second }
+                        .orEmpty()
+                    (neural as? NeuralPredictionEngine)
+                        ?.rerankPrefix(neuralCtx, effectivePrefix, stage3, bigramScores)
+                        ?: neural?.rerankPrefix(neuralCtx, effectivePrefix, stage3)
                 } ?: stage3
                 ranked = safeSuggestion(ranked) {
                     withContext(Dispatchers.Default) {

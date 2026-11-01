@@ -12,7 +12,10 @@ import java.nio.LongBuffer
 class OnnxNeuralPredictor(
     context: Context,
     private val vocabulary: NeuralVocabulary,
-    private val contextSize: Int = 24,
+    // Neural improvement #1 — matches NeuralPredictionEngine's contextSize.
+    // The model was trained with 256-token context; feeding 128 at inference
+    // gives the attention layers real sentence structure to work with.
+    private val contextSize: Int = 128,
     languageTag: String = "en"
 ) : NeuralPredictor {
 
@@ -94,7 +97,23 @@ class OnnxNeuralPredictor(
                 ?: throw IllegalStateException("ONNX model returned no tensor output")
             val floatBuffer = output.floatBuffer
             val length = minOf(floatBuffer.remaining(), vocabulary.size)
-            return FloatArray(length) { floatBuffer.get() }
+            val logits = FloatArray(length) { floatBuffer.get() }
+
+            // Neural improvement #2 — repetition penalty.
+            // Transformers tend to echo tokens that already appear in the
+            // context (e.g. "the the the"). We subtract a fixed penalty from
+            // every token ID that is present in the current context, which
+            // suppresses repeats while still allowing them when the model is
+            // very confident. 0.8 is a mild penalty — enough to break loops
+            // without suppressing legitimate repeats ("had had").
+            val penalty = 0.8f
+            val seen = HashSet<Int>(meaningful.size + 1)
+            seen.add(vocabulary.bosId)
+            for (id in meaningful) seen.add(id)
+            for (id in seen) {
+                if (id in 0 until length) logits[id] -= penalty
+            }
+            return logits
         } finally {
             try { result.close() } catch (_: Exception) {}
             try { input.close() } catch (_: Exception) {}
