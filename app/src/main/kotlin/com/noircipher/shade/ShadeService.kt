@@ -1077,15 +1077,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             "emoji" -> transitionToPanel(Panel.EMOJI)
             "voice" -> {
                 if (!prefs.getBoolean("voice_input", true)) return
-                val v: VoiceInputController? = voice
+                val v = voice
                 if (v == null) {
                     Toast.makeText(this, R.string.voice_input_unavailable, Toast.LENGTH_SHORT).show()
                 } else {
-                    v.languageTag = when (dictIds().split(',').firstOrNull()?.trim()?.lowercase()) {
-                        "hi" -> "hi-IN"
-                        "hinglish", "hg" -> "en-IN"
-                        else -> null
-                    }
                     v.start()
                 }
             }
