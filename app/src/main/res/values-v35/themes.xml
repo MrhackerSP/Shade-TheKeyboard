@@ -1,8 +1,20 @@
 <resources>
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.DarkActionBar">
-        <item name="colorPrimary">#3B6FD4</item>
-        <item name="colorPrimaryDark">#2A55A8</item>
-        <item name="colorAccent">#3B6FD4</item>
+        <item name="colorPrimary">#000000</item>
+        <item name="colorPrimaryDark">#000000</item>
+        <item name="colorAccent">#FFFFFF</item>
+        <item name="android:colorBackground">#000000</item>
+        <item name="android:textColorPrimary">#F5F5F5</item>
+        <item name="android:textColorSecondary">#8E8E8E</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="colorControlNormal">#777777</item>
+        <item name="colorControlActivated">#FFFFFF</item>
+        <item name="colorControlHighlight">#22FFFFFF</item>
+        <item name="preferenceTheme">@style/ShadePreferenceTheme</item>
+        <item name="alertDialogTheme">@style/ShadeDialogTheme</item>
         <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
     </style>
 </resources>

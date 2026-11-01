@@ -1,0 +1,4 @@
+# Baseline profile: pre-compiles Shade's code paths so the first keyboard open
+# after install/update isn't slow.
+HSPLcom/noircipher/shade/**;->**(**)**
+Lcom/noircipher/shade/**;

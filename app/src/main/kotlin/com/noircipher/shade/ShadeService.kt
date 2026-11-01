@@ -783,6 +783,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.keyBorders = prefs.getBoolean("key_borders", true)
         kb.showHints = prefs.getBoolean("show_hints", true)
         kb.haptic = prefs.getBoolean("haptic", true)
+        kb.hapticStrength = when (prefs.getString("haptic_strength", "medium")) {
+            "light" -> 0
+            "strong" -> 2
+            else -> 1
+        }
         kb.sound = prefs.getBoolean("sound", false)
         kb.showPreview = prefs.getBoolean("popup_preview", true)
         kb.bgBitmap = bgBmp
@@ -1868,6 +1873,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onTrackpadEnter() {
         kb.haptic = prefs.getBoolean("haptic", true)
+        kb.hapticStrength = when (prefs.getString("haptic_strength", "medium")) {
+            "light" -> 0
+            "strong" -> 2
+            else -> 1
+        }
     }
 
     override fun onTrackpadExit() {

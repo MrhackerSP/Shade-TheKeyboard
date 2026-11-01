@@ -513,3 +513,12 @@ running the full pipeline.
 - Added baseline profile + androidx.profileinstaller.
 - KeyboardView: requestUnbufferedDispatch on touch-down (lower key latency).
 - ShadeService: per-app helper objects pre-built in the background.
+
+## Settings redesign + feel pass
+- Settings sub-screens restyled as pitch-black monochrome tiles with section headers (pref_row / pref_seekbar_row / pref_category layouts); every preference key and default is unchanged.
+- Voice and Emoji rows now open real screens (voice_input, emoji_suggestions moved there from Typing).
+- Removed two dead rows (import/delete dictionary) that had no handler.
+- values-v35 theme was replacing the black/white theme with a blue one on Android 15+; now identical to the base theme plus the edge-to-edge opt-out.
+- Added system-bar inset padding to SettingsActivity.
+- New "Vibration strength" setting (default Medium = previous behaviour) + VIBRATE permission.
+- Key press / popup timings made snappier (30 / 55 / 60 ms).

@@ -3,7 +3,7 @@
     <string name="ime_name">Shade</string>
     <string name="settings_title">Shade settings</string>
 
-    <string name="setup_intro">A private, open, offline keyboard. No internet permission, no tracking.</string>
+    <string name="setup_intro">A private, open keyboard. Typing, suggestions and learning all happen on your device — no internet permission, no tracking. (Optional voice typing is handled by your phone\'s speech service, which may use the network.)</string>
     <string name="step1">1. Enable Shade</string>
     <string name="step2">2. Switch to Shade</string>
     <string name="step3">3. Try it here</string>
@@ -173,8 +173,8 @@
     <string name="pref_learning_cleared">Adaptive learning data cleared</string>
 
     <!-- Training data contribution -->
-    <string name="pref_contribute">Contribute anonymized typing data</string>
-    <string name="pref_contribute_sum">Shade periodically saves your learned words and n-gram counts to a file on this device so future versions can be trained on real typing. Includes a stable per-install device ID (SHA-256 hash of a random UUID) so exports from the same install can be correlated. No sentences, no clipboard, no email or name. Turn off to stop and delete.</string>
+    <string name="pref_contribute">Keep local learning snapshots</string>
+    <string name="pref_contribute_sum">Once a day Shade saves a snapshot of your learned words and word-pair counts in the app\'s private storage, so you can export it later. Nothing is ever uploaded: Shade has no internet permission. Snapshots can reveal what you type, so treat exports as personal data. Turn off to stop and delete snapshots.</string>
     <string name="pref_export_training">Export training data now</string>
     <string name="pref_export_training_sum">Write your learned words and n-gram counts to a file you choose</string>
     <string name="pref_clear_training">Delete saved training data</string>
@@ -313,7 +313,7 @@
     <string name="pref_backup">Backup &amp; restore</string>
     <string name="settings_coming_soon">Coming soon</string>
     <string name="pref_voice_input">Voice typing</string>
-    <string name="pref_voice_input_sum">Tap the mic to dictate. Audio is processed by Android\'s system speech recognizer (Shade itself never sends audio to any server).</string>
+    <string name="pref_voice_input_sum">Tap the mic to dictate. Audio is handled by your phone\'s speech recognizer, which may send it to its provider\'s servers if no offline model is installed. Shade itself never sends audio anywhere.</string>
     <string name="voice_input_unavailable">Voice input unavailable on this device</string>
     <string name="voice_input_perm_denied">Microphone permission denied. Enable it in Android Settings to use voice typing.</string>
     <string name="pref_neural_predictions">Neural predictions</string>

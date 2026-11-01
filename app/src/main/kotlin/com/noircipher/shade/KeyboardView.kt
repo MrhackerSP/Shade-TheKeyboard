@@ -55,6 +55,8 @@ class KeyboardView(context: Context) : View(context) {
     var oneHanded = 0
         private set
     var haptic = true
+    /** 0 = light, 1 = medium (default, system keyboard tap), 2 = strong. */
+    var hapticStrength = 1
     var sound = false
     var showPreview = true
     var shiftState = 0
@@ -1567,10 +1569,27 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun hapticModern() {
+        val played = when (hapticStrength) {
+            0 -> playPredefinedHaptic(VibrationEffect.EFFECT_TICK)
+            2 -> playPredefinedHaptic(VibrationEffect.EFFECT_CLICK)
+            else -> false
+        }
+        if (played) return
         performHapticFeedback(
             HapticFeedbackConstants.KEYBOARD_TAP,
             HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
         )
+    }
+
+    private fun playPredefinedHaptic(effect: Int): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        val v = vibrator ?: return false
+        return try {
+            v.vibrate(VibrationEffect.createPredefined(effect))
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun hapticTick() {

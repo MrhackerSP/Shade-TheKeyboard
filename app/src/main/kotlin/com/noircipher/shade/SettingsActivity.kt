@@ -15,6 +15,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.preference.EditTextPreference
 import androidx.preference.MultiSelectListPreference
+import androidx.preference.PreferenceCategory
+import androidx.preference.PreferenceGroup
+import androidx.preference.SeekBarPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceManager
@@ -37,6 +40,14 @@ class SettingsActivity : AppCompatActivity() {
         supportFragmentManager.addOnBackStackChangedListener {
             updateActionBar()
         }
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(findViewById<View>(android.R.id.content)) { v, insets ->
+            val bars = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+            )
+            v.setPadding(bars.left, 0, bars.right, bars.bottom)
+            insets
+        }
 
         // The main menu is just a set of clickable rows that open
         // specific preference screens inside a new fragment.
@@ -46,8 +57,8 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<View>(R.id.row_colors).setOnClickListener { openScreen("screen_colors", R.string.scr_colors) }
         findViewById<View>(R.id.row_corrections).setOnClickListener { openScreen("screen_typing", R.string.pref_corrections) }
         findViewById<View>(R.id.row_learning).setOnClickListener { openScreen("screen_learning", R.string.scr_learning) }
-        findViewById<View>(R.id.row_voice).setOnClickListener { toast(R.string.settings_coming_soon) }
-        findViewById<View>(R.id.row_emoji).setOnClickListener { toast(R.string.settings_coming_soon) }
+        findViewById<View>(R.id.row_voice).setOnClickListener { openScreen("screen_voice", R.string.pref_voice) }
+        findViewById<View>(R.id.row_emoji).setOnClickListener { openScreen("screen_emoji", R.string.pref_emoji) }
         findViewById<View>(R.id.row_clipboard).setOnClickListener { openScreen("screen_toolbar", R.string.pref_clipboard) }
         findViewById<View>(R.id.row_typing).setOnClickListener { startActivity(Intent(this, TypingStatsActivity::class.java)) }
         findViewById<View>(R.id.row_backup).setOnClickListener { openScreen("screen_backup", R.string.pref_backup) }
@@ -120,6 +131,7 @@ class SettingsActivity : AppCompatActivity() {
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.preferences, rootKey)
             val ctx = requireContext()
+            applyShadeLook(preferenceScreen)
             refreshLanguagePref()
 
             click("clear_learned") {
@@ -233,6 +245,31 @@ class SettingsActivity : AppCompatActivity() {
                 PreferenceManager.getDefaultSharedPreferences(ctx)
                     .edit().putBoolean("resize_mode_requested", true).apply()
                 requireActivity().finish()
+            }
+        }
+
+        override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+            super.onViewCreated(view, savedInstanceState)
+            // Pitch-black tiles: no list dividers, a little breathing room top and bottom.
+            setDivider(null)
+            val d = resources.displayMetrics.density
+            listView.clipToPadding = false
+            listView.setPadding(0, (8 * d).toInt(), 0, (28 * d).toInt())
+        }
+
+        /** Gives every row the monochrome tile look; keys, values and behaviour are untouched. */
+        private fun applyShadeLook(group: PreferenceGroup) {
+            for (i in 0 until group.preferenceCount) {
+                val p = group.getPreference(i)
+                when {
+                    p is PreferenceCategory -> {
+                        p.layoutResource = R.layout.pref_category
+                        applyShadeLook(p)
+                    }
+                    p is PreferenceGroup -> applyShadeLook(p)
+                    p is SeekBarPreference -> p.layoutResource = R.layout.pref_seekbar_row
+                    else -> p.layoutResource = R.layout.pref_row
+                }
             }
         }
 

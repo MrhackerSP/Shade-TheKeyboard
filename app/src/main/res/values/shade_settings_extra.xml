@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cat_layout">Layout</string>
+    <string name="cat_languages">Languages</string>
+    <string name="cat_theme">Look</string>
+    <string name="cat_size">Size and position</string>
+    <string name="cat_background">Background image</string>
+    <string name="cat_suggestions">Suggestions</string>
+    <string name="cat_corrections">Corrections and input</string>
+    <string name="cat_privacy">Learning and privacy</string>
+    <string name="cat_toolbar">Toolbar</string>
+    <string name="cat_clipboard">Clipboard</string>
+    <string name="cat_feedback">Key feedback</string>
+    <string name="cat_gestures">Gestures and timing</string>
+    <string name="cat_backup">Backup and restore</string>
+    <string name="cat_data">Data sharing</string>
+    <string name="pref_haptic_strength">Vibration strength</string>
+
+    <string-array name="haptic_strength_entries">
+        <item>Light</item>
+        <item>Medium</item>
+        <item>Strong</item>
+    </string-array>
+    <string-array name="haptic_strength_values">
+        <item>light</item>
+        <item>medium</item>
+        <item>strong</item>
+    </string-array>
+</resources>

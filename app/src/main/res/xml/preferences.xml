@@ -1,437 +1,117 @@
-<?xml version="1.0" encoding="utf-8"?>
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto">
-
-    <PreferenceScreen
-        android:key="screen_layouts"
-        android:summary="@string/scr_layouts_sum"
-        android:title="@string/scr_layouts"
-        app:iconSpaceReserved="false">
-        <ListPreference
-            android:defaultValue="qwerty"
-            android:entries="@array/layout_entries"
-            android:entryValues="@array/layout_values"
-            android:key="layout"
-            android:title="@string/pref_layout"
-            app:iconSpaceReserved="false"
-            app:useSimpleSummaryProvider="true" />
-        <EditTextPreference
-            android:key="custom_layout"
-            android:title="@string/pref_custom_layout"
-            android:summary="@string/pref_custom_layout_sum"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="false"
-            android:key="number_row"
-            android:title="@string/pref_number_row"
-            android:summary="@string/pref_number_row_sum"
-            app:iconSpaceReserved="false" />
-        <MultiSelectListPreference
-            android:defaultValue="@array/dict_default"
-            android:entries="@array/dict_entries"
-            android:entryValues="@array/dict_values"
-            android:key="dictionaries"
-            android:summary="@string/pref_dicts_sum"
-            android:title="@string/pref_dicts"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="import_dictionary"
-            android:title="@string/pref_import_dict"
-            android:summary="@string/pref_import_dict_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="delete_dictionary"
-            android:title="@string/pref_delete_dict"
-            app:iconSpaceReserved="false" />
-        </PreferenceScreen>
-    <PreferenceScreen
-        android:key="screen_appearance"
-        android:summary="@string/scr_appearance_sum"
-        android:title="@string/scr_appearance"
-        app:iconSpaceReserved="false">
-        <ListPreference
-            android:defaultValue="system"
-            android:entries="@array/theme_entries"
-            android:entryValues="@array/theme_values"
-            android:key="theme"
-            android:title="@string/pref_theme"
-            app:iconSpaceReserved="false"
-            app:useSimpleSummaryProvider="true" />
-        <SeekBarPreference
-            android:defaultValue="50"
-            android:key="key_height"
-            android:max="70"
-            android:title="@string/pref_key_height"
-            app:iconSpaceReserved="false"
-            app:min="36"
-            app:showSeekBarValue="true" />
-        <Preference
-            android:key="resize_keyboard"
-            android:title="@string/pref_resize_keyboard"
-            android:summary="@string/pref_resize_keyboard_sum"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="key_borders"
-            android:title="@string/pref_key_borders"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="show_hints"
-            android:title="@string/pref_hints"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="popup_preview"
-            android:title="@string/pref_popup"
-            android:summary="@string/pref_popup_sum"
-            app:iconSpaceReserved="false" />
-        <ListPreference
-            android:defaultValue="off"
-            android:entries="@array/one_hand_entries"
-            android:entryValues="@array/one_hand_values"
-            android:key="one_handed"
-            android:title="@string/pref_one_handed"
-            app:iconSpaceReserved="false"
-            app:useSimpleSummaryProvider="true" />
-        <ListPreference
-            android:defaultValue="off"
-            android:entries="@array/split_entries"
-            android:entryValues="@array/split_values"
-            android:key="split_keyboard"
-            android:title="@string/pref_split"
-            app:iconSpaceReserved="false"
-            app:useSimpleSummaryProvider="true" />
-        <SeekBarPreference
-            android:defaultValue="0"
-            android:key="keyboard_offset_y"
-            android:max="300"
-            android:title="@string/pref_float_offset"
-            android:summary="@string/pref_float_offset_sum"
-            app:iconSpaceReserved="false"
-            app:min="0"
-            app:showSeekBarValue="true" />
-        <Preference
-            android:key="bg_pick"
-            android:title="@string/pref_bg_pick"
-            android:summary="@string/pref_bg_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="bg_clear"
-            android:title="@string/pref_bg_clear"
-            app:iconSpaceReserved="false" />
-        </PreferenceScreen>
-    <PreferenceScreen
-        android:key="screen_colors"
-        android:summary="@string/scr_colors_sum"
-        android:title="@string/scr_colors"
-        app:iconSpaceReserved="false">
-        <Preference
-            android:selectable="false"
-            android:key="colors_info"
-            android:title="@string/pref_colors_info"
-            app:iconSpaceReserved="false" />
-        <EditTextPreference
-            android:key="color_bg"
-            android:title="@string/pref_color_bg"
-            app:useSimpleSummaryProvider="true"
-            app:iconSpaceReserved="false" />
-        <EditTextPreference
-            android:key="color_key"
-            android:title="@string/pref_color_key"
-            app:useSimpleSummaryProvider="true"
-            app:iconSpaceReserved="false" />
-        <EditTextPreference
-            android:key="color_keyfn"
-            android:title="@string/pref_color_keyfn"
-            app:useSimpleSummaryProvider="true"
-            app:iconSpaceReserved="false" />
-        <EditTextPreference
-            android:key="color_text"
-            android:title="@string/pref_color_text"
-            app:useSimpleSummaryProvider="true"
-            app:iconSpaceReserved="false" />
-        <EditTextPreference
-            android:key="color_accent"
-            android:title="@string/pref_color_accent"
-            app:useSimpleSummaryProvider="true"
-            app:iconSpaceReserved="false" />
-        </PreferenceScreen>
-    <PreferenceScreen
-        android:key="screen_typing"
-        android:summary="@string/scr_typing_sum"
-        android:title="@string/scr_typing"
-        app:iconSpaceReserved="false">
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="suggestions"
-            android:title="@string/pref_suggestions"
-            android:summary="@string/pref_suggestions_sum"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="autocorrect"
-            android:title="@string/pref_autocorrect"
-            android:summary="@string/pref_autocorrect_sum"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="smart_correction"
-            android:title="@string/pref_smart_correction"
-            android:summary="@string/pref_smart_correction_sum"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="neural_predictions"
-            android:title="@string/pref_neural_predictions"
-            android:summary="@string/pref_neural_predictions_sum"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="emoji_suggestions"
-            android:title="@string/pref_emoji_sugg"
-            android:summary="@string/pref_emoji_sugg_sum"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="false"
-            android:key="phrase_suggestions"
-            android:title="@string/pref_phrase_sugg"
-            android:summary="@string/pref_phrase_sugg_sum"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="learn_words"
-            android:title="@string/pref_learn"
-            android:summary="@string/pref_learn_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="clear_learned"
-            android:title="@string/pref_clear"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="false"
-            android:key="incognito"
-            android:title="@string/pref_incognito"
-            android:summary="@string/pref_incognito_sum"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="voice_input"
-            android:title="@string/pref_voice_input"
-            android:summary="@string/pref_voice_input_sum"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="auto_caps"
-            android:title="@string/pref_auto_caps"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="double_space"
-            android:title="@string/pref_double_space"
-            app:iconSpaceReserved="false" />
-        
-        <SwitchPreferenceCompat
-            android:defaultValue="false"
-            android:key="typing_insights"
-            android:title="@string/typing_stats_toggle"
-            app:iconSpaceReserved="false" />
-    
+<?xml version='1.0' encoding='utf-8'?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
+    <PreferenceScreen android:key="screen_layouts" android:summary="@string/scr_layouts_sum" android:title="@string/scr_layouts" app:iconSpaceReserved="false">
+        <PreferenceCategory android:title="@string/cat_layout" app:iconSpaceReserved="false">
+            <ListPreference android:defaultValue="qwerty" android:entries="@array/layout_entries" android:entryValues="@array/layout_values" android:key="layout" android:title="@string/pref_layout" app:iconSpaceReserved="false" app:useSimpleSummaryProvider="true" />
+            <EditTextPreference android:key="custom_layout" android:title="@string/pref_custom_layout" android:summary="@string/pref_custom_layout_sum" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="false" android:key="number_row" android:title="@string/pref_number_row" android:summary="@string/pref_number_row_sum" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
+        <PreferenceCategory android:title="@string/cat_languages" app:iconSpaceReserved="false">
+            <MultiSelectListPreference android:defaultValue="@array/dict_default" android:entries="@array/dict_entries" android:entryValues="@array/dict_values" android:key="dictionaries" android:summary="@string/pref_dicts_sum" android:title="@string/pref_dicts" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
     </PreferenceScreen>
-    <PreferenceScreen
-        android:key="screen_learning"
-        android:summary="@string/scr_learning_sum"
-        android:title="@string/scr_learning"
-        app:iconSpaceReserved="false">
-
-        <Preference
-            android:selectable="false"
-            android:summary="@string/pref_learning_master_sum"
-            android:title="@string/pref_learning_master"
-            app:iconSpaceReserved="false" />
-
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="learning_adaptive"
-            android:title="@string/pref_learning_adaptive"
-            android:summary="@string/pref_learning_adaptive_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="clear_learning_adaptive"
-            android:title="@string/pref_learning_clear_adaptive"
-            app:iconSpaceReserved="false" />
-
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="learning_appctx"
-            android:title="@string/pref_learning_appctx"
-            android:summary="@string/pref_learning_appctx_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="clear_learning_appctx"
-            android:title="@string/pref_learning_clear_appctx"
-            app:iconSpaceReserved="false" />
-
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="learning_suppressor"
-            android:title="@string/pref_learning_suppressor"
-            android:summary="@string/pref_learning_suppressor_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="clear_learning_suppressor"
-            android:title="@string/pref_learning_clear_suppressor"
-            app:iconSpaceReserved="false" />
-
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="learning_calibrator"
-            android:title="@string/pref_learning_calibrator"
-            android:summary="@string/pref_learning_calibrator_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="clear_learning_calibrator"
-            android:title="@string/pref_learning_clear_calibrator"
-            app:iconSpaceReserved="false" />
-
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="learning_ranker"
-            android:title="@string/pref_learning_ranker"
-            android:summary="@string/pref_learning_ranker_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="clear_learning_ranker"
-            android:title="@string/pref_learning_clear_ranker"
-            app:iconSpaceReserved="false" />
-
-        <Preference
-            android:key="clear_learning_all"
-            android:title="@string/pref_learning_clear_all"
-            app:iconSpaceReserved="false" />
+    <PreferenceScreen android:key="screen_appearance" android:summary="@string/scr_appearance_sum" android:title="@string/scr_appearance" app:iconSpaceReserved="false">
+        <PreferenceCategory android:title="@string/cat_theme" app:iconSpaceReserved="false">
+            <ListPreference android:defaultValue="system" android:entries="@array/theme_entries" android:entryValues="@array/theme_values" android:key="theme" android:title="@string/pref_theme" app:iconSpaceReserved="false" app:useSimpleSummaryProvider="true" />
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="key_borders" android:title="@string/pref_key_borders" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="show_hints" android:title="@string/pref_hints" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="popup_preview" android:title="@string/pref_popup" android:summary="@string/pref_popup_sum" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
+        <PreferenceCategory android:title="@string/cat_size" app:iconSpaceReserved="false">
+            <SeekBarPreference android:defaultValue="50" android:key="key_height" android:max="70" android:title="@string/pref_key_height" app:iconSpaceReserved="false" app:min="36" app:showSeekBarValue="true" />
+            <Preference android:key="resize_keyboard" android:title="@string/pref_resize_keyboard" android:summary="@string/pref_resize_keyboard_sum" app:iconSpaceReserved="false" />
+            <ListPreference android:defaultValue="off" android:entries="@array/one_hand_entries" android:entryValues="@array/one_hand_values" android:key="one_handed" android:title="@string/pref_one_handed" app:iconSpaceReserved="false" app:useSimpleSummaryProvider="true" />
+            <ListPreference android:defaultValue="off" android:entries="@array/split_entries" android:entryValues="@array/split_values" android:key="split_keyboard" android:title="@string/pref_split" app:iconSpaceReserved="false" app:useSimpleSummaryProvider="true" />
+            <SeekBarPreference android:defaultValue="0" android:key="keyboard_offset_y" android:max="300" android:title="@string/pref_float_offset" android:summary="@string/pref_float_offset_sum" app:iconSpaceReserved="false" app:min="0" app:showSeekBarValue="true" />
+        </PreferenceCategory>
+        <PreferenceCategory android:title="@string/cat_background" app:iconSpaceReserved="false">
+            <Preference android:key="bg_pick" android:title="@string/pref_bg_pick" android:summary="@string/pref_bg_sum" app:iconSpaceReserved="false" />
+            <Preference android:key="bg_clear" android:title="@string/pref_bg_clear" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
     </PreferenceScreen>
-    <PreferenceScreen
-        android:key="screen_toolbar"
-        android:summary="@string/scr_toolbar_sum"
-        android:title="@string/scr_toolbar"
-        app:iconSpaceReserved="false">
-        <MultiSelectListPreference
-            android:defaultValue="@array/tool_values"
-            android:entries="@array/tool_entries"
-            android:entryValues="@array/tool_values"
-            android:key="toolbar_keys"
-            android:title="@string/pref_toolbar_keys"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="false"
-            android:key="toolbar_open_default"
-            android:title="@string/pref_toolbar_open"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="clipboard_history"
-            android:title="@string/pref_clip"
-            android:summary="@string/pref_clip_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="clear_clipboard"
-            android:title="@string/pref_clear_clip"
-            app:iconSpaceReserved="false" />
-        </PreferenceScreen>
-    <PreferenceScreen
-        android:key="screen_feedback"
-        android:summary="@string/scr_feedback_sum"
-        android:title="@string/scr_feedback"
-        app:iconSpaceReserved="false">
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="haptic"
-            android:title="@string/pref_haptic"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="false"
-            android:key="sound"
-            android:title="@string/pref_sound"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="false"
-            android:key="typing_burst"
-            android:title="@string/pref_typing_burst"
-            android:summary="@string/pref_typing_burst_sum"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="trackpad_mode"
-            android:title="@string/pref_trackpad"
-            android:summary="@string/pref_trackpad_sum"
-            app:iconSpaceReserved="false" />
-        <SeekBarPreference
-            android:defaultValue="300"
-            android:key="longpress_delay"
-            android:max="700"
-            android:title="@string/pref_longpress"
-            app:iconSpaceReserved="false"
-            app:min="200"
-            app:showSeekBarValue="true" />
-        <SeekBarPreference
-            android:defaultValue="400"
-            android:key="repeat_delay"
-            android:max="800"
-            android:title="@string/pref_repeat_delay"
-            android:summary="@string/pref_repeat_delay_sum"
-            app:iconSpaceReserved="false"
-            app:min="200"
-            app:showSeekBarValue="true" />
-        <SeekBarPreference
-            android:defaultValue="50"
-            android:key="repeat_interval"
-            android:max="150"
-            android:title="@string/pref_repeat_interval"
-            android:summary="@string/pref_repeat_interval_sum"
-            app:iconSpaceReserved="false"
-            app:min="20"
-            app:showSeekBarValue="true" />
-        </PreferenceScreen>
-    <PreferenceScreen
-        android:key="screen_backup"
-        android:summary="@string/scr_backup_sum"
-        android:title="@string/scr_backup"
-        app:iconSpaceReserved="false">
-        <Preference
-            android:key="backup_export"
-            android:title="@string/pref_backup_export"
-            android:summary="@string/pref_backup_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="backup_import"
-            android:title="@string/pref_backup_import"
-            app:iconSpaceReserved="false" />
-        <SwitchPreferenceCompat
-            android:defaultValue="false"
-            android:key="contribute_data"
-            android:title="@string/pref_contribute"
-            android:summary="@string/pref_contribute_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="export_training"
-            android:title="@string/pref_export_training"
-            android:summary="@string/pref_export_training_sum"
-            app:iconSpaceReserved="false" />
-        <Preference
-            android:key="clear_training_export"
-            android:title="@string/pref_clear_training"
-            android:summary="@string/pref_clear_training_sum"
-            app:iconSpaceReserved="false" />
-        </PreferenceScreen>
-    <PreferenceScreen
-        android:key="screen_about"
-        android:summary="@string/about_sum"
-        android:title="@string/about_title"
-        app:iconSpaceReserved="false">
-        <Preference
-            android:selectable="false"
-            android:summary="@string/about_text"
-            android:title="@string/about_title"
-            app:iconSpaceReserved="false" />
-        </PreferenceScreen>
+    <PreferenceScreen android:key="screen_colors" android:summary="@string/scr_colors_sum" android:title="@string/scr_colors" app:iconSpaceReserved="false">
+        <Preference android:selectable="false" android:key="colors_info" android:title="@string/pref_colors_info" app:iconSpaceReserved="false" />
+        <EditTextPreference android:key="color_bg" android:title="@string/pref_color_bg" app:useSimpleSummaryProvider="true" app:iconSpaceReserved="false" />
+        <EditTextPreference android:key="color_key" android:title="@string/pref_color_key" app:useSimpleSummaryProvider="true" app:iconSpaceReserved="false" />
+        <EditTextPreference android:key="color_keyfn" android:title="@string/pref_color_keyfn" app:useSimpleSummaryProvider="true" app:iconSpaceReserved="false" />
+        <EditTextPreference android:key="color_text" android:title="@string/pref_color_text" app:useSimpleSummaryProvider="true" app:iconSpaceReserved="false" />
+        <EditTextPreference android:key="color_accent" android:title="@string/pref_color_accent" app:useSimpleSummaryProvider="true" app:iconSpaceReserved="false" />
     </PreferenceScreen>
+    <PreferenceScreen android:key="screen_typing" android:summary="@string/scr_typing_sum" android:title="@string/scr_typing" app:iconSpaceReserved="false">
+        <PreferenceCategory android:title="@string/cat_suggestions" app:iconSpaceReserved="false">
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="suggestions" android:title="@string/pref_suggestions" android:summary="@string/pref_suggestions_sum" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="neural_predictions" android:title="@string/pref_neural_predictions" android:summary="@string/pref_neural_predictions_sum" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="false" android:key="phrase_suggestions" android:title="@string/pref_phrase_sugg" android:summary="@string/pref_phrase_sugg_sum" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
+        <PreferenceCategory android:title="@string/cat_corrections" app:iconSpaceReserved="false">
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="autocorrect" android:title="@string/pref_autocorrect" android:summary="@string/pref_autocorrect_sum" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="smart_correction" android:title="@string/pref_smart_correction" android:summary="@string/pref_smart_correction_sum" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="auto_caps" android:title="@string/pref_auto_caps" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="double_space" android:title="@string/pref_double_space" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
+        <PreferenceCategory android:title="@string/cat_privacy" app:iconSpaceReserved="false">
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="learn_words" android:title="@string/pref_learn" android:summary="@string/pref_learn_sum" app:iconSpaceReserved="false" />
+            <Preference android:key="clear_learned" android:title="@string/pref_clear" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="false" android:key="incognito" android:title="@string/pref_incognito" android:summary="@string/pref_incognito_sum" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="false" android:key="typing_insights" android:title="@string/typing_stats_toggle" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
+    </PreferenceScreen>
+    <PreferenceScreen android:key="screen_learning" android:summary="@string/scr_learning_sum" android:title="@string/scr_learning" app:iconSpaceReserved="false">
+        <Preference android:selectable="false" android:summary="@string/pref_learning_master_sum" android:title="@string/pref_learning_master" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat android:defaultValue="true" android:key="learning_adaptive" android:title="@string/pref_learning_adaptive" android:summary="@string/pref_learning_adaptive_sum" app:iconSpaceReserved="false" />
+        <Preference android:key="clear_learning_adaptive" android:title="@string/pref_learning_clear_adaptive" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat android:defaultValue="true" android:key="learning_appctx" android:title="@string/pref_learning_appctx" android:summary="@string/pref_learning_appctx_sum" app:iconSpaceReserved="false" />
+        <Preference android:key="clear_learning_appctx" android:title="@string/pref_learning_clear_appctx" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat android:defaultValue="true" android:key="learning_suppressor" android:title="@string/pref_learning_suppressor" android:summary="@string/pref_learning_suppressor_sum" app:iconSpaceReserved="false" />
+        <Preference android:key="clear_learning_suppressor" android:title="@string/pref_learning_clear_suppressor" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat android:defaultValue="true" android:key="learning_calibrator" android:title="@string/pref_learning_calibrator" android:summary="@string/pref_learning_calibrator_sum" app:iconSpaceReserved="false" />
+        <Preference android:key="clear_learning_calibrator" android:title="@string/pref_learning_clear_calibrator" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat android:defaultValue="true" android:key="learning_ranker" android:title="@string/pref_learning_ranker" android:summary="@string/pref_learning_ranker_sum" app:iconSpaceReserved="false" />
+        <Preference android:key="clear_learning_ranker" android:title="@string/pref_learning_clear_ranker" app:iconSpaceReserved="false" />
+        <Preference android:key="clear_learning_all" android:title="@string/pref_learning_clear_all" app:iconSpaceReserved="false" />
+    </PreferenceScreen>
+    <PreferenceScreen android:key="screen_toolbar" android:summary="@string/scr_toolbar_sum" android:title="@string/scr_toolbar" app:iconSpaceReserved="false">
+        <PreferenceCategory android:title="@string/cat_toolbar" app:iconSpaceReserved="false">
+            <MultiSelectListPreference android:defaultValue="@array/tool_values" android:entries="@array/tool_entries" android:entryValues="@array/tool_values" android:key="toolbar_keys" android:title="@string/pref_toolbar_keys" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="false" android:key="toolbar_open_default" android:title="@string/pref_toolbar_open" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
+        <PreferenceCategory android:title="@string/cat_clipboard" app:iconSpaceReserved="false">
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="clipboard_history" android:title="@string/pref_clip" android:summary="@string/pref_clip_sum" app:iconSpaceReserved="false" />
+            <Preference android:key="clear_clipboard" android:title="@string/pref_clear_clip" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
+    </PreferenceScreen>
+    <PreferenceScreen android:key="screen_voice" android:summary="@string/settings_voice_subtitle" android:title="@string/pref_voice" app:iconSpaceReserved="false">
+        <SwitchPreferenceCompat android:defaultValue="true" android:key="voice_input" android:title="@string/pref_voice_input" android:summary="@string/pref_voice_input_sum" app:iconSpaceReserved="false" />
+    </PreferenceScreen>
+    <PreferenceScreen android:key="screen_emoji" android:summary="@string/settings_emoji_subtitle" android:title="@string/pref_emoji" app:iconSpaceReserved="false">
+        <SwitchPreferenceCompat android:defaultValue="true" android:key="emoji_suggestions" android:title="@string/pref_emoji_sugg" android:summary="@string/pref_emoji_sugg_sum" app:iconSpaceReserved="false" />
+    </PreferenceScreen>
+    <PreferenceScreen android:key="screen_feedback" android:summary="@string/scr_feedback_sum" android:title="@string/scr_feedback" app:iconSpaceReserved="false">
+        <PreferenceCategory android:title="@string/cat_feedback" app:iconSpaceReserved="false">
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="haptic" android:title="@string/pref_haptic" app:iconSpaceReserved="false" />
+            <ListPreference android:defaultValue="medium" android:entries="@array/haptic_strength_entries" android:entryValues="@array/haptic_strength_values" android:key="haptic_strength" android:title="@string/pref_haptic_strength" app:iconSpaceReserved="false" app:useSimpleSummaryProvider="true" />
+            <SwitchPreferenceCompat android:defaultValue="false" android:key="sound" android:title="@string/pref_sound" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="false" android:key="typing_burst" android:title="@string/pref_typing_burst" android:summary="@string/pref_typing_burst_sum" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
+        <PreferenceCategory android:title="@string/cat_gestures" app:iconSpaceReserved="false">
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="trackpad_mode" android:title="@string/pref_trackpad" android:summary="@string/pref_trackpad_sum" app:iconSpaceReserved="false" />
+            <SeekBarPreference android:defaultValue="300" android:key="longpress_delay" android:max="700" android:title="@string/pref_longpress" app:iconSpaceReserved="false" app:min="200" app:showSeekBarValue="true" />
+            <SeekBarPreference android:defaultValue="400" android:key="repeat_delay" android:max="800" android:title="@string/pref_repeat_delay" android:summary="@string/pref_repeat_delay_sum" app:iconSpaceReserved="false" app:min="200" app:showSeekBarValue="true" />
+            <SeekBarPreference android:defaultValue="50" android:key="repeat_interval" android:max="150" android:title="@string/pref_repeat_interval" android:summary="@string/pref_repeat_interval_sum" app:iconSpaceReserved="false" app:min="20" app:showSeekBarValue="true" />
+        </PreferenceCategory>
+    </PreferenceScreen>
+    <PreferenceScreen android:key="screen_backup" android:summary="@string/scr_backup_sum" android:title="@string/scr_backup" app:iconSpaceReserved="false">
+        <PreferenceCategory android:title="@string/cat_backup" app:iconSpaceReserved="false">
+            <Preference android:key="backup_export" android:title="@string/pref_backup_export" android:summary="@string/pref_backup_sum" app:iconSpaceReserved="false" />
+            <Preference android:key="backup_import" android:title="@string/pref_backup_import" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
+        <PreferenceCategory android:title="@string/cat_data" app:iconSpaceReserved="false">
+            <SwitchPreferenceCompat android:defaultValue="false" android:key="contribute_data" android:title="@string/pref_contribute" android:summary="@string/pref_contribute_sum" app:iconSpaceReserved="false" />
+            <Preference android:key="export_training" android:title="@string/pref_export_training" android:summary="@string/pref_export_training_sum" app:iconSpaceReserved="false" />
+            <Preference android:key="clear_training_export" android:title="@string/pref_clear_training" android:summary="@string/pref_clear_training_sum" app:iconSpaceReserved="false" />
+        </PreferenceCategory>
+    </PreferenceScreen>
+    <PreferenceScreen android:key="screen_about" android:summary="@string/about_sum" android:title="@string/about_title" app:iconSpaceReserved="false">
+        <Preference android:selectable="false" android:summary="@string/about_text" android:title="@string/about_title" app:iconSpaceReserved="false" />
+    </PreferenceScreen>
+</PreferenceScreen>
