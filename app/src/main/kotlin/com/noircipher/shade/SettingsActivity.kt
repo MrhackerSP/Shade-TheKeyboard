@@ -17,6 +17,7 @@ import androidx.preference.EditTextPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.PreferenceManager
 import androidx.preference.SwitchPreferenceCompat
 import java.io.File
 import java.io.FileOutputStream
@@ -222,6 +223,16 @@ class SettingsActivity : AppCompatActivity() {
                 }
             for (k in listOf("color_bg", "color_key", "color_keyfn", "color_text", "color_accent")) {
                 findPreference<EditTextPreference>(k)?.setOnBindEditTextListener { it.hint = "#RRGGBB" }
+            }
+
+            // Resize keyboard: sets a flag that the IME reads on next input
+            // start. The IME shows the drag handle, the user resizes, and the
+            // handle auto-hides. We finish the settings activity so the user
+            // sees the keyboard with the handle.
+            click("resize_keyboard") {
+                PreferenceManager.getDefaultSharedPreferences(ctx)
+                    .edit().putBoolean("resize_mode_requested", true).apply()
+                requireActivity().finish()
             }
         }
 

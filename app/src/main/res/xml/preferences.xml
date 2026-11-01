@@ -65,6 +65,11 @@
             app:iconSpaceReserved="false"
             app:min="36"
             app:showSeekBarValue="true" />
+        <Preference
+            android:key="resize_keyboard"
+            android:title="@string/pref_resize_keyboard"
+            android:summary="@string/pref_resize_keyboard_sum"
+            app:iconSpaceReserved="false" />
         <SwitchPreferenceCompat
             android:defaultValue="true"
             android:key="key_borders"

@@ -67,6 +67,8 @@
     <!-- Appearance -->
     <string name="pref_theme">Theme</string>
     <string name="pref_key_height">Key height</string>
+    <string name="pref_resize_keyboard">Resize keyboard</string>
+    <string name="pref_resize_keyboard_sum">Show a drag handle above the keyboard to resize it live (SwiftKey-style). The handle disappears when you finish.</string>
     <string name="pref_key_borders">Key borders</string>
     <string name="pref_hints">Show number hints</string>
     <string name="pref_popup">Key preview popup</string>
@@ -77,7 +79,8 @@
     <string name="pref_float_offset_sum">Lift the keyboard up from the bottom of the screen (0 = docked). Drag the handle above the keyboard for live control.</string>
     <string name="keyboard_docked">Keyboard docked to bottom</string>
     <string name="keyboard_size_reset">Keyboard size reset to default</string>
-    <string name="resize_handle_hint">Drag to resize • Long-press then drag to move</string>
+    <string name="keyboard_resized">Keyboard resized</string>
+    <string name="resize_handle_hint">Drag the handle to resize • Long-press to move. Tap a key to finish.</string>
     <string name="pref_bg_pick">Background image</string>
     <string name="pref_bg_sum">Choose a picture to show behind the keys</string>
     <string name="pref_bg_clear">Remove background image</string>

@@ -444,19 +444,19 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             addView(clipPanel, FrameLayout.LayoutParams(MATCH, MATCH))
         }
 
-        // SwiftKey-style resize/float handle — a thin drag bar between the
-        // suggestion strip and the keyboard. Dragging it up/down resizes the
-        // keyboard live (adjusts key_height). Long-pressing then dragging
-        // moves the keyboard up from the bottom (floating offset).
+        // Resize/float handle — hidden by default (SwiftKey behavior).
+        // Only shown when the user enters "resize mode" from Settings →
+        // Appearance → Resize keyboard. When visible, the user drags it to
+        // resize the keyboard live. Long-press then drag to float the keyboard.
+        // The handle auto-hides after the user finishes dragging.
         resizeHandle = android.widget.FrameLayout(this).apply {
-            // Semi-transparent background so the handle area is visible
             background = GradientDrawable().apply {
                 cornerRadius = 0f
                 setColor(0x11000000)
             }
             isClickable = true
             isFocusable = false
-            // Centered grip bar (visual indicator that this is draggable)
+            visibility = View.GONE  // hidden by default
             val grip = View(context).apply {
                 background = GradientDrawable().apply {
                     cornerRadius = dp(2f).toFloat()
@@ -613,6 +613,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
 
         transitionToPanel(Panel.NONE, animate = false)
+
+        // Check if the user requested resize mode from Settings → Appearance →
+        // Resize keyboard. If so, show the drag handle; it auto-hides after
+        // the user finishes dragging (SwiftKey behavior).
+        if (prefs.getBoolean("resize_mode_requested", false)) {
+            prefs.edit().putBoolean("resize_mode_requested", false).apply()
+            setResizeMode(true)
+        }
 
         val action = editorInfo.imeOptions and EditorInfo.IME_MASK_ACTION
         val noEnterAction = (editorInfo.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
@@ -997,6 +1005,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             outgoing?.visibility = View.GONE
             incoming?.visibility = if (p == Panel.NONE) View.GONE else View.VISIBLE
             kb.visibility = if (p == Panel.NONE) View.VISIBLE else View.GONE
+            // Hide the suggestion strip and resize handle when a panel (emoji/clip)
+            // is open — they're not useful while browsing emoji, and showing them
+            // creates a dead strip of wasted space above the panel.
+            strip.visibility = if (p == Panel.NONE) View.VISIBLE else View.GONE
+            if (this::resizeHandle.isInitialized) {
+                resizeHandle.visibility = if (p == Panel.NONE && resizeModeActive) View.VISIBLE else View.GONE
+            }
             refreshStrip()
             return
         }
@@ -1034,6 +1049,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
 
         kb.visibility = if (p == Panel.NONE) View.VISIBLE else View.GONE
+        // Hide the suggestion strip and resize handle when a panel is open.
+        strip.visibility = if (p == Panel.NONE) View.VISIBLE else View.GONE
+        if (this::resizeHandle.isInitialized) {
+            resizeHandle.visibility = if (p == Panel.NONE && resizeModeActive) View.VISIBLE else View.GONE
+        }
         if (p == Panel.CLIP) clipPanel.refresh()
         refreshStrip()
     }
@@ -1174,6 +1194,15 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     }
                     // Haptic feedback on release
                     v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                    // SwiftKey behavior: after the user finishes dragging, the
+                    // resize handle auto-hides. The keyboard stays at the new
+                    // size; the handle only reappears if the user re-enters
+                    // resize mode from settings.
+                    if (resizeModeActive) {
+                        resizeModeActive = false
+                        resizeHandle.visibility = View.GONE
+                        Toast.makeText(this@ShadeService, R.string.keyboard_resized, Toast.LENGTH_SHORT).show()
+                    }
                     return true
                 }
             }
@@ -1209,6 +1238,30 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
         kb.requestLayout()
     }
+
+    /**
+     * Toggles the keyboard's "resize mode" — like SwiftKey's resize settings.
+     *
+     * When active, the drag handle appears above the keyboard so the user can
+     * drag it to resize live. When deactivated, the handle disappears and the
+     * keyboard returns to normal typing mode.
+     *
+     * Called from SettingsActivity via the "Resize keyboard" preference, which
+     * sends an intent that the IME picks up.
+     */
+    fun setResizeMode(active: Boolean) {
+        if (this::resizeHandle.isInitialized == false) return
+        resizeModeActive = active
+        resizeHandle.visibility = if (active) View.VISIBLE else View.GONE
+        if (active) {
+            // Show a toast hint so the user knows what to do
+            Toast.makeText(this, R.string.resize_handle_hint, Toast.LENGTH_SHORT).show()
+            // Force the keyboard to be visible so the user sees the live preview
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showSoftInputFromInputMethod(window?.attributes?.token, 0)
+        }
+    }
+    private var resizeModeActive = false
 
     private fun showOneHandedMenu() {
         val popup = PopupMenu(this, toggle)
@@ -1532,6 +1585,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onKey(code: Int) {
+        // If the user is in resize mode and taps any key, exit resize mode
+        // (SwiftKey behavior — tapping a key confirms the size and returns
+        // to normal typing).
+        if (resizeModeActive) {
+            setResizeMode(false)
+        }
         when (code) {
             Codes.SHIFT -> onShift()
             Codes.DELETE -> backspace()
