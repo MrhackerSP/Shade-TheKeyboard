@@ -1383,7 +1383,7 @@ class KeyboardView(context: Context) : View(context) {
                 cancelLong(p)
                 hidePreview()
                 p.lastX = x
-            p.lastY = y
+                p.lastY = y
                 startTrail(p.downX, p.downY)
             }
             if (p.swiping) {
