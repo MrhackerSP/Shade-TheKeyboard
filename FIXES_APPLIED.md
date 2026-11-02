@@ -522,3 +522,34 @@ running the full pipeline.
 - Added system-bar inset padding to SettingsActivity.
 - New "Vibration strength" setting (default Medium = previous behaviour) + VIBRATE permission.
 - Key press / popup timings made snappier (30 / 55 / 60 ms).
+
+---
+
+# Settings crash fixes
+
+1. **Crash on opening any settings row:** `updateActionBar()` called `ActionBar.setTitle(0)` (title resource id 0 ->
+   `Resources.NotFoundException`) every time it ran outside a sub-screen, i.e. on the first tap and on Back. The title is
+   now read from the visible fragment's arguments (survives rotation/process restore) and the blank case uses `setTitle("")`.
+2. **Crash in the settings list / keyboard (`ClassCastException`):** `keyboard_offset_y` was a `SeekBarPreference` (Int)
+   but the keyboard stored/read it as a Float. Both sides now use Int via `PrefsMigration`; a legacy Float value is
+   converted on startup of the settings screen and of the keyboard.
+3. **Main menu showing through the sub-screens:** the fragment replaced `android.R.id.content` but the menu stays in that
+   container, so the transparent preference list drew over it. The fragment now has an opaque background.
+4. **Language list never refreshed:** `refreshLanguagePref()` looked up `active_languages`; the preference key is
+   `dictionaries`.
+5. Double-taps on a settings row no longer stack two fragments; ProGuard keeps `Log.w`/`Log.e` again.
+
+---
+
+# Suggestion casing and key preview fixes
+
+1. **Suggestions follow Shift / Caps Lock.** New `SuggestionCasing` (pure Kotlin, unit-tested): Caps Lock -> ALL CAPS;
+   Shift armed (manual, or auto-caps after ". ") -> Sentence case; a word typed with a leading capital stays Title case
+   after Shift is consumed; a word typed in capitals stays in capitals. Emoji, punctuation, numbers and the clipboard
+   chip are never re-cased. The bar re-cases immediately when Shift/Caps changes, and tapping a suggestion commits the
+   text that was shown. Learning and statistics still use the raw lowercase word.
+2. **Stale suggestions:** `onFinishInputView`/`onDestroy` cleared the candidate list but not the three on-screen slots, so
+   old words could stay visible in the next field. Both now go through `resetCandidates()`.
+3. **Key preview only on the bottom letter row:** rows whose bubble doesn't fit inside the keyboard use a `PopupWindow`.
+   Its x/y are relative to the IME window, but the code passed screen coordinates (`getLocationOnScreen`), which pushed
+   the bubble off-screen for the first two rows (and their long-press accent grids). Now `getLocationInWindow`.

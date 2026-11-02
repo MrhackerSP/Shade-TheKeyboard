@@ -13,6 +13,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.preference.EditTextPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceCategory
@@ -27,10 +28,10 @@ import java.io.FileOutputStream
 
 class SettingsActivity : AppCompatActivity() {
 
-    private var currentScreenTitleRes: Int = 0
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Must run before any preference screen is built (see PrefsMigration).
+        PrefsMigration.run(PreferenceManager.getDefaultSharedPreferences(this))
         setContentView(R.layout.activity_settings)
         supportActionBar?.apply {
             elevation = 0f
@@ -40,6 +41,8 @@ class SettingsActivity : AppCompatActivity() {
         supportFragmentManager.addOnBackStackChangedListener {
             updateActionBar()
         }
+        // Also covers rotation / process restore, where fragments come back already on the back stack.
+        updateActionBar()
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(findViewById<View>(android.R.id.content)) { v, insets ->
             val bars = insets.getInsets(
                 androidx.core.view.WindowInsetsCompat.Type.systemBars() or
@@ -69,11 +72,19 @@ class SettingsActivity : AppCompatActivity() {
         Toast.makeText(this, res, Toast.LENGTH_SHORT).show()
     }
 
+    /**
+     * Title comes from the fragment currently on screen (stored in its arguments), so it survives
+     * rotation and process death. ActionBar.setTitle(0) throws Resources.NotFoundException, which is
+     * what used to crash the app on the first tap of any settings row.
+     */
     private fun updateActionBar() {
-        val canNavigateBack = supportFragmentManager.backStackEntryCount > 0
-        supportActionBar?.setDisplayHomeAsUpEnabled(canNavigateBack)
-        supportActionBar?.setDisplayShowTitleEnabled(canNavigateBack)
-        supportActionBar?.setTitle(if (canNavigateBack) currentScreenTitleRes else 0)
+        val bar = supportActionBar ?: return
+        val shown = supportFragmentManager.findFragmentById(android.R.id.content) as? SettingsFragment
+        val titleRes = shown?.arguments?.getInt(ARG_TITLE, 0) ?: 0
+        val onSubScreen = supportFragmentManager.backStackEntryCount > 0 && titleRes != 0
+        bar.setDisplayHomeAsUpEnabled(onSubScreen)
+        bar.setDisplayShowTitleEnabled(onSubScreen)
+        if (onSubScreen) bar.setTitle(titleRes) else bar.setTitle("")
     }
 
     override fun onSupportNavigateUp(): Boolean {
@@ -85,17 +96,23 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun openScreen(rootKey: String, titleRes: Int) {
-        currentScreenTitleRes = titleRes
-        updateActionBar()
+        val fm = supportFragmentManager
+        // Ignore double-taps and taps arriving while the activity state is being saved.
+        if (fm.isStateSaved || fm.backStackEntryCount > 0) return
         val fragment = SettingsFragment().apply {
             arguments = Bundle().apply {
                 putString(PreferenceFragmentCompat.ARG_PREFERENCE_ROOT, rootKey)
+                putInt(ARG_TITLE, titleRes)
             }
         }
-        supportFragmentManager.beginTransaction()
+        fm.beginTransaction()
             .replace(android.R.id.content, fragment)
             .addToBackStack(null)
             .commit()
+    }
+
+    companion object {
+        internal const val ARG_TITLE = "shade_screen_title"
     }
 
     class SettingsFragment : PreferenceFragmentCompat() {
@@ -250,6 +267,9 @@ class SettingsActivity : AppCompatActivity() {
 
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
             super.onViewCreated(view, savedInstanceState)
+            // The main menu stays in the activity's content view underneath this fragment, so the
+            // fragment must be opaque or the menu shows through the gaps between the tiles.
+            view.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.settings_background))
             // Pitch-black tiles: no list dividers, a little breathing room top and bottom.
             setDivider(null)
             val d = resources.displayMetrics.density
@@ -335,7 +355,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         private fun refreshLanguagePref() {
-            val pref = findPreference<MultiSelectListPreference>("active_languages") ?: return
+            val pref = findPreference<MultiSelectListPreference>("dictionaries") ?: return
             val fromLanguageDirs = try {
                 requireContext().assets.list("languages")
                     ?.filter { dir -> !dir.contains('.') }

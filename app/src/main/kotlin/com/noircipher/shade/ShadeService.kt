@@ -228,7 +228,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // values float the keyboard up so the user can position it wherever is
     // comfortable, like SwiftKey's "undock" feature.
     private var keyboardOffsetY = 0f
+    // Raw suggestions as produced by the engines (usually lowercase). What the user sees is
+    // `shownWords`: the same list re-cased to match the keyboard state (see SuggestionCasing).
     private var candidates: List<String> = emptyList()
+    private var shownWords: List<String> = emptyList()
     private var info: EditorInfo? = null
     private var bgBmp: Bitmap? = null
     private var bgStamp = -1L
@@ -289,6 +292,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onCreate() {
         super.onCreate()
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        PrefsMigration.run(prefs)
         dict = WordDictionary(this)
         voice = VoiceInputController(this) { text -> commitVoiceText(text) }
         clips = ClipboardStore(this)
@@ -333,7 +337,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         if (this::kb.isInitialized) kb.release()
         bgBmp = null
-        candidates = emptyList()
+        resetCandidates()
         composing.clear()
         undoStack.clear()
         tail.setLength(0)
@@ -650,7 +654,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         suggestDebounceJob?.cancel()
         correctionJob?.cancel()
         info = null
-        candidates = emptyList()
+        resetCandidates()
         composing.clear()
         undoStack.clear()
         tail.setLength(0)
@@ -821,7 +825,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // Restore the saved floating offset (if the user previously undocked
         // the keyboard). Called after layout so translationY is applied to
         // the final measured view.
-        keyboardOffsetY = prefs.getFloat("keyboard_offset_y", 0f)
+        keyboardOffsetY = PrefsMigration.readOffsetY(prefs)
         root.post { applyKeyboardOffset() }
 
         applyMode(mode, force = true)
@@ -1159,7 +1163,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     downY = event.rawY
                     downTime = SystemClock.uptimeMillis()
                     startKeyHeight = prefs.getInt("key_height", 50)
-                    startOffsetY = prefs.getFloat("keyboard_offset_y", 0f)
+                    startOffsetY = PrefsMigration.readOffsetY(prefs)
                     isFloatMode = false
                     longPressFired = false
                     longPressCheck.postDelayed(longPressRunnable, longPressTimeout)
@@ -1200,7 +1204,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     longPressCheck.removeCallbacks(longPressRunnable)
                     // Persist the floating offset
                     if (isFloatMode) {
-                        prefs.edit().putFloat("keyboard_offset_y", keyboardOffsetY).apply()
+                        PrefsMigration.writeOffsetY(prefs, keyboardOffsetY)
                     }
                     // Haptic feedback on release
                     v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
@@ -1303,7 +1307,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 4 -> {
                     // Dock: reset the floating offset to 0
                     keyboardOffsetY = 0f
-                    prefs.edit().putFloat("keyboard_offset_y", 0f).apply()
+                    PrefsMigration.writeOffsetY(prefs, 0f)
                     applyKeyboardOffset()
                     Toast.makeText(this, R.string.keyboard_docked, Toast.LENGTH_SHORT).show()
                 }
@@ -1915,6 +1919,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // (single or caps-lock) clears the override.
         if (shiftState == 0 && prev != 0) userShiftOverride = true
         else if (shiftState != 0) userShiftOverride = false
+        refreshCandidateCase()
     }
 
     private fun backspace() {
@@ -2212,6 +2217,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
         }
         kb.shiftState = shiftState
+        refreshCandidateCase()
     }
 
     // ------------------------------------------------------------------ suggestions (cascade)
@@ -2859,6 +2865,48 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    /** Case the suggestion bar should use right now (see [SuggestionCasing.styleFor]). */
+    private fun currentSuggestionStyle(): SuggestionCasing.Style {
+        val typed = when {
+            composing.isNotEmpty() -> composing.toString()
+            !canCompose -> currentTypedWordFromField()
+            else -> ""
+        }
+        return SuggestionCasing.styleFor(mode == Mode.LETTERS, shiftState, typed)
+    }
+
+    private fun casedCandidates(raw: List<String>): List<String> {
+        if (raw.isEmpty()) return raw
+        val style = currentSuggestionStyle() // computed once per update, not per suggestion
+        return raw.map { SuggestionCasing.apply(it, style, lastClipText) }
+    }
+
+    /** Re-cases the visible suggestions after Shift / Caps Lock changed, without recomputing them. */
+    private fun refreshCandidateCase() {
+        if (!this::slots.isInitialized || candidates.isEmpty()) return
+        val display = casedCandidates(candidates)
+        if (display == shownWords) return
+        shownWords = display
+        for (i in 0 until 3) {
+            val w = display.getOrNull(i) ?: ""
+            if (slots[i].text.toString() != w) slots[i].text = w
+        }
+    }
+
+    /** Empties both the candidate lists and the three slots (stale words must not survive a field change). */
+    private fun resetCandidates() {
+        candidates = emptyList()
+        shownWords = emptyList()
+        if (!this::slots.isInitialized) return
+        slotAnimator?.cancel()
+        for (i in 0 until 3) {
+            slots[i].text = ""
+            slotOlds[i].text = ""
+            slotOlds[i].alpha = 0f
+            slotOlds[i].visibility = View.GONE
+        }
+    }
+
     private fun setCandidates(list: List<String>) {
         // Clear the clipboard chip whenever real suggestions arrive, so it
         // doesn't reappear after the user starts typing. When the list is empty
@@ -2874,24 +2922,30 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             } else {
                 list
             }
-        if (effective == candidates) return
-        if (insightsAllowed() && effective.isNotEmpty()) typingStatsStore.recordSuggestionShown()
-        // 4h — track global shown-count for the acceptance-rate adapter.
-        if (personalLearningAllowed() && effective.isNotEmpty()) {
-            acceptanceRateAdapter.recordShown()
-        }
-        if (calibratorLearningAllowed()) {
-            effective.take(3).filter { it.isNotEmpty() }.forEach { w ->
-                lastRawRankerScores[w]?.let { raw -> confidenceCalibrator.recordShown(raw) }
+        // Re-case for the current keyboard state (Shift / Caps Lock / typed capital).
+        val display = casedCandidates(effective)
+        val rawChanged = effective != candidates
+        if (!rawChanged && display == shownWords) return
+        if (rawChanged) {
+            if (insightsAllowed() && effective.isNotEmpty()) typingStatsStore.recordSuggestionShown()
+            // 4h — track global shown-count for the acceptance-rate adapter.
+            if (personalLearningAllowed() && effective.isNotEmpty()) {
+                acceptanceRateAdapter.recordShown()
+            }
+            if (calibratorLearningAllowed()) {
+                effective.take(3).filter { it.isNotEmpty() }.forEach { w ->
+                    lastRawRankerScores[w]?.let { raw -> confidenceCalibrator.recordShown(raw) }
+                }
             }
         }
-        val old = candidates
+        val old = shownWords
         candidates = effective
+        shownWords = display
         slotAnimator?.cancel()
 
         var anyChanged = false
         for (i in 0 until 3) {
-            val newWord = effective.getOrNull(i) ?: ""
+            val newWord = display.getOrNull(i) ?: ""
             val oldWord = old.getOrNull(i) ?: ""
             if (newWord == oldWord) continue
             anyChanged = true
@@ -2941,6 +2995,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun pickSuggestion(i: Int) {
         val w = candidates.getOrNull(i) ?: return
         if (w.isEmpty()) return
+        // `w` (raw) is used for all learning/statistics; `shown` is what the user tapped and what is committed.
+        val shown = shownWords.getOrNull(i)?.takeIf { it.isNotEmpty() } ?: w
         // If the picked candidate was the clipboard chip, clear it so it
         // doesn't reappear after the text is committed.
         if (lastClipText != null && w == lastClipText) lastClipText = null
@@ -2991,16 +3047,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         try {
             if (composing.isNotEmpty()) {
                 composing.clear()
-                ic.commitText(w, 1)
+                ic.commitText(shown, 1)
             } else {
                 if (typed.isNotEmpty()) ic.deleteSurroundingText(typed.length, 0)
-                ic.commitText(w, 1)
+                ic.commitText(shown, 1)
             }
             if (typed.isNotEmpty() && tailValid && tail.endsWith(typed, ignoreCase = true)) {
                 popTail(typed.length)
             }
-            appendTail(w)
-            if (w.isNotEmpty() && w[0].isLetter()) {
+            appendTail(shown)
+            if (shown.isNotEmpty() && shown[0].isLetter()) {
                 ic.commitText(" ", 1)
                 appendTail(" ")
             }

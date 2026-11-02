@@ -11,13 +11,12 @@
 -allowaccessmodification
 -repackageclasses ''
 
-# Strip logging in release
+# Strip verbose logging in release. Keep Log.w / Log.e so real failures stay
+# visible in bug reports (adb logcat).
 -assumenosideeffects class android.util.Log {
     public static *** d(...);
     public static *** v(...);
     public static *** i(...);
-    public static *** w(...);
-    public static *** e(...);
 }
 
 # Keep preference XML inflation

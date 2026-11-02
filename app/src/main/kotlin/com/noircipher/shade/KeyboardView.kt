@@ -877,7 +877,14 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    /** Top-row keys have no room above them inside the keyboard, so float the preview in its own window. */
+    /**
+     * Top-row keys have no room above them inside the keyboard, so float the preview in its own window.
+     *
+     * PopupWindow x/y are relative to the window it is attached to - for a keyboard that is the IME
+     * window, which starts well below the top of the screen. The old code used screen coordinates
+     * (getLocationOnScreen), which pushed the bubble off-screen for every row that needs this popup
+     * (the first two rows), so only the bottom letter row showed a preview.
+     */
     private fun tryShowPopup(k: Key): Boolean {
         val h = rowHeight * 1.25f
         if (k.top + dp(6f) - h >= dp(1f)) return false
@@ -892,7 +899,7 @@ class KeyboardView(context: Context) : View(context) {
             bubble.bubbleW = bw
             bubble.bubbleH = h
             val loc = IntArray(2)
-            getLocationOnScreen(loc)
+            getLocationInWindow(loc)
             val cx = k.centerX.coerceIn(bw / 2f + dp(2f), width - bw / 2f - dp(2f))
             val x = (loc[0] + cx - pw / 2f).toInt()
             val y = (loc[1] + k.top + dp(6f) - h - pad).toInt()
@@ -1056,7 +1063,7 @@ class KeyboardView(context: Context) : View(context) {
         val endW = gridW
         val endH = gridH
         val loc = IntArray(2)
-        getLocationOnScreen(loc)
+        getLocationInWindow(loc)
         val cx = k.centerX.coerceIn(endW / 2f + dp(2f), width - endW / 2f - dp(2f))
 
         bubble.accentMode = true
