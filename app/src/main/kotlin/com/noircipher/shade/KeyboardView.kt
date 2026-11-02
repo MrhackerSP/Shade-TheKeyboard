@@ -20,7 +20,6 @@ import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
-import android.widget.PopupWindow
 import androidx.core.graphics.ColorUtils
 import com.noircipher.shade.motion.ShadeMotion
 import java.util.ArrayDeque
@@ -142,9 +141,11 @@ class KeyboardView(context: Context) : View(context) {
     private val previewHue = Paint(Paint.ANTI_ALIAS_FLAG)
     private val previewText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val previewShadow = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var previewPopup: PopupWindow? = null
-    private var previewBubble: PreviewBubble? = null
+    // Shared popup layer: every key preview and accent grid (all rows) is drawn here, above the whole
+    // keyboard window. The in-view drawing below is only a fallback if the layer can't attach.
+    private val popupLayer = KeyPopupOverlay(this) { kbTheme }
     private var popupActive = false
+    private var altUsesOverlay = false
 
     private var altShown = false
     private var altItems: List<String> = emptyList()
@@ -528,7 +529,7 @@ class KeyboardView(context: Context) : View(context) {
 
         if (trailActive && trailAlpha > 0f) drawTrail(c)
         if (burstActive && typingBurstEnabled) drawTypingBurst(c)
-        if (altShown && altItems.isNotEmpty()) drawAltStrip(c)
+        if (altShown && altItems.isNotEmpty() && !altUsesOverlay) drawAltStrip(c)
         previewKey?.let { if (previewProgress > 0f && !popupActive) drawKeyPreview(c, it) }
     }
 
@@ -783,168 +784,32 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun showPreviewFor(k: Key) {
         if (!showPreview) return
+        if (popupLayer.prepare()) {
+            // Same bubble + animation for every row, drawn above everything in the keyboard window.
+            previewKey = null
+            popupActive = true
+            popupLayer.showPreview(display(k.label), k.left, k.top, k.right, rowHeight)
+            return
+        }
+        // Fallback: draw inside the keyboard view (cannot extend above it).
+        popupActive = false
         previewKey = k
-        popupActive = tryShowPopup(k)
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = ShadeMotion.KEY_POPUP_IN_MS
             interpolator = ShadeMotion.FAST_OUT_SLOW_IN
-            // TODO(perf): this animates only previewKey's popup, but calls whole-view
-            // invalidate(). Could use a dirty rect = previewKey.invalidateRect expanded
-            // upward by ~80 dp (popup bubble extends above the key). Skipped for now
-            // — animators are short (40–180 ms) and SurfaceFlinger handles dirty tracking.
             addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
             start()
         }
     }
 
-    private inner class PreviewBubble(ctx: Context) : View(ctx) {
-        var label = ""
-        var bubbleW = 0f
-        var bubbleH = 0f
-        // Gboard-style morph: when the bubble is in accent mode, it draws the
-        // accent grid instead of a single character. The morphProgress (0→1)
-        // animates the bubble's size from single-char to accent-grid while
-        // cross-fading the content.
-        var accentMode = false
-        var morphProgress = 0f
-        var accentItems: List<String> = emptyList()
-        var accentSel = 0
-        var accentCols = 1
-        var accentRows = 1
-        var accentCell = 0f
-        private val box = RectF()
-        private val selRect = RectF()
-
-        override fun onDraw(c: Canvas) {
-            val pad = (width - bubbleW) / 2f
-            val r = dp(14f)
-            box.set(pad, pad + dp(2f), pad + bubbleW, pad + bubbleH + dp(2f))
-            previewShadow.color = ColorUtils.setAlphaComponent(0x000000, 0x40)
-            c.drawRoundRect(box, r, r, previewShadow)
-            box.set(pad, pad, pad + bubbleW, pad + bubbleH)
-            previewBg.color = kbTheme.popupBg
-            c.drawRoundRect(box, r, r, previewBg)
-
-            if (accentMode && morphProgress > 0.01f) {
-                val alpha = (morphProgress * 255f).toInt().coerceIn(0, 255)
-                drawAccentGrid(c, pad, alpha)
-                if (morphProgress < 0.99f) {
-                    val charAlpha = ((1f - morphProgress) * 255f).toInt().coerceIn(0, 255)
-                    drawSingleChar(c, pad, charAlpha)
-                }
-            } else {
-                drawSingleChar(c, pad, 255)
-            }
-        }
-
-        private fun drawSingleChar(c: Canvas, pad: Float, alpha: Int) {
-            previewText.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
-            previewText.textSize = min(bubbleH * 0.5f, dp(32f))
-            c.drawText(
-                label, pad + bubbleW / 2f,
-                pad + bubbleH / 2f - (previewText.ascent() + previewText.descent()) / 2f,
-                previewText
-            )
-        }
-
-        private fun drawAccentGrid(c: Canvas, pad: Float, alpha: Int) {
-            if (accentItems.isEmpty()) return
-            val cell = accentCell
-            val stripW = cell * accentCols
-            val stripH = cell * accentRows
-            val left = pad + (bubbleW - stripW) / 2f
-            val top = pad + (bubbleH - stripH) / 2f
-            val row = accentSel / accentCols
-            val col = accentSel % accentCols
-            val selLeft = left + col * cell + dp(4f)
-            val selRight = left + (col + 1) * cell - dp(4f)
-            val selTop = top + row * cell + dp(4f)
-            val selBottom = top + (row + 1) * cell - dp(4f)
-            selRect.set(selLeft, selTop, selRight, selBottom)
-            altSelPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, alpha)
-            c.drawRoundRect(selRect, dp(12f), dp(12f), altSelPaint)
-            altText.textSize = min(cell * 0.55f, dp(22f))
-            for (i in accentItems.indices) {
-                val rrow = i / accentCols
-                val ccol = i % accentCols
-                val baseColor = if (i == accentSel) kbTheme.accentText else kbTheme.text
-                altText.color = ColorUtils.setAlphaComponent(baseColor, alpha)
-                val cx = left + ccol * cell + cell / 2f
-                val cy = top + rrow * cell + cell / 2f - (altText.ascent() + altText.descent()) / 2f
-                c.drawText(accentItems[i].toString(), cx, cy, altText)
-            }
-        }
-    }
-
-    /**
-     * Top-row keys have no room above them inside the keyboard, so float the preview in its own window.
-     *
-     * PopupWindow x/y are relative to the window it is attached to - for a keyboard that is the IME
-     * window, which starts well below the top of the screen. The old code used screen coordinates
-     * (getLocationOnScreen), which pushed the bubble off-screen for every row that needs this popup
-     * (the first two rows), so only the bottom letter row showed a preview.
-     */
-    private fun tryShowPopup(k: Key): Boolean {
-        val h = rowHeight * 1.25f
-        if (k.top + dp(6f) - h >= dp(1f)) return false
-        if (windowToken == null) return false
-        return try {
-            val bw = (k.right - k.left) * 1.3f
-            val pad = dp(6f)
-            val pw = (bw + pad * 2f).toInt()
-            val ph = (h + pad * 2f).toInt()
-            val bubble = previewBubble ?: PreviewBubble(context).also { previewBubble = it }
-            bubble.label = display(k.label)
-            bubble.bubbleW = bw
-            bubble.bubbleH = h
-            val loc = IntArray(2)
-            getLocationInWindow(loc)
-            val cx = k.centerX.coerceIn(bw / 2f + dp(2f), width - bw / 2f - dp(2f))
-            val x = (loc[0] + cx - pw / 2f).toInt()
-            val y = (loc[1] + k.top + dp(6f) - h - pad).toInt()
-            var pop = previewPopup
-            if (pop == null) {
-                pop = PopupWindow(bubble, pw, ph).apply {
-                    isTouchable = false
-                    isFocusable = false
-                    isClippingEnabled = false
-                    inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-                    setBackgroundDrawable(null)
-                    animationStyle = 0
-                }
-                previewPopup = pop
-            }
-            bubble.animate().cancel()
-            bubble.pivotX = pw / 2f
-            bubble.pivotY = ph - pad
-            bubble.scaleX = 0.85f
-            bubble.scaleY = 0.85f
-            bubble.alpha = 0.3f
-            if (pop.isShowing) pop.update(x, y, pw, ph) else pop.showAtLocation(this, Gravity.NO_GRAVITY, x, y)
-            bubble.invalidate()
-            bubble.animate()
-                .scaleX(1f)
-                .scaleY(1f)
-                .alpha(1f)
-                .setDuration(ShadeMotion.KEY_POPUP_IN_MS)
-                .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
-                .start()
-            true
-        } catch (_: Exception) {
-            dismissPreviewPopup()
-            false
-        }
-    }
-
-    private fun dismissPreviewPopup() {
-        previewBubble?.animate()?.cancel()
-        try { previewPopup?.dismiss() } catch (_: Exception) {}
-    }
-
     private fun hidePreview() {
+        if (popupActive) {
+            popupActive = false
+            popupLayer.hidePreview()
+            return
+        }
         if (previewKey == null) return
-        dismissPreviewPopup()
         previewAnimator?.cancel()
         previewAnimator = ValueAnimator.ofFloat(previewProgress, 0f).apply {
             duration = ShadeMotion.KEY_POPUP_OUT_MS
@@ -1014,25 +879,27 @@ class KeyboardView(context: Context) : View(context) {
         val origin = (keyCenter - pw / 2f)
             .coerceIn(0f, maxOf(0f, (width - pw).toFloat()))
 
+        // The shared popup layer can reach up into the suggestion strip, so top-row grids stay fully visible.
+        val useOverlay = popupLayer.prepare()
+        val minTop = if (useOverlay) popupLayer.minTopInOwner() else dp(2f)
+
         altItems = chars
         altOriginX = origin
         altCell = cell
-        altTop = (k.top - dp(6f) - ph).coerceAtLeast(dp(2f))
+        altTop = (k.top - dp(6f) - ph).coerceAtLeast(minTop)
         altShown = true
         val startCol = ((p.lastX - origin) / cell).toInt().coerceIn(0, altCols - 1)
         val startRow = ((p.lastY - altTop) / cell).toInt().coerceIn(0, altRows - 1)
         altSel = (startRow * altCols + startCol).coerceIn(0, n - 1)
 
-        // Gboard-style morph: if the preview popup bubble is currently showing,
-        // morph it into the accent grid instead of dismissing + showing a
-        // separate canvas strip. If no popup is active (showPreview off),
-        // fall back to the canvas-drawn alt strip.
-        val bubble = previewBubble
-        val pop = previewPopup
-        if (popupActive && bubble != null && pop != null && pop.isShowing) {
-            morphBubbleToAccent(k, chars, cell, pw, ph)
+        altAnimator?.cancel()
+        if (useOverlay) {
+            // Gboard-style: the key bubble morphs into the accent grid.
+            altUsesOverlay = true
+            altProgress = 1f
+            popupLayer.showAccents(chars, altCols, altRows, cell, origin, altTop, altSel)
         } else {
-            altAnimator?.cancel()
+            altUsesOverlay = false
             altAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
                 duration = ShadeMotion.KEY_POPUP_IN_MS
                 interpolator = ShadeMotion.FAST_OUT_SLOW_IN
@@ -1042,64 +909,6 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    /**
-     * Morphs the existing single-char preview bubble into the accent grid.
-     * Animates the bubble's width/height from single-char size to accent-grid
-     * size while cross-fading the content (char → grid). The bubble stays
-     * centered on the key throughout (Gboard-style transform).
-     */
-    private fun morphBubbleToAccent(
-        k: Key,
-        chars: List<String>,
-        cell: Float,
-        gridW: Float,
-        gridH: Float
-    ) {
-        val bubble = previewBubble ?: return
-        val pop = previewPopup ?: return
-        val pad = dp(6f)
-        val startW = bubble.bubbleW
-        val startH = bubble.bubbleH
-        val endW = gridW
-        val endH = gridH
-        val loc = IntArray(2)
-        getLocationInWindow(loc)
-        val cx = k.centerX.coerceIn(endW / 2f + dp(2f), width - endW / 2f - dp(2f))
-
-        bubble.accentMode = true
-        bubble.accentItems = chars
-        bubble.accentCols = altCols
-        bubble.accentRows = altRows
-        bubble.accentCell = cell
-        bubble.accentSel = altSel
-        bubble.morphProgress = 0f
-
-        bubble.animate().cancel()
-        bubble.scaleX = 1f
-        bubble.scaleY = 1f
-        bubble.alpha = 1f
-
-        val morph = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = ShadeMotion.KEY_POPUP_IN_MS
-            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
-            addUpdateListener {
-                val t = it.animatedValue as Float
-                bubble.morphProgress = t
-                bubble.bubbleW = startW + (endW - startW) * t
-                bubble.bubbleH = startH + (endH - startH) * t
-                bubble.accentSel = altSel
-                val curPw = (bubble.bubbleW + pad * 2f).toInt()
-                val curPh = (bubble.bubbleH + pad * 2f).toInt()
-                val curX = (loc[0] + cx - curPw / 2f).toInt()
-                val curY = (loc[1] + k.top + dp(6f) - bubble.bubbleH - pad).toInt()
-                try { pop.update(curX, curY, curPw, curPh) } catch (_: Exception) {}
-                bubble.invalidate()
-            }
-            start()
-        }
-        altAnimator = morph
-    }
-
     private fun updateAlt(p: Pointer, x: Float, y: Float) {
         if (!altShown || altItems.isEmpty()) return
         val col = ((x - altOriginX) / altCell).toInt().coerceIn(0, altCols - 1)
@@ -1107,12 +916,7 @@ class KeyboardView(context: Context) : View(context) {
         val idx = (row * altCols + col).coerceIn(0, altItems.size - 1)
         if (idx != altSel) {
             altSel = idx
-            previewBubble?.let { b ->
-                if (b.accentMode) {
-                    b.accentSel = idx
-                    b.invalidate()
-                }
-            }
+            if (altUsesOverlay) popupLayer.setAccentSelection(idx)
             hapticTick()
             invalidate()
         }
@@ -1121,11 +925,13 @@ class KeyboardView(context: Context) : View(context) {
     private fun dismissAlt() {
         if (!altShown) return
         altAnimator?.cancel()
-        val bubble = previewBubble
-        if (bubble != null && bubble.accentMode) {
-            bubble.accentMode = false
-            bubble.morphProgress = 0f
-            bubble.accentItems = emptyList()
+        if (altUsesOverlay) {
+            // The layer keeps its own copy of the grid and animates it out.
+            popupLayer.hideAccents()
+            altUsesOverlay = false
+            altShown = false
+            altItems = emptyList()
+            return
         }
         altAnimator = ValueAnimator.ofFloat(altProgress, 0f).apply {
             duration = ShadeMotion.KEY_POPUP_OUT_MS
@@ -1642,7 +1448,9 @@ class KeyboardView(context: Context) : View(context) {
             recyclePointer(p)
         }
         pointers.clear()
-        dismissPreviewPopup()
+        popupLayer.detach() // re-attached on the next key press, which also covers a new IME window
+        popupActive = false
+        altUsesOverlay = false
         previewKey = null
         altShown = false
         altItems = emptyList()
@@ -1668,7 +1476,9 @@ class KeyboardView(context: Context) : View(context) {
         pointerPool.clear()
         slidePath.clear()
         slidePointerId = -1
-        dismissPreviewPopup()
+        popupLayer.detach()
+        popupActive = false
+        altUsesOverlay = false
         previewKey = null
         altShown = false
         altItems = emptyList()
