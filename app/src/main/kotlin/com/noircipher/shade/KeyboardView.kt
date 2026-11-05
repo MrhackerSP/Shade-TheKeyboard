@@ -233,6 +233,9 @@ class KeyboardView(context: Context) : View(context) {
     private val slidePath = ArrayDeque<FloatArray>()
     // Touch geometry: per-character offsets for the word being typed
     private val touchOffsets = ArrayList<TouchGeometry.KeyTouch>()
+    // Gesture engine — ported from FUTO/AOSP, handles sampling + trail rendering
+    private var gestureEngine: GestureEngine? = null
+    private var gestureStartTime = 0L
 
     private fun obtainPointer(k: Key?, x: Float, y: Float): Pointer {
         val p = pointerPool.pollFirst() ?: Pointer()
@@ -702,23 +705,34 @@ class KeyboardView(context: Context) : View(context) {
     // ------------------------------------------------------------------ spacebar trail
 
     private fun drawTrail(c: Canvas) {
+        // Draw the basic space-swipe trail (cursor movement)
         val a = trailAlpha
-        if (a <= 0f) return
-        val x0 = trailStartX
-        val y0 = trailStartY
-        val x1 = trailEndX
-        val y1 = trailEndY
+        if (a > 0f) {
+            val x0 = trailStartX
+            val y0 = trailStartY
+            val x1 = trailEndX
+            val y1 = trailEndY
 
-        trailGlowPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0x22).toInt())
-        trailGlowPaint.strokeWidth = dp(10f)
-        c.drawLine(x0, y0, x1, y1, trailGlowPaint)
+            trailGlowPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0x22).toInt())
+            trailGlowPaint.strokeWidth = dp(10f)
+            c.drawLine(x0, y0, x1, y1, trailGlowPaint)
 
-        trailPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xAA).toInt())
-        trailPaint.strokeWidth = dp(3f)
-        c.drawLine(x0, y0, x1, y1, trailPaint)
+            trailPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xAA).toInt())
+            trailPaint.strokeWidth = dp(3f)
+            c.drawLine(x0, y0, x1, y1, trailPaint)
 
-        fill.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xCC).toInt())
-        c.drawCircle(x1, y1, dp(5f), fill)
+            fill.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xCC).toInt())
+            c.drawCircle(x1, y1, dp(5f), fill)
+        }
+
+        // Draw the gesture engine trail (glide typing) with fade + width taper
+        val ge = gestureEngine
+        if (ge != null) {
+            ge.setTrailColor(ColorUtils.setAlphaComponent(kbTheme.accent, 0x80))
+            ge.drawTrail(c, trailPaint)
+            // Schedule redraw for trail animation
+            if (ge.getLength() > 0) invalidate()
+        }
     }
 
     private fun startTrail(x: Float, y: Float) {
@@ -1082,6 +1096,14 @@ class KeyboardView(context: Context) : View(context) {
             slidePointerId = id
             slidePath.clear()
             slidePath.addLast(floatArrayOf(x, y))
+
+            // Initialize gesture engine on first key down
+            val keyW = if (rows.isNotEmpty() && rows[0].isNotEmpty()) {
+                rows[0][0].right - rows[0][0].left
+            } else 100f
+            if (gestureEngine == null) gestureEngine = GestureEngine(keyW)
+            gestureStartTime = android.os.SystemClock.uptimeMillis()
+            gestureEngine?.onDown(x, y, 0)
         }
         feedback(k)
         onKeyBurst()
@@ -1194,11 +1216,18 @@ class KeyboardView(context: Context) : View(context) {
         if (id == slidePointerId && k.kind == KeyKind.CHAR) {
             slidePath.addLast(floatArrayOf(x, y))
             if (slidePath.size > 240) slidePath.removeFirst()
-            // Glide live preview: decode on the fly so the user sees the word forming
-            if (slidePath.size >= 6 && slidePath.size % 4 == 0) {
-                listener?.onGlidePreview(slidePathToWord(slidePath.toList()))
+
+            // Feed gesture engine for proper sampling + trail
+            val elapsed = (android.os.SystemClock.uptimeMillis() - gestureStartTime).toInt()
+            gestureEngine?.addEventPoint(x, y, elapsed)
+
+            // Glide live preview using the gesture engine's sampled path
+            val sampledPath = gestureEngine?.getIncrementalPath()
+            if (sampledPath != null && sampledPath.size >= 6) {
+                listener?.onGlidePreview(slidePathToWord(sampledPath))
             }
-            // Draw glide trail
+
+            // Draw trail via gesture engine
             updateTrail(x, y)
         }
         if (altShown) {
@@ -1315,11 +1344,12 @@ class KeyboardView(context: Context) : View(context) {
 
         var slideConsumed = false
         if (!cancel && id == slidePointerId && slidePath.size >= 4 && slidePathSpread(slidePath) > dp(48f)) {
-            // Glide typing: send the path for word decoding
-            val path = slidePath.toList()
+            // Gesture typing: use the gesture engine's properly sampled path
+            val path = gestureEngine?.getPath() ?: slidePath.toList()
             slideConsumed = listener?.onSwipePath(path) == true
             if (slideConsumed) p.consumed = true
-            // Also clear any glide preview
+            // Add trail points and clear preview
+            gestureEngine?.addTrail()
             if (slideConsumed) listener?.onGlidePreview(null)
         }
         if (id == slidePointerId) {
