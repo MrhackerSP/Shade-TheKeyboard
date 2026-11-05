@@ -281,8 +281,65 @@ class WordDictionary(private val ctx: Context) {
         val w = word.lowercase()
         if (user.containsKey(w) || words.containsKey(w)) return true
         // Feature 4: check rare word forms (stops "happier" → "happen" correction)
-        return rareWords?.contains(w) == true
+        if (rareWords?.contains(w) == true) return true
+        // Personal Dictionary: check Android's built-in user dictionary
+        if (personalWords.contains(w)) return true
+        return false
     }
+
+    // ------------------------------------------------------------------ Personal Dictionary
+
+    /** Words from Android's Personal Dictionary (Settings → Personal dictionary). */
+    @Volatile
+    private var personalWords: Set<String> = emptySet()
+
+    @Volatile
+    private var personalShortcuts: Map<String, String> = emptyMap()
+
+    @Volatile
+    private var personalLoadedAt = 0L
+
+    /**
+     * Reads Android's Personal Dictionary (UserDictionary.Words).
+     * Available only to the active IME — called from ShadeService.
+     * Refreshed at most once per 60 seconds.
+     */
+    fun loadPersonalDictionary(context: Context) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (personalLoadedAt != 0L && now - personalLoadedAt < 60_000L) return
+        personalLoadedAt = now
+        val app = context.applicationContext
+        Thread {
+            try {
+                val words = HashSet<String>()
+                val shortcuts = HashMap<String, String>()
+                app.contentResolver.query(
+                    android.provider.UserDictionary.Words.CONTENT_URI,
+                    arrayOf(
+                        android.provider.UserDictionary.Words.WORD,
+                        android.provider.UserDictionary.Words.LOCALE,
+                        android.provider.UserDictionary.Words.SHORTCUT
+                    ),
+                    null, null, null
+                )?.use { c ->
+                    while (c.moveToNext() && words.size < 20_000) {
+                        val w = c.getString(0)?.trim()?.lowercase() ?: continue
+                        if (w.isEmpty() || w.length > 40) continue
+                        words.add(w)
+                        val sc = c.getString(2)?.trim()?.lowercase()
+                        if (!sc.isNullOrEmpty()) shortcuts[sc] = w
+                    }
+                }
+                personalWords = words
+                personalShortcuts = shortcuts
+            } catch (_: Exception) {
+                // Personal dictionary not available — silently skip
+            }
+        }.apply { isDaemon = true; start() }
+    }
+
+    /** Check if a shortcut maps to a word in the personal dictionary. */
+    fun personalShortcut(shortcut: String): String? = personalShortcuts[shortcut.lowercase()]
 
     @Synchronized
     fun learn(word: String, prev2: String? = null, prev1: String? = null) {

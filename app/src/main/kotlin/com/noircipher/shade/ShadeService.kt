@@ -557,6 +557,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // 4c — classify the active field so suggestion / autocorrect / smart-compose
         // pipelines can be gated by field type (password / email / URL / etc.).
         currentFieldType = FieldTypeDetector.detect(editorInfo)
+        // Load Android's Personal Dictionary (Settings → Personal dictionary)
+        // so words the user added system-wide are recognized and not corrected.
+        if (!incognito) dict.loadPersonalDictionary(this)
         if (appContextLearningAllowed()) {
             appContextModel.setCurrentPackage(editorInfo.packageName)
         } else {
@@ -1597,6 +1600,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         try { touchBiasModel.record(key, x, y) } catch (_: Exception) {}
     }
 
+    /** Glide typing: live preview while the finger is still moving. */
+    override fun onGlidePreview(word: String?) {
+        if (word.isNullOrEmpty()) {
+            // Clear the composing text
+            if (composing.isNotEmpty()) {
+                composing.clear()
+                currentInputConnection?.setComposingText("", 1)
+            }
+            return
+        }
+        // Show the decoded word as composing text (live preview)
+        composing.clear()
+        composing.append(word)
+        currentInputConnection?.setComposingText(word, 1)
+    }
+
     override fun onSwipePath(path: List<FloatArray>): Boolean {
         if (path.size < 4) return false
         val layout = kbKeyLayout() ?: return false
@@ -1605,7 +1624,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             delay(32)
             if (!isActive) return@launch
             val decoded = slideDecoder.decode(path, layout)
-            if (!decoded.isNullOrEmpty()) commitSlideWord(decoded)
+            if (!decoded.isNullOrEmpty()) {
+                // Clear the live preview composing text
+                composing.clear()
+                currentInputConnection?.finishComposingText()
+                commitSlideWord(decoded)
+            }
         }
         return true
     }

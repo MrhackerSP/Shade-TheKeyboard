@@ -43,6 +43,10 @@ class KeyboardView(context: Context) : View(context) {
         fun onDeleteCancel()
         fun onSwipePath(path: List<FloatArray>): Boolean = false
         fun onTouchSample(key: Key, x: Float, y: Float) {}
+        /** Glide typing live preview — called while the finger is still moving. */
+        fun onGlidePreview(word: String?) {}
+        /** Glide typing final commit — called on finger up. */
+        fun onGlideCommit(word: String) {}
     }
 
     var listener: Listener? = null
@@ -1182,6 +1186,12 @@ class KeyboardView(context: Context) : View(context) {
         if (id == slidePointerId && k.kind == KeyKind.CHAR) {
             slidePath.addLast(floatArrayOf(x, y))
             if (slidePath.size > 240) slidePath.removeFirst()
+            // Glide live preview: decode on the fly so the user sees the word forming
+            if (slidePath.size >= 6 && slidePath.size % 4 == 0) {
+                listener?.onGlidePreview(slidePathToWord(slidePath.toList()))
+            }
+            // Draw glide trail
+            updateTrail(x, y)
         }
         if (altShown) {
             p.lastX = x
@@ -1254,6 +1264,38 @@ class KeyboardView(context: Context) : View(context) {
         return (maxX - minX) + (maxY - minY)
     }
 
+    /** Quick raw sequence from slide path — for live preview only. */
+    private fun slidePathToWord(path: List<FloatArray>): String? {
+        if (path.size < 4) return null
+        val out = StringBuilder()
+        var last = ' '
+        for (point in path) {
+            val x = point[0]
+            val y = point[1]
+            var best: Char? = null
+            var bestDist = Float.MAX_VALUE
+            for (row in rows) {
+                for (k in row) {
+                    if (k.kind != KeyKind.CHAR || k.label.length != 1) continue
+                    val cx = (k.left + k.right) / 2f
+                    val cy = (k.top + k.bottom) / 2f
+                    val dx = x - cx
+                    val dy = y - cy
+                    val dist = dx * dx + dy * dy
+                    if (dist < bestDist) {
+                        bestDist = dist
+                        best = k.label[0].lowercaseChar()
+                    }
+                }
+            }
+            if (best != null && best != last) {
+                out.append(best)
+                last = best
+            }
+        }
+        return out.toString().ifEmpty { null }
+    }
+
     private fun up(id: Int, cancel: Boolean) {
         val p = pointers.get(id) ?: return
         pointers.remove(id)
@@ -1265,8 +1307,12 @@ class KeyboardView(context: Context) : View(context) {
 
         var slideConsumed = false
         if (!cancel && id == slidePointerId && slidePath.size >= 4 && slidePathSpread(slidePath) > dp(48f)) {
-            slideConsumed = listener?.onSwipePath(slidePath.toList()) == true
+            // Glide typing: send the path for word decoding
+            val path = slidePath.toList()
+            slideConsumed = listener?.onSwipePath(path) == true
             if (slideConsumed) p.consumed = true
+            // Also clear any glide preview
+            if (slideConsumed) listener?.onGlidePreview(null)
         }
         if (id == slidePointerId) {
             slidePointerId = -1
