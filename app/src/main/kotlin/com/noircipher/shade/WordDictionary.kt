@@ -204,6 +204,25 @@ class WordDictionary(private val ctx: Context) {
         for (list in prefix2.values) list.sortByDescending { words[it] ?: 0L }
     }
 
+    /**
+     * Build a QWERTY key position map for touch geometry.
+     * Maps each character to its (row, col) position on the keyboard.
+     * Used by TouchGeometry to compute substitution costs based on
+     * where the finger actually landed.
+     */
+    private fun buildKeyPositions(): Map<Char, Pair<Float, Float>> {
+        val rows = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+        val map = HashMap<Char, Pair<Float, Float>>(26)
+        for ((rowIdx, row) in rows.withIndex()) {
+            for ((colIdx, c) in row.withIndex()) {
+                // Offset each row like a real QWERTY keyboard
+                val xOffset = when (rowIdx) { 0 -> 0f; 1 -> 0.5f; 2 -> 0.75f; else -> 0f }
+                map[c] = Pair(rowIdx.toFloat(), colIdx.toFloat() + xOffset)
+            }
+        }
+        return map
+    }
+
     private fun rebuildUserPrefixIndex() {
         userPrefix1.clear()
         userPrefix2.clear()
@@ -502,6 +521,18 @@ class WordDictionary(private val ctx: Context) {
 
     @Synchronized
     fun correction(word: String, isEnglishLocale: Boolean = true): String? {
+        return correction(word, isEnglishLocale, emptyList())
+    }
+
+    /**
+     * Autocorrect with touch geometry.
+     * [touches] is a list of per-character KeyTouch offsets. When available,
+     * candidates are rescored by how well their letter positions match the
+     * actual finger positions — edge hits correct confidently, center hits
+     * resist correction.
+     */
+    @Synchronized
+    fun correction(word: String, isEnglishLocale: Boolean = true, touches: List<TouchGeometry.KeyTouch> = emptyList()): String? {
         val w = word.lowercase()
 
         contractions[w]?.let { return match(word, it, isEnglishLocale) }
@@ -518,6 +549,8 @@ class WordDictionary(private val ctx: Context) {
         if (ss != null) {
             val candidates = ss.similar(w)
             if (candidates.isNotEmpty()) {
+                // Build key positions map for touch geometry (if touches available)
+                val keyPositions = if (touches.isNotEmpty()) buildKeyPositions() else null
                 var best: String? = null
                 var bestScore = -1000f
                 for (idx in candidates) {
@@ -525,7 +558,26 @@ class WordDictionary(private val ctx: Context) {
                     if (cand == w) continue
                     if (cand.length !in (w.length - 2)..(w.length + 2)) continue
                     val freq = words[cand] ?: continue
-                    val score = kotlin.math.ln(freq.toDouble()).toFloat() - 3f * editCost(w, cand, Array(24) { FloatArray(24) })
+                    val editCost = editCost(w, cand, Array(24) { FloatArray(24) })
+                    var score = kotlin.math.ln(freq.toDouble()).toFloat() - 3f * editCost
+
+                    // Touch geometry bonus: if we know where the finger was,
+                    // rescore by how well the candidate's letters match the
+                    // actual touch positions. A candidate whose letters are
+                    // closer to where the finger landed gets a boost.
+                    if (touches.isNotEmpty() && keyPositions != null) {
+                        var touchBonus = 0f
+                        val n = minOf(touches.size, cand.length, w.length)
+                        for (i in 0 until n) {
+                            if (w[i] != cand[i] && i < touches.size) {
+                                val subCost = TouchGeometry.subCost(w[i], cand[i], touches[i], keyPositions)
+                                // Lower subCost = candidate letter is closer to finger = better
+                                touchBonus += (5f - subCost).coerceIn(-2f, 5f)
+                            }
+                        }
+                        score += touchBonus * 0.3f
+                    }
+
                     if (score > bestScore) {
                         best = cand
                         bestScore = score

@@ -47,6 +47,8 @@ class KeyboardView(context: Context) : View(context) {
         fun onGlidePreview(word: String?) {}
         /** Glide typing final commit — called on finger up. */
         fun onGlideCommit(word: String) {}
+        /** Called when a word is committed (space/punct) with per-character touch offsets. */
+        fun onTouchOffsets(offsets: List<TouchGeometry.KeyTouch>) {}
     }
 
     var listener: Listener? = null
@@ -229,6 +231,8 @@ class KeyboardView(context: Context) : View(context) {
     private val pointers = SparseArray<Pointer>()
     private var slidePointerId = -1
     private val slidePath = ArrayDeque<FloatArray>()
+    // Touch geometry: per-character offsets for the word being typed
+    private val touchOffsets = ArrayList<TouchGeometry.KeyTouch>()
 
     private fun obtainPointer(k: Key?, x: Float, y: Float): Pointer {
         val p = pointerPool.pollFirst() ?: Pointer()
@@ -1071,6 +1075,10 @@ class KeyboardView(context: Context) : View(context) {
         if (k.kind == KeyKind.CHAR) {
             listener?.onTouchSample(k, x, y)
 
+            // Touch geometry: record the offset from key center
+            val offset = TouchGeometry.computeTouchOffset(k, x, y)
+            if (offset != null) touchOffsets.add(offset)
+
             slidePointerId = id
             slidePath.clear()
             slidePath.addLast(floatArrayOf(x, y))
@@ -1522,6 +1530,7 @@ class KeyboardView(context: Context) : View(context) {
         pointerPool.clear()
         slidePath.clear()
         slidePointerId = -1
+        touchOffsets.clear()
         popupLayer.detach()
         popupActive = false
         altUsesOverlay = false
@@ -1530,5 +1539,23 @@ class KeyboardView(context: Context) : View(context) {
         altItems = emptyList()
         trailActive = false
         deleteSlideActive = false
+    }
+
+    /** Flush recorded touch offsets to the listener and clear for the next word. */
+    fun flushTouchOffsets() {
+        if (touchOffsets.isNotEmpty()) {
+            listener?.onTouchOffsets(ArrayList(touchOffsets))
+            touchOffsets.clear()
+        }
+    }
+
+    /** Remove the last touch offset (backspace). */
+    fun popTouchOffset() {
+        if (touchOffsets.isNotEmpty()) touchOffsets.removeAt(touchOffsets.lastIndex)
+    }
+
+    /** Clear all touch offsets (new composing word). */
+    fun clearTouchOffsets() {
+        touchOffsets.clear()
     }
 }

@@ -242,6 +242,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private val touchTrace = TouchTrace(16)
     private var lastWordTouches: List<FloatArray> = emptyList()
+    // Touch geometry offsets for the word currently being typed
+    private var currentTouchOffsets: List<TouchGeometry.KeyTouch> = emptyList()
 
     private val undoStack = ArrayDeque<UndoEntry>(10)
     private var lastCorrectionEvent: CorrectionEvent? = null
@@ -1600,6 +1602,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         try { touchBiasModel.record(key, x, y) } catch (_: Exception) {}
     }
 
+    /** Receive per-character touch offsets from KeyboardView when a word is committed. */
+    override fun onTouchOffsets(offsets: List<TouchGeometry.KeyTouch>) {
+        currentTouchOffsets = offsets
+    }
+
     /** Glide typing: live preview while the finger is still moving. */
     override fun onGlidePreview(word: String?) {
         if (word.isNullOrEmpty()) {
@@ -1766,6 +1773,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onText(text: String) {
+        // Clear touch offsets when starting a new composing word
+        if (this::kb.isInitialized) kb.clearTouchOffsets()
+        currentTouchOffsets = emptyList()
         val ic = currentInputConnection ?: return
 
         // 4d — track keystroke timing for TypingSpeedAdapter (drives the
@@ -1959,6 +1969,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection ?: return
         if (insightsAllowed()) typingStatsStore.recordBackspace()
 
+        // Pop the last touch offset (backspace within the word being typed)
+        if (this::kb.isInitialized) kb.popTouchOffset()
+
         if (tryDeleteCorrectionSeparator()) return
         if (tryRevertLastCorrectionEvent()) return
 
@@ -2142,7 +2155,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 multiWordCorrection != null -> multiWordCorrection
                 !effectiveShouldCorrect -> null
                 else -> {
-                    var candidate = try { dict.correction(w, isEnglishLocale()) } catch (_: Exception) { null }
+                    // Flush touch offsets from KeyboardView before correction
+                    if (this::kb.isInitialized) kb.flushTouchOffsets()
+                    val touches = currentTouchOffsets
+                    var candidate = try { dict.correction(w, isEnglishLocale(), touches) } catch (_: Exception) { null }
 
                     // Feature 1: System Spell Checker — merge with Android's
                     // built-in spell checker (Gboard/Samsung engine). If the
