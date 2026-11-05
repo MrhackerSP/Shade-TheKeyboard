@@ -39,6 +39,18 @@ class WordDictionary(private val ctx: Context) {
 
     @Volatile var bigramModel: BigramModel? = null
 
+    // Feature 2: SymSpell index for O(1) typo lookup (replaces QWERTY neighbor scan)
+    @Volatile
+    private var symSpell: SymSpellIndex? = null
+
+    // Feature 4: Rare word forms index — stops correction of real words like "happier", "walked"
+    @Volatile
+    private var rareWords: RareWordIndex? = null
+
+    // Feature 5: Google Books bigram model with real probabilities
+    @Volatile
+    private var googleBigrams: GoogleBooksBigramModel? = null
+
     private val contractions: Map<String, String> = mapOf(
         "dont" to "don't", "cant" to "can't", "wont" to "won't",
         "isnt" to "isn't", "arent" to "aren't", "wasnt" to "wasn't",
@@ -78,7 +90,68 @@ class WordDictionary(private val ctx: Context) {
             for (e in loaded) words[e.key] = e.value
             rebuildPrefixIndex()
             loadedId = localeId
+
+            // Feature 2: Build SymSpell index from the top 40K words
+            symSpell = SymSpellIndex(loaded.map { it.key })
+
+            // Feature 4: Load rare word forms (if available)
+            rareWords = loadRareWords(localeId, loaded.size)
+
+            // Feature 5: Load Google Books bigrams (if available)
+            googleBigrams = loadGoogleBigrams(localeId)
         }
+    }
+
+    // Feature 4: Load rare word forms from assets or filesDir
+    private fun loadRareWords(localeId: String, firstRank: Int): RareWordIndex? {
+        val id = localeId.split(',').firstOrNull()?.trim() ?: return null
+        // Try cache first
+        val cacheDir = java.io.File(ctx.cacheDir, "dict").apply { mkdirs() }
+        val cacheFile = java.io.File(cacheDir, "${id}-rare.bin")
+        RareWordIndex.load(cacheFile, firstRank)?.let { return it }
+        // Try to read from assets or filesDir
+        val candidates = listOf(
+            java.io.File(ctx.filesDir, "dicts/${id}_more.txt"),
+            java.io.File(ctx.filesDir, "dicts/${id}.more.txt")
+        )
+        for (f in candidates) {
+            if (f.exists() && f.length() > 0) {
+                val entries = RareWordIndex.parse(f.readLines())
+                if (entries.isNotEmpty()) {
+                    val idx = RareWordIndex(entries, firstRank)
+                    runCatching { idx.save(cacheFile) }
+                    return idx
+                }
+            }
+        }
+        // Try assets
+        runCatching {
+            ctx.assets.open("dicts/${id}_more.txt").bufferedReader().use { r ->
+                val entries = RareWordIndex.parse(r.readLines())
+                if (entries.isNotEmpty()) {
+                    val idx = RareWordIndex(entries, firstRank)
+                    runCatching { idx.save(cacheFile) }
+                    return idx
+                }
+            }
+        }
+        return null
+    }
+
+    // Feature 5: Load Google Books bigram model
+    private fun loadGoogleBigrams(localeId: String): GoogleBooksBigramModel? {
+        val id = localeId.split(',').firstOrNull()?.trim() ?: return null
+        // Try filesDir (downloaded)
+        val f = java.io.File(ctx.filesDir, "dicts/${id}_bi.txt")
+        if (f.exists() && f.length() > 0) {
+            return runCatching { GoogleBooksBigramModel(f.readLines()) }.getOrNull()
+        }
+        // Try assets
+        return runCatching {
+            ctx.assets.open("dicts/${id}_bi.txt").bufferedReader().use { r ->
+                GoogleBooksBigramModel(r.readLines())
+            }
+        }.getOrNull()
     }
 
     private fun readWordList(id: String, w: MutableMap<String, Long>) {
@@ -206,7 +279,9 @@ class WordDictionary(private val ctx: Context) {
     @Synchronized
     fun contains(word: String): Boolean {
         val w = word.lowercase()
-        return user.containsKey(w) || words.containsKey(w)
+        if (user.containsKey(w) || words.containsKey(w)) return true
+        // Feature 4: check rare word forms (stops "happier" → "happen" correction)
+        return rareWords?.contains(w) == true
     }
 
     @Synchronized
@@ -376,13 +451,34 @@ class WordDictionary(private val ctx: Context) {
 
         if (w.length < 3 || !w.all { isWordChar(it) }) return null
         if (w.any { it.code > 0x24F }) return null
-        if (contains(w)) return null
+        if (contains(w)) return null  // also checks rare words now
 
         if (w.length > 20) return null
 
-        // A1 — search the typed first-letter's bucket PLUS neighbor buckets.
-        // Neighbor-bucket candidates get a 0.5f penalty so they only win
-        // when the typed bucket yields nothing better.
+        // Feature 2: SymSpell — O(1) lookup via symmetric deletion index.
+        // Catches typos in ANY position (including first letter) and 2-letter errors.
+        val ss = symSpell
+        if (ss != null) {
+            val candidates = ss.similar(w)
+            if (candidates.isNotEmpty()) {
+                var best: String? = null
+                var bestScore = -1000f
+                for (idx in candidates) {
+                    val cand = ss.wordAt(idx)
+                    if (cand == w) continue
+                    if (cand.length !in (w.length - 2)..(w.length + 2)) continue
+                    val freq = words[cand] ?: continue
+                    val score = kotlin.math.ln(freq.toDouble()).toFloat() - 3f * editCost(w, cand, Array(24) { FloatArray(24) })
+                    if (score > bestScore) {
+                        best = cand
+                        bestScore = score
+                    }
+                }
+                return best?.let { match(word, it, isEnglishLocale) }
+            }
+        }
+
+        // Fallback: A1 QWERTY neighbor scan (used if SymSpell is not built yet)
         val firstChar = w.substring(0, 1)
         val ownBucket: List<String> = prefix1[firstChar] ?: emptyList()
         val neighborBuckets = qwertyNeighbors(firstChar).mapNotNull { prefix1[it] }
@@ -448,14 +544,34 @@ class WordDictionary(private val ctx: Context) {
 
     @Synchronized
     fun predictNext(prev2: String?, prev1: String?, max: Int): List<String> {
+        // Feature 5: prefer Google Books bigram model if available
+        val gb = googleBigrams
+        if (gb != null && prev1 != null) {
+            val nexts = gb.next(prev1.lowercase())
+            if (nexts.isNotEmpty()) return nexts.take(max)
+        }
         val model = bigramModel ?: return emptyList()
         return model.predict(prev2, prev1, max).map { it.first }
     }
 
     @Synchronized
     fun rerankWithContext(prev2: String?, prev1: String?, candidates: List<String>): List<String> {
+        // Feature 5: use Google Books bigram cost for reranking
+        val gb = googleBigrams
+        if (gb != null && prev1 != null) {
+            val p = prev1.lowercase()
+            return candidates.sortedByDescending { cand ->
+                val cost = gb.cost(p, cand.lowercase())
+                if (cost >= 0f) -cost else -10f  // lower cost = higher score
+            }
+        }
         val model = bigramModel ?: return candidates
         return model.rerank(prev2, prev1, candidates)
+    }
+
+    /** Feature 5: expose Google Books bigram cost for the neural reranker. */
+    fun googleBigramCost(prev: String, word: String): Float {
+        return googleBigrams?.cost(prev.lowercase(), word.lowercase()) ?: -1f
     }
 
     suspend fun suggestAsync(prefix: String, max: Int): List<String> =

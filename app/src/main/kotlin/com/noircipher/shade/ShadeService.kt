@@ -314,6 +314,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onDestroy() {
         try { cm.removePrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
         dict.shutdown() // flushes learned words + n-grams on a background thread
+        SystemSpell.close() // close the system spell checker session
         suggestJob?.cancel()
         suggestDebounceJob?.cancel()
         correctionJob?.cancel()
@@ -1780,6 +1781,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             composing.append(text)
             ic.setComposingText(composing.toString(), 1)
             appendTail(text)
+
+            // Feature 1: System Spell Checker — send each word to Android's
+            // built-in spell checker (Gboard/Samsung engine) asynchronously.
+            // The result is usually ready by the time the user presses space.
+            if (composing.length >= 2) {
+                val locale = dictIds().split(',').firstOrNull()?.trim() ?: "en"
+                SystemSpell.request(this@ShadeService, locale, composing.toString(), debounceMs = 150L)
+            }
         } else {
             val isPunct = text.length == 1 && text[0] in ".,!?;:"
             ic.beginBatchEdit()
@@ -2109,11 +2118,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 multiWordCorrection != null -> multiWordCorrection
                 !effectiveShouldCorrect -> null
                 else -> {
-                    val candidate = try { dict.correction(w, isEnglishLocale()) } catch (_: Exception) { null }
+                    var candidate = try { dict.correction(w, isEnglishLocale()) } catch (_: Exception) { null }
+
+                    // Feature 1: System Spell Checker — merge with Android's
+                    // built-in spell checker (Gboard/Samsung engine). If the
+                    // system says it's a typo and has a suggestion, use it.
+                    if (candidate == null && w.length >= 3) {
+                        val locale = dictIds().split(',').firstOrNull()?.trim() ?: "en"
+                        SystemSpell.flush()
+                        val sys = SystemSpell.await(locale, w, 0L)
+                        if (sys != null && sys.typo && sys.suggestions.isNotEmpty()) {
+                            candidate = sys.suggestions.first()
+                        }
+                    }
+
                     if (candidate == null) null else {
                         // 4f — autocorrect confidence gate (#31 + A7 + #21).
-                        // Combine the raw ranker score (if available) with a
-                        // typing-speed-based threshold adjustment.
                         val effectiveRaw = lastRawRankerScores[candidate] ?: 0f
                         val speedAdjustment = com.noircipher.shade.engine.TypingSpeedAdapter.confidenceThresholdAdjustment()
                         val effectiveThreshold = (AUTOCORRECT_CONFIDENCE_THRESHOLD + speedAdjustment)
