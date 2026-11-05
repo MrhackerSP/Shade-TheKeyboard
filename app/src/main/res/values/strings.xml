@@ -190,6 +190,16 @@
     <string name="about_title">About Shade</string>
     <string name="about_sum">Version 1.0, no internet permission</string>
     <string name="about_text">Original open-source keyboard. Long-press keys for accents, swipe the space bar to move the cursor, tap › on the suggestion bar for the toolbar.</string>
+    <string name="pref_auto_update">Auto-check for updates</string>
+    <string name="pref_auto_update_sum">Check for new versions when the app starts</string>
+    <string name="pref_check_updates">Check for updates now</string>
+    <string name="pref_check_updates_sum">Manually check if a new version is available</string>
+    <string name="update_available">Shade %1$s is available</string>
+    <string name="update_download">Download and install</string>
+    <string name="update_downloading">Downloading… %1$d%%</string>
+    <string name="update_uptodate">You are running the latest version</string>
+    <string name="update_failed">Could not download the update</string>
+    <string name="update_install_perm">Allow update installation in settings, then try again</string>
 
     <string-array name="theme_entries">
         <item>Follow system</item>

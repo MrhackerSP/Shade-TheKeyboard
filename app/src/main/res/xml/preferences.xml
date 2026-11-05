@@ -113,5 +113,16 @@
     </PreferenceScreen>
     <PreferenceScreen android:key="screen_about" android:summary="@string/about_sum" android:title="@string/about_title" app:iconSpaceReserved="false">
         <Preference android:selectable="false" android:summary="@string/about_text" android:title="@string/about_title" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="auto_update_check"
+            android:title="@string/pref_auto_update"
+            android:summary="@string/pref_auto_update_sum"
+            app:iconSpaceReserved="false" />
+        <Preference
+            android:key="check_updates"
+            android:title="@string/pref_check_updates"
+            android:summary="@string/pref_check_updates_sum"
+            app:iconSpaceReserved="false" />
     </PreferenceScreen>
 </PreferenceScreen>

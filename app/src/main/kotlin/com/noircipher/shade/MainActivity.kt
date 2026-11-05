@@ -9,7 +9,10 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
@@ -48,6 +51,16 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshStatus()
+        // Auto-check for updates once per launch (if enabled in settings)
+        lifecycleScope.launch {
+            Updater.autoCheck(this@MainActivity)
+            // Show toast if update is available
+            Updater.available?.let { info ->
+                Toast.makeText(this@MainActivity,
+                    "Shade ${info.version} available — check Settings → About",
+                    Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     /**

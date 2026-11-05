@@ -98,6 +98,7 @@ dependencies {
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.asynclayoutinflater:asynclayoutinflater:1.1.0")
     implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.23.2")
     implementation("com.google.ai.edge.litert:litert:1.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

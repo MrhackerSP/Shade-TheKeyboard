@@ -23,6 +23,8 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceManager
 import androidx.preference.SwitchPreferenceCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 
@@ -262,6 +264,32 @@ class SettingsActivity : AppCompatActivity() {
                 PreferenceManager.getDefaultSharedPreferences(ctx)
                     .edit().putBoolean("resize_mode_requested", true).apply()
                 requireActivity().finish()
+            }
+
+            // Auto-updater: manual check + auto-check toggle
+            click("check_updates") {
+                viewLifecycleOwner.lifecycleScope.launch {
+                    Updater.check(requireContext())
+                    val info = Updater.available
+                    if (info != null) {
+                        // Show dialog with release notes + download button
+                        androidx.appcompat.app.AlertDialog.Builder(ctx)
+                            .setTitle(getString(R.string.update_available, info.version))
+                            .setMessage(info.notes.ifEmpty { "New version available" })
+                            .setPositiveButton(R.string.update_download) { _, _ ->
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    Updater.downloadAndInstall(requireContext(), info)
+                                    Updater.error?.let { e -> toast(e) }
+                                }
+                            }
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .show()
+                    } else if (Updater.upToDate) {
+                        toast(R.string.update_uptodate)
+                    } else {
+                        Updater.error?.let { toast(it) }
+                    }
+                }
             }
         }
 
