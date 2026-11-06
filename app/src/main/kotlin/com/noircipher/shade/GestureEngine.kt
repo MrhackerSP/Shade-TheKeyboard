@@ -5,7 +5,16 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.os.SystemClock
 import kotlin.math.hypot
- }
+
+/**
+ * Gesture (glide) typing sampler and trail renderer.
+ *
+ * Usage:
+ *   val gesture = GestureEngine(keyWidth)
+ *   // On down:
+ *   gesture.onDown(x, y, elapsedMs)
+ *   // On move:
+ *   gesture.addEventPoint(x, y, elapsedMs)
  *   // On up:
  *   val path = gesture.getPath()
  *   // Draw trail:
@@ -67,7 +76,7 @@ class GestureEngine(private var keyWidth: Float) {
 
     /** Add a move event point. Returns true if the point is on the keyboard. */
     fun addEventPoint(x: Float, y: Float, elapsedTime: Int): Boolean {
-        return addEventPoint(x.toInt(), y.toInt(), elapsedTime, false)
+        return addEventPoint(x.toInt(), y.toInt(), elapsedTime, true)
     }
 
     private fun addEventPoint(x: Int, y: Int, time: Int, isMajor: Boolean): Boolean {
@@ -82,10 +91,10 @@ class GestureEngine(private var keyWidth: Float) {
             if (distance > samplingMinimumDistance.toInt()) {
                 appendPoint(x, y, time)
             }
-        }
-        if (isMajor) {
-            updateIncrementalRecognitionSize(x, y, time)
-            updateMajorEvent(x, y, time)
+            if (isMajor) {
+                updateIncrementalRecognitionSize(x, y, time)
+                updateMajorEvent(x, y, time)
+            }
         }
         return true
     }
@@ -126,14 +135,22 @@ class GestureEngine(private var keyWidth: Float) {
         return result
     }
 
-    /** Add current points to the trail for rendering. */
+    /**
+     * Kept for API compatibility. Trail points are now recorded live in [appendPoint],
+     * so this only refreshes timestamps so the whole stroke starts fading from release.
+     */
     fun addTrail() {
         val now = SystemClock.uptimeMillis()
-        for (i in eventTimes.indices) {
-            trailX.add(xCoords[i].toFloat())
-            trailY.add(yCoords[i].toFloat())
-            trailTimes.add(now)
+        for (i in trailTimes.indices) trailTimes[i] = now
+    }
+
+    /** True while there are trail points still visible (used to stop endless redraws). */
+    fun hasTrail(): Boolean {
+        val now = SystemClock.uptimeMillis()
+        while (trailTimes.isNotEmpty() && now - trailTimes[0] > trailLingerDuration) {
+            trailX.removeAt(0); trailY.removeAt(0); trailTimes.removeAt(0)
         }
+        return trailX.size >= 2
     }
 
     /** Draw the fading gesture trail on the canvas. */
@@ -184,6 +201,7 @@ class GestureEngine(private var keyWidth: Float) {
     // ---- Private methods ----
 
     private fun reset() {
+        trailX.clear(); trailY.clear(); trailTimes.clear()
         incrementalRecognitionSize = 0
         eventTimes.clear()
         xCoords.clear()
@@ -199,6 +217,10 @@ class GestureEngine(private var keyWidth: Float) {
         eventTimes.add(time)
         xCoords.add(x)
         yCoords.add(y)
+        // Feed the visible trail live so it follows the finger (not only after release)
+        trailX.add(x.toFloat())
+        trailY.add(y.toFloat())
+        trailTimes.add(SystemClock.uptimeMillis())
     }
 
     private fun updateMajorEvent(x: Int, y: Int, time: Int) {

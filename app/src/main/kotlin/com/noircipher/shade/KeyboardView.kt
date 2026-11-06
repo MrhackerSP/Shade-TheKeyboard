@@ -235,6 +235,7 @@ class KeyboardView(context: Context) : View(context) {
     private val touchOffsets = ArrayList<TouchGeometry.KeyTouch>()
     private var gestureEngine: GestureEngine? = null
     private var gestureStartTime = 0L
+    private var lastGlidePreviewMs = 0L
 
     private fun obtainPointer(k: Key?, x: Float, y: Float): Pointer {
         val p = pointerPool.pollFirst() ?: Pointer()
@@ -730,7 +731,7 @@ class KeyboardView(context: Context) : View(context) {
             ge.setTrailColor(ColorUtils.setAlphaComponent(kbTheme.accent, 0x80))
             ge.drawTrail(c, trailPaint)
             // Schedule redraw for trail animation
-            if (ge.getLength() > 0) invalidate()
+            if (ge.hasTrail()) invalidate()
         }
     }
 
@@ -1098,7 +1099,8 @@ class KeyboardView(context: Context) : View(context) {
             val keyW = if (rows.isNotEmpty() && rows[0].isNotEmpty()) {
                 rows[0][0].right - rows[0][0].left
             } else 100f
-            if (gestureEngine == null) gestureEngine = GestureEngine(keyW)
+            val ge0 = gestureEngine
+            if (ge0 == null) gestureEngine = GestureEngine(keyW) else ge0.setKeyWidth(keyW)
             gestureStartTime = android.os.SystemClock.uptimeMillis()
             gestureEngine?.onDown(x, y, 0)
         }
@@ -1220,7 +1222,10 @@ class KeyboardView(context: Context) : View(context) {
 
             // Glide live preview using the gesture engine's sampled path
             val sampledPath = gestureEngine?.getIncrementalPath()
-            if (sampledPath != null && sampledPath.size >= 6) {
+            val nowMs = android.os.SystemClock.uptimeMillis()
+            if (sampledPath != null && sampledPath.size >= 6 &&
+                gestureEngine?.hasRecognitionTimePast(nowMs, lastGlidePreviewMs) == true) {
+                lastGlidePreviewMs = nowMs
                 listener?.onGlidePreview(slidePathToWord(sampledPath))
             }
 
