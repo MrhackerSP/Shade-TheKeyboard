@@ -2,10 +2,9 @@ package com.noircipher.shade.ai
 
 import android.content.Context
 import android.util.Log
+import com.noircipher.shade.engine.CandidateRanker
 import com.noircipher.shade.engine.CrossSentenceContext
 import com.noircipher.shade.engine.LanguageModelEngine
-import java.io.Closeable
-import kotlin.math.sqrt
 
 class NeuralPredictionEngine private constructor(
     private val vocabulary: NeuralVocabulary,
@@ -15,19 +14,14 @@ class NeuralPredictionEngine private constructor(
     @Volatile
     override var enabled: Boolean = true
 
-    // Keep the model input bounded to what the ONNX export can actually accept.
-    // The final tensor length is set by the model itself; this value is the number
-    // of real tokens we fold into the fixed shape before padding.
+    // The exported model's input shape is authoritative. This cap only bounds
+    // the real tokens prepared before the predictor pads/truncates to that shape.
     private val contextSize = 128
     private var lastContextIds: IntArray? = null
     private var lastLogits: FloatArray? = null
 
-    private fun trimmedContext(beforeCursor: String): String {
-        val raw = beforeCursor.trim()
-        if (raw.isEmpty()) return raw
-        val afterBoundary = CrossSentenceContext.truncateAtSentenceBoundary(raw)
-        return if (afterBoundary.isNotEmpty()) afterBoundary else raw
-    }
+    private fun trimmedContext(beforeCursor: String): String =
+        CrossSentenceContext.truncateAtSentenceBoundary(beforeCursor)
 
     override fun predictNext(
         beforeCursor: String,
@@ -38,8 +32,7 @@ class NeuralPredictionEngine private constructor(
     @Synchronized
     private fun logitsFor(beforeCursor: String): FloatArray? {
         return try {
-            val contextText = trimmedContext(beforeCursor)
-            val tokens = vocabulary.tokenize(contextText)
+            val tokens = vocabulary.tokenize(trimmedContext(beforeCursor))
             val contextIds = vocabulary.encode(tokens, contextSize)
             val cachedIds = lastContextIds
             val cachedLogits = lastLogits
@@ -76,33 +69,27 @@ class NeuralPredictionEngine private constructor(
     ): List<Pair<String, Float>> {
         if (!enabled || limit <= 0) return emptyList()
         val beamWidth = 3
-        val beamDepth = 2
-
-        val firstLogits = logitsFor(beforeCursor) ?: return emptyList()
-        val firstTokens = vocabulary.topK(firstLogits, beamWidth, typedPrefix)
+        val firstTokens = vocabulary.topK(logitsFor(beforeCursor) ?: return emptyList(), beamWidth, typedPrefix)
         if (firstTokens.isEmpty()) return emptyList()
+        if (firstTokens.size == 1) return firstTokens.take(limit)
 
-        if (beamDepth <= 1 || firstTokens.size == 1) {
-            return firstTokens.take(limit)
-        }
-
-        data class Beam(val word: String, val score: Float)
+        data class Beam(val phrase: String, val score: Float)
         val beams = ArrayList<Beam>(beamWidth * beamWidth)
+        val cleanContext = trimmedContext(beforeCursor)
         for ((firstWord, firstProb) in firstTokens) {
-            val extendedBefore = if (beforeCursor.isEmpty()) firstWord else "${trimmedContext(beforeCursor)} $firstWord".trim()
-            val nextLogits = logitsFor(extendedBefore) ?: continue
-            val nextTokens = vocabulary.topK(nextLogits, beamWidth, null)
-            for ((secondWord, secondProb) in nextTokens) {
-                val phraseScore = sqrt((firstProb * secondProb).coerceAtLeast(0f))
+            val extendedContext = listOf(cleanContext, firstWord).filter { it.isNotBlank() }.joinToString(" ")
+            val nextLogits = logitsFor(extendedContext) ?: continue
+            for ((secondWord, secondProb) in vocabulary.topK(nextLogits, beamWidth, null)) {
+                // Geometric mean keeps two-token phrase scores on the same rough
+                // scale as a single-token probability; this is a ranking heuristic.
+                val phraseScore = kotlin.math.sqrt((firstProb * secondProb).coerceAtLeast(0f))
                 beams.add(Beam("$firstWord $secondWord", phraseScore))
             }
         }
 
-        val result = ArrayList<Pair<String, Float>>(firstTokens.size + beams.size)
-        for ((word, prob) in firstTokens) result.add(word to prob)
-        for ((phrase, score) in beams) result.add(phrase to score)
-
-        return result.sortedByDescending { it.second }.take(limit)
+        return (firstTokens + beams.map { it.phrase to it.score })
+            .sortedByDescending { it.second }
+            .take(limit)
     }
 
     override fun rerankPrefix(
@@ -125,35 +112,18 @@ class NeuralPredictionEngine private constructor(
             typedPrefix = typedPrefix,
             limit = candidates.size + 12
         )
-
         if (neuralPredictions.isEmpty() && bigramScores.isEmpty()) return candidates
 
-        val neural = neuralPredictions.associate { it.first.lowercase() to it.second }
-        val merged = (neuralPredictions.map { it.first } + candidates)
+        // Include strong neural candidates in the pool before ranking, then use
+        // normalized scores rather than source insertion order to choose winners.
+        val pool = (neuralPredictions.map { it.first } + candidates)
             .distinctBy { it.lowercase() }
-
-        val strongModel = vocabulary.size >= 15000
-        val wNeural = if (strongModel) 0.62f else 0.42f
-        val wBigram = if (strongModel) 0.22f else 0.38f
-        val wBase = if (strongModel) 0.16f else 0.20f
-
-        return merged
-            .mapIndexed { index, candidate ->
-                val baseRankScore = 1f / (index + 1)
-                val neuralScore = neural[candidate.lowercase()] ?: 0f
-                val bigramScore = bigramScores[candidate.lowercase()] ?: 0f
-                val prefixBonus = when {
-                    candidate.equals(typedPrefix, ignoreCase = true) -> 0.10f
-                    candidate.startsWith(typedPrefix, ignoreCase = true) -> 0.06f
-                    else -> 0f
-                }
-
-                val confidence = if (neuralScore > 0.0025f) 1f else 0.45f
-                val score = confidence * (wNeural * neuralScore + wBigram * bigramScore + wBase * baseRankScore) + prefixBonus
-                candidate to score
-            }
-            .sortedByDescending { it.second }
-            .map { it.first }
+        return CandidateRanker.rankContextual(
+            candidates = pool,
+            neuralScores = neuralPredictions.associate { it.first.lowercase() to it.second },
+            bigramScores = bigramScores,
+            typedPrefix = typedPrefix
+        )
     }
 
     @Synchronized
@@ -169,8 +139,7 @@ class NeuralPredictionEngine private constructor(
         private fun normalizeLanguageTag(languageTag: String): String {
             val lower = languageTag.lowercase()
             return when {
-                lower.startsWith("hg") -> "hg"
-                lower.startsWith("hinglish") -> "hg"
+                lower.startsWith("hg") || lower.startsWith("hinglish") -> "hg"
                 lower.startsWith("hi") -> "hi"
                 else -> "en"
             }
@@ -179,23 +148,14 @@ class NeuralPredictionEngine private constructor(
         fun create(context: Context, languageTag: String = "en"): NeuralPredictionEngine? {
             val modelLanguage = normalizeLanguageTag(languageTag)
             return try {
-                val vocabulary = NeuralVocabulary.load(
-                    context = context,
-                    languageTag = modelLanguage,
-                    includeNwp = false
-                ) ?: error("Standard vocabulary unavailable")
-                val predictor = OnnxNeuralPredictor(context, vocabulary, languageTag = modelLanguage)
-                NeuralPredictionEngine(vocabulary, predictor)
+                val vocabulary = NeuralVocabulary.load(context, modelLanguage, includeNwp = false)
+                    ?: error("Standard vocabulary unavailable")
+                NeuralPredictionEngine(vocabulary, OnnxNeuralPredictor(context, vocabulary, languageTag = modelLanguage))
             } catch (_: Throwable) {
                 try {
-                    val nwpVocabulary = NeuralVocabulary.load(
-                        context = context,
-                        languageTag = modelLanguage,
-                        includeNwp = true
-                    ) ?: return null
+                    val nwpVocabulary = NeuralVocabulary.load(context, modelLanguage, includeNwp = true) ?: return null
                     if (nwpVocabulary.size != 9498) return null
-                    val nwpPredictor = OnnxNwpPredictor(context, nwpVocabulary)
-                    NeuralPredictionEngine(nwpVocabulary, nwpPredictor)
+                    NeuralPredictionEngine(nwpVocabulary, OnnxNwpPredictor(context, nwpVocabulary))
                 } catch (t: Throwable) {
                     Log.i(TAG, "Neural engine unavailable", t)
                     null
