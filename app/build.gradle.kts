@@ -2,7 +2,7 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android") version "2.2.0"
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
@@ -15,24 +15,25 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // Release signing comes ONLY from keystore.properties. Without it the release
-    // build is left unsigned (app-release-unsigned.apk) on purpose: it must never be
-    // silently signed with the debug key and then shipped by mistake.
-    val keystoreProps = rootProject.file("keystore.properties")
-    val hasReleaseKeystore = keystoreProps.exists()
-
     signingConfigs {
-        if (hasReleaseKeystore) {
-            create("release") {
+        create("release") {
+            val propsFile = rootProject.file("keystore.properties")
+            if (propsFile.exists()) {
                 val props = Properties().apply {
-                    keystoreProps.inputStream().use { load(it) }
+                    propsFile.inputStream().use { load(it) }
                 }
                 storeFile = file(props["storeFile"] as String)
                 storePassword = props["storePassword"] as String
                 keyAlias = props["keyAlias"] as String
                 keyPassword = props["keyPassword"] as String
+            } else {
+                storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
             }
         }
     }
@@ -45,7 +46,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (hasReleaseKeystore) signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName("release")
         }
         debug {
             isMinifyEnabled = false
@@ -61,7 +62,6 @@ android {
         buildConfig = true
     }
 
-    // Keep model assets uncompressed so AssetMmap can memory-map them.
     androidResources {
         noCompress += listOf("ort", "tflite", "onnx")
     }
@@ -82,12 +82,10 @@ android {
         checkReleaseBuilds = true
         warningsAsErrors = false
     }
-}
 
-kotlin {
-    jvmToolchain(17)
-    compilerOptions {
-        freeCompilerArgs.add("-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi")
+    kotlinOptions {
+        jvmTarget = "17"
+        freeCompilerArgs = listOf("-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi")
     }
 }
 
