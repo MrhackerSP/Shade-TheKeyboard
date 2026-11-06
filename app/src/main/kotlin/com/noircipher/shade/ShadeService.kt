@@ -2321,8 +2321,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val hasDevanagari = last.any { it in '\u0900'..'\u097F' }
         if (hasDevanagari && available.contains("hi")) return "hi"
 
-        // For Roman-script multilingual typing, prefer a Hinglish model if enabled.
-        if (available.contains("hg") && last.any { it.isLetter() }) return "hg"
         return available.firstOrNull() ?: "en"
     }
 
@@ -2357,7 +2355,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun neuralContext(typedWord: String): String {
         val raw = currentInputConnection
-            ?.getTextBeforeCursor(96, 0)
+            ?.getTextBeforeCursor(400, 0)
             ?.toString()
             ?: ""
         return if (typedWord.isNotEmpty() && raw.endsWith(typedWord, ignoreCase = true)) {
@@ -2392,7 +2390,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun contextWordsExcluding(typedWord: String): List<String> {
         val raw = currentInputConnection
-            ?.getTextBeforeCursor(120, 0)
+            ?.getTextBeforeCursor(400, 0)
             ?.toString()
             ?: ""
         val context = if (

@@ -18,7 +18,8 @@ class NeuralVocabulary private constructor(
 
         fun flush() {
             if (current.isNotEmpty()) {
-                tokens.add(current.toString().lowercase())
+                val cleaned = current.toString().lowercase().trim('\'', '-', '_')
+                if (cleaned.isNotEmpty()) tokens.add(cleaned)
                 current.clear()
             }
         }
@@ -26,7 +27,8 @@ class NeuralVocabulary private constructor(
         for (ch in text) {
             when {
                 ch.isLetterOrDigit() || ch.isCombiningMark() -> current.append(ch.lowercaseChar())
-                ch == '\'' || ch == '-' || ch == '_' -> current.append(ch)
+                ch == '\'' || ch == '\u2019' || ch == '-' || ch == '_' ->
+                    current.append(if (ch == '\u2019') '\'' else ch)
                 else -> flush()
             }
         }

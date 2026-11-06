@@ -172,7 +172,7 @@ internal object SmartSuggestions {
         val prefix = typedPrefix?.trim()?.lowercase().orEmpty()
         val out = LinkedHashSet<String>()
 
-        out.addAll(timeGreeting())
+        if (contextWords.lastOrNull()?.lowercase() == "good") out.addAll(timeGreeting())
         out.addAll(intentContinuations(contextWords))
         out.addAll(questionContinuations(contextWords))
         out.addAll(collocationContinuations(contextWords))
