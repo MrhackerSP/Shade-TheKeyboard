@@ -2,15 +2,6 @@ package com.noircipher.shade
 
 import kotlin.math.min
 
-/**
- * SymSpell-style symmetric deletion index for O(1) typo lookup.
- *
- * For the N most frequent words, pre-computes all 1-letter-deletion variants.
- * A typo is found by looking up the typed word and all its deletions in a
- * sorted array — a few binary searches instead of scanning thousands of words.
- *
- * Ported from Expressive Keyboard's SymSpell implementation.
- */
 class SymSpellIndex(words: List<String>) {
 
     private val vocab: Array<String> = words.toTypedArray()

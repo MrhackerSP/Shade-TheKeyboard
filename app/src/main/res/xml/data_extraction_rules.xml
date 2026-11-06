@@ -3,8 +3,7 @@
     Data extraction rules for Android 12+ (API 31+).
 
     Shade is an IME — it must never back up or transfer the user's typing
-    data (learned words, autocorrect history, clipboard, typing stats) to
-    Google Drive or to a new device. Both `allowBackup` and
+    data (learned words, autocorrect history, clipboard, typing stats) to a new device or to cloud backup. Both `allowBackup` and
     `fullBackupContent` are already false in the manifest; this file makes
     the Android 12+ "device-to-device transfer" path explicit too.
 -->

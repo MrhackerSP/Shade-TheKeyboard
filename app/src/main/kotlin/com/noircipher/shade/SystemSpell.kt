@@ -17,14 +17,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/**
- * System Spell Checker integration — uses Android's built-in spell checker
- * (Gboard's or Samsung's engine on most phones) for free, high-quality
- * corrections. Runs asynchronously: each word is sent on keypress, and the
- * result is usually ready by the time the user presses space.
- *
- * Ported from Expressive Keyboard's SystemSpell.
- */
 object SystemSpell {
 
     data class Result(

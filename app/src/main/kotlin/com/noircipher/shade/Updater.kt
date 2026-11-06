@@ -14,21 +14,6 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-/**
- * Auto-updater — checks GitHub releases for new versions, downloads the APK,
- * and opens the system installer.
- *
- * Checks once per app launch (if auto-check is enabled in settings).
- * The user can also manually check from Settings → About → Check for updates.
- *
- * Ported from Expressive Keyboard's Updater, adapted for Shade's
- * legacy View-based UI (no Compose dependency).
- *
- * Usage:
- *   Updater.autoCheck(context)              // called once on app start
- *   Updater.check(context)                  // manual check
- *   Updater.downloadAndInstall(context, info) // download + install
- */
 object Updater {
 
     private const val TAG = "Updater"

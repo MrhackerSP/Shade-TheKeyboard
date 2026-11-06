@@ -23,7 +23,6 @@
 -keep class * extends androidx.preference.Preference { *; }
 -keep class * extends androidx.preference.PreferenceFragmentCompat { *; }
 
-# ONNX Runtime / TensorFlow Lite JNI entry points
 -keep class ai.onnxruntime.** { *; }
 -keep class org.tensorflow.lite.** { *; }
 -keepclassmembers class ai.onnxruntime.** { *; }

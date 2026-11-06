@@ -4,17 +4,6 @@ import java.io.File
 import java.nio.ByteBuffer
 import kotlin.math.min
 
-/**
- * Compact storage for 200K+ rare word forms (conjugations, declensions, proper nouns).
- *
- * Stores words as 1 byte per character (custom char encoding), binary search lookup.
- * This lets the keyboard recognize inflected forms like "running", "walked", "happier",
- * "countries" — words that aren't in the base 50K dictionary but are real.
- *
- * Without this, Shade would try to autocorrect "happier" to "happen".
- *
- * Ported from Expressive Keyboard's RareWords.
- */
 class RareWordIndex private constructor(
     private val codes: HashMap<Char, Int>,
     private val data: ByteArray,

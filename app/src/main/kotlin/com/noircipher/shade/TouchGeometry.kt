@@ -3,16 +3,6 @@ package com.noircipher.shade
 import kotlin.math.abs
 import kotlin.math.min
 
-/**
- * Touch geometry — tracks where the finger actually landed on each key
- * and uses that in the autocorrection calculation.
- *
- * If you hit the right edge of "a" (near "s"), the correction to "s"
- * becomes nearly free. If you hit dead center of "a", corrections away
- * from "a" become expensive.
- *
- * Ported from Expressive Keyboard's touch geometry system.
- */
 object TouchGeometry {
 
     /** Stddev of finger scatter around key center, in key-width units. */

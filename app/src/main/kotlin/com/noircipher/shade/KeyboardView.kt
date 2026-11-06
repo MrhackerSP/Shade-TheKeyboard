@@ -233,7 +233,6 @@ class KeyboardView(context: Context) : View(context) {
     private val slidePath = ArrayDeque<FloatArray>()
     // Touch geometry: per-character offsets for the word being typed
     private val touchOffsets = ArrayList<TouchGeometry.KeyTouch>()
-    // Gesture engine — ported from FUTO/AOSP, handles sampling + trail rendering
     private var gestureEngine: GestureEngine? = null
     private var gestureStartTime = 0L
 
@@ -916,7 +915,6 @@ class KeyboardView(context: Context) : View(context) {
 
         altAnimator?.cancel()
         if (useOverlay) {
-            // Gboard-style: the key bubble morphs into the accent grid.
             altUsesOverlay = true
             altProgress = 1f
             popupLayer.showAccents(chars, altCols, altRows, cell, origin, altTop, altSel)
@@ -1013,7 +1011,6 @@ class KeyboardView(context: Context) : View(context) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 // Deliver touch events as they arrive instead of batching them to the
-                // next frame - lowers key-press latency (same trick Gboard uses).
                 if (e.actionMasked == MotionEvent.ACTION_DOWN) {
                     try { requestUnbufferedDispatch(e) } catch (_: Throwable) {}
                 }
@@ -1437,7 +1434,6 @@ class KeyboardView(context: Context) : View(context) {
         if (k.kind == KeyKind.CHAR && k.alts.isNotEmpty()) {
             p.consumed = true
             // Don't call hidePreview() — showAlt() will morph the existing
-            // preview bubble into the accent grid (Gboard-style transform).
             showAlt(p, k)
         }
     }

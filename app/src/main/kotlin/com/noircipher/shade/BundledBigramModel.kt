@@ -2,19 +2,7 @@ package com.noircipher.shade
 
 import java.util.Arrays
 
-/**
- * Google Books N-gram bigram model — real co-occurrence probabilities from
- * millions of published books.
- *
- * Replaces Shade's static bigrams_en.txt with accurate probabilities:
- * P("morning" | "good") = 0.82, P("bye" | "good") = 0.03, etc.
- *
- * File format: "word next1/weight next2/weight ..."
- * weight = round(-2 * ln P), sorted by descending probability.
- *
- * Ported from Expressive Keyboard's BigramModel.
- */
-class GoogleBooksBigramModel(lines: List<String>) {
+class BundledBigramModel(lines: List<String>) {
 
     private val vocab: Array<String>
     private val starts: IntArray

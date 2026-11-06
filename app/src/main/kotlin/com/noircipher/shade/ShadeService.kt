@@ -134,7 +134,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private lateinit var root: LinearLayout
     private lateinit var strip: LinearLayout
     private lateinit var toggle: TextView
-    // SwiftKey-style drag handle above the keyboard. Dragging vertically
+    // floating drag handle above the keyboard. Dragging vertically
     // resizes the keyboard (adjusts key_height live). Long-pressing then
     // dragging moves the keyboard up from the bottom (floating offset).
     private lateinit var resizeHandle: View
@@ -211,7 +211,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // candidates — multi-word phrase completions / smart responses / sentence
     // completions are suppressed, and any space-containing candidate coming out
     // of the neural / heuristic pipeline is filtered out. Matches the
-    // "word-by-word" behaviour users expect from Gboard's default.
     private var phraseSuggestionsOn = false
     private var incognito = false
     private var fieldNoPersonalizedLearning = false
@@ -226,7 +225,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // Vertical floating offset in pixels — how far the keyboard is lifted from
     // the bottom of the screen. 0 = docked to bottom (default). Positive
     // values float the keyboard up so the user can position it wherever is
-    // comfortable, like SwiftKey's "undock" feature.
+    // comfortable, like a floating keyboard.
     private var keyboardOffsetY = 0f
     // Raw suggestions as produced by the engines (usually lowercase). What the user sees is
     // `shownWords`: the same list re-cased to match the keyboard state (see SuggestionCasing).
@@ -455,7 +454,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             addView(clipPanel, FrameLayout.LayoutParams(MATCH, MATCH))
         }
 
-        // Resize/float handle — hidden by default (SwiftKey behavior).
+        // Resize/float handle — hidden by default (standard behavior).
         // Only shown when the user enters "resize mode" from Settings →
         // Appearance → Resize keyboard. When visible, the user drags it to
         // resize the keyboard live. Long-press then drag to float the keyboard.
@@ -630,7 +629,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         // Check if the user requested resize mode from Settings → Appearance →
         // Resize keyboard. If so, show the drag handle; it auto-hides after
-        // the user finishes dragging (SwiftKey behavior).
+        // the user finishes dragging (standard behavior).
         if (prefs.getBoolean("resize_mode_requested", false)) {
             prefs.edit().putBoolean("resize_mode_requested", false).apply()
             setResizeMode(true)
@@ -1137,7 +1136,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     /**
      * Touch listener for the drag handle above the keyboard.
      *
-     * Two modes (like SwiftKey):
+     * Two modes (as in standard floating-keyboard mode):
      *  - **Short drag**: resizes the keyboard vertically. Dragging up
      *    shrinks the keyboard, dragging down enlarges it. The new height
      *    is persisted to `key_height` and applied live.
@@ -1214,7 +1213,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     }
                     // Haptic feedback on release
                     v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
-                    // SwiftKey behavior: after the user finishes dragging, the
+                    // After the user finishes dragging, the
                     // resize handle auto-hides. The keyboard stays at the new
                     // size; the handle only reappears if the user re-enters
                     // resize mode from settings.
@@ -1260,7 +1259,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     /**
-     * Toggles the keyboard's "resize mode" — like SwiftKey's resize settings.
+     * Toggles the keyboard's "resize mode" — as in standard floating-keyboard mode's resize settings.
      *
      * When active, the drag handle appears above the keyboard so the user can
      * drag it to resize live. When deactivated, the handle disappears and the
@@ -1643,7 +1642,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onKey(code: Int) {
         // If the user is in resize mode and taps any key, exit resize mode
-        // (SwiftKey behavior — tapping a key confirms the size and returns
+        // (floating-keyboard behavior — tapping a key confirms the size and returns
         // to normal typing).
         if (resizeModeActive) {
             setResizeMode(false)
@@ -1817,7 +1816,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             appendTail(text)
 
             // Feature 1: System Spell Checker — send each word to Android's
-            // built-in spell checker (Gboard/Samsung engine) asynchronously.
             // The result is usually ready by the time the user presses space.
             if (composing.length >= 2) {
                 val locale = dictIds().split(',').firstOrNull()?.trim() ?: "en"
@@ -2161,7 +2159,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     var candidate = try { dict.correction(w, isEnglishLocale(), touches) } catch (_: Exception) { null }
 
                     // Feature 1: System Spell Checker — merge with Android's
-                    // built-in spell checker (Gboard/Samsung engine). If the
                     // system says it's a typo and has a suggestion, use it.
                     if (candidate == null && w.length >= 3) {
                         val locale = dictIds().split(',').firstOrNull()?.trim() ?: "en"

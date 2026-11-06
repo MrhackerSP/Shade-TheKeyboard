@@ -46,10 +46,8 @@ class WordDictionary(private val ctx: Context) {
     // Feature 4: Rare word forms index — stops correction of real words like "happier", "walked"
     @Volatile
     private var rareWords: RareWordIndex? = null
-
-    // Feature 5: Google Books bigram model with real probabilities
     @Volatile
-    private var googleBigrams: GoogleBooksBigramModel? = null
+    private var bundledBigrams: BundledBigramModel? = null
 
     private val contractions: Map<String, String> = mapOf(
         "dont" to "don't", "cant" to "can't", "wont" to "won't",
@@ -96,9 +94,7 @@ class WordDictionary(private val ctx: Context) {
 
             // Feature 4: Load rare word forms (if available)
             rareWords = loadRareWords(localeId, loaded.size)
-
-            // Feature 5: Load Google Books bigrams (if available)
-            googleBigrams = loadGoogleBigrams(localeId)
+            bundledBigrams = loadBundledBigrams(localeId)
         }
     }
 
@@ -137,19 +133,17 @@ class WordDictionary(private val ctx: Context) {
         }
         return null
     }
-
-    // Feature 5: Load Google Books bigram model
-    private fun loadGoogleBigrams(localeId: String): GoogleBooksBigramModel? {
+    private fun loadBundledBigrams(localeId: String): BundledBigramModel? {
         val id = localeId.split(',').firstOrNull()?.trim() ?: return null
         // Try filesDir (downloaded)
         val f = java.io.File(ctx.filesDir, "dicts/${id}_bi.txt")
         if (f.exists() && f.length() > 0) {
-            return runCatching { GoogleBooksBigramModel(f.readLines()) }.getOrNull()
+            return runCatching { BundledBigramModel(f.readLines()) }.getOrNull()
         }
         // Try assets
         return runCatching {
             ctx.assets.open("dicts/${id}_bi.txt").bufferedReader().use { r ->
-                GoogleBooksBigramModel(r.readLines())
+                BundledBigramModel(r.readLines())
             }
         }.getOrNull()
     }
@@ -653,8 +647,7 @@ class WordDictionary(private val ctx: Context) {
 
     @Synchronized
     fun predictNext(prev2: String?, prev1: String?, max: Int): List<String> {
-        // Feature 5: prefer Google Books bigram model if available
-        val gb = googleBigrams
+        val gb = bundledBigrams
         if (gb != null && prev1 != null) {
             val nexts = gb.next(prev1.lowercase())
             if (nexts.isNotEmpty()) return nexts.take(max)
@@ -665,8 +658,7 @@ class WordDictionary(private val ctx: Context) {
 
     @Synchronized
     fun rerankWithContext(prev2: String?, prev1: String?, candidates: List<String>): List<String> {
-        // Feature 5: use Google Books bigram cost for reranking
-        val gb = googleBigrams
+        val gb = bundledBigrams
         if (gb != null && prev1 != null) {
             val p = prev1.lowercase()
             return candidates.sortedByDescending { cand ->
@@ -678,9 +670,9 @@ class WordDictionary(private val ctx: Context) {
         return model.rerank(prev2, prev1, candidates)
     }
 
-    /** Feature 5: expose Google Books bigram cost for the neural reranker. */
-    fun googleBigramCost(prev: String, word: String): Float {
-        return googleBigrams?.cost(prev.lowercase(), word.lowercase()) ?: -1f
+    /** Feature 5: expose bundled bigram cost for the neural reranker. */
+    fun bundledBigramCost(prev: String, word: String): Float {
+        return bundledBigrams?.cost(prev.lowercase(), word.lowercase()) ?: -1f
     }
 
     suspend fun suggestAsync(prefix: String, max: Int): List<String> =

@@ -5,30 +5,13 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.os.SystemClock
 import kotlin.math.hypot
-
-/**
- * Ported from FUTO/AOSP keyboard's GestureStrokeRecognitionPoints + GestureTrailDrawingPoints.
- *
- * Handles:
- * 1. Gesture detection — distinguishes taps from swipes using speed/distance thresholds
- * 2. Point sampling — decimates raw touch events to optimal density (not every pixel)
- * 3. Trail rendering — bezier curves with width tapering and alpha fade
- *
- * Usage in KeyboardView:
- *   val gesture = GestureEngine(keyWidth)
- *   // On down:
- *   gesture.onDown(x, y, elapsedTime)
- *   // On move:
- *   gesture.addEventPoint(x, y, elapsedTime)
- *   if (gesture.isStartOfGesture()) { /* begin glide mode */ }
+ }
  *   // On up:
  *   val path = gesture.getPath()
  *   // Draw trail:
  *   gesture.drawTrail(canvas, paint)
  */
 class GestureEngine(private var keyWidth: Float) {
-
-    // ---- Tunable parameters (from AOSP GestureStrokeRecognitionParams) ----
     private var detectFastMoveSpeedThreshold = 1.5f * keyWidth // pixels/sec
     private var staticTimeThresholdAfterFastTyping = 350 // ms
     private var dynamicThresholdDecayDuration = 450 // ms

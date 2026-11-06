@@ -68,7 +68,7 @@
     <string name="pref_theme">Theme</string>
     <string name="pref_key_height">Key height</string>
     <string name="pref_resize_keyboard">Resize keyboard</string>
-    <string name="pref_resize_keyboard_sum">Show a drag handle above the keyboard to resize it live (SwiftKey-style). The handle disappears when you finish.</string>
+    <string name="pref_resize_keyboard_sum">Show a drag handle above the keyboard to resize it live (floating-keyboard style). The handle disappears when you finish.</string>
     <string name="pref_key_borders">Key borders</string>
     <string name="pref_hints">Show number hints</string>
     <string name="pref_popup">Key preview popup</string>
