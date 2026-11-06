@@ -10,6 +10,7 @@ package com.noircipher.shade.engine
 object CrossSentenceContext {
 
     private const val MAX_CONTEXT = 6
+    private val sentenceTerminatorChars = charArrayOf('.', '!', '?')
 
     private val sentenceStarters: List<String> = listOf(
         "the", "I", "I'm", "I'll", "I've", "I'd", "we", "we'll", "we've",
@@ -33,6 +34,18 @@ object CrossSentenceContext {
     )
 
     /**
+     * Trims the text back to the content after the most recent sentence terminator,
+     * so the model sees the current sentence instead of stale earlier text.
+     */
+    fun truncateAtSentenceBoundary(text: String): String {
+        val raw = text.trim()
+        if (raw.isEmpty()) return ""
+        val lastTerminator = raw.lastIndexOfAny(sentenceTerminatorChars)
+        if (lastTerminator < 0) return raw
+        return raw.substring(lastTerminator + 1).trimStart()
+    }
+
+    /**
      * Extend the given context words by also peeking at the raw text before
      * the cursor — useful when [contextWords] is partial (e.g. typed-word
      * was stripped). Returns the merged lower-cased list, capped at
@@ -50,12 +63,10 @@ object CrossSentenceContext {
      */
     fun isSentenceStart(contextWords: List<String>): Boolean {
         if (contextWords.isEmpty()) return true
-        // Heuristic: if any of the last 2 words end in a sentence terminator,
-        // we're at a sentence boundary. Some callers pass in raw words that
-        // still carry trailing punctuation; this is a tolerant check.
         val tail = contextWords.takeLast(2)
-        return tail.any { w ->
-            w.endsWith('.') || w.endsWith('!') || w.endsWith('?')
+        return tail.any { word ->
+            val trimmed = word.trim()
+            trimmed.isNotEmpty() && trimmed.lastOrNull()?.let { it == '.' || it == '!' || it == '?' } == true
         }
     }
 

@@ -6,7 +6,14 @@ object CandidateRanker {
         dictionary: List<String>,
         limit: Int = 3
     ): List<String> {
-        return (neural + dictionary).distinct().take(limit)
+        val merged = LinkedHashMap<String, String>()
+        for (candidate in neural + dictionary) {
+            val trimmed = candidate.trim()
+            if (trimmed.isEmpty()) continue
+            val key = trimmed.lowercase()
+            if (!merged.containsKey(key)) merged[key] = trimmed
+        }
+        return merged.values.take(limit)
     }
 
     fun withEmojiFallback(
