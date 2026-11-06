@@ -14,7 +14,7 @@ import kotlin.math.min
 class SymSpellIndex(words: List<String>) {
 
     private val vocab: Array<String> = words.toTypedArray()
-    private val rank: HashMap<String, Int> = HashMap(words.size * 2).also { m ->
+    private val rank: HashMap<String, Int> = HashMap<String, Int>(words.size * 2).also { m ->
         words.forEachIndexed { i, w -> m.putIfAbsent(w, i) }
     }
 

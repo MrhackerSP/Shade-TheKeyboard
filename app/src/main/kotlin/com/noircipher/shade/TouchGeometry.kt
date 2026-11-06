@@ -90,4 +90,18 @@ object TouchGeometry {
         }
         return out
     }
+
+    /**
+     * Compute the touch offset (in key-width units) from the center of [key]
+     * at coordinate (x, y). Returns null if the key has no measurable area.
+     * Used to feed [KeyTouch] into the spatial substitution cost.
+     */
+    fun computeTouchOffset(key: Key, x: Float, y: Float): KeyTouch? {
+        val w = key.right - key.left
+        val h = key.bottom - key.top
+        if (w <= 0f || h <= 0f) return null
+        val dx = (x - key.centerX) / w
+        val dy = (y - key.centerY) / h
+        return KeyTouch(dx, dy)
+    }
 }

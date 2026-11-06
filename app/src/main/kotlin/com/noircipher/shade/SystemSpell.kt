@@ -37,7 +37,7 @@ object SystemSpell {
     }
 
     private val NONE = Result(false, false, false, emptyList())
-    private const val ATTRS = SuggestionsInfo.RESULT_ATTR_IN_THE_DIQUARY or
+    private const val ATTRS = SuggestionsInfo.RESULT_ATTR_IN_THE_DICTIONARY or
         SuggestionsInfo.RESULT_ATTR_LOOKS_LIKE_TYPO or
         SuggestionsInfo.RESULT_ATTR_HAS_RECOMMENDED_SUGGESTIONS
 

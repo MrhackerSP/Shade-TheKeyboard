@@ -329,6 +329,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         private fun toast(res: Int) = Toast.makeText(requireContext(), res, Toast.LENGTH_SHORT).show()
+        private fun toast(msg: String) = Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
 
         private fun finishImport(uri: Uri, passphrase: String) {
             val ok = Backup.import(requireContext(), uri, passphrase)
