@@ -2,7 +2,7 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // Kotlin plugin is provided by AGP 9.x's built-in Kotlin support.
 }
 
 android {
@@ -82,10 +82,15 @@ android {
         checkReleaseBuilds = true
         warningsAsErrors = false
     }
+}
 
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs = listOf("-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi")
+// AGP 9.x's built-in Kotlin uses the top-level `kotlin {}` block
+// instead of the old `android.kotlinOptions {}` DSL. jvmTarget is
+// inherited from `android.compileOptions` automatically, so we
+// only need to keep the opt-in flag here.
+kotlin {
+    compilerOptions {
+        freeCompilerArgs.add("-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi")
     }
 }
 
