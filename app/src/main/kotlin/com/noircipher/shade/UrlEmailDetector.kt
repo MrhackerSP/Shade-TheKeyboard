@@ -43,7 +43,8 @@ object UrlEmailDetector {
 
     fun detect(composingText: String, beforeCursor: String): Detection {
         val composing = composingText.trim()
-        val before = beforeCursor.trim()
+        // Keep trailing whitespace: after "john@x.com " the user is starting a new word.
+        val before = beforeCursor.trimStart()
         // Combined last-token from beforeCursor + composing text — that's the
         // logical unit we're checking.
         // getTextBeforeCursor already contains the composing word, so don't add it a second time.
@@ -111,9 +112,9 @@ object UrlEmailDetector {
 
     private fun lastToken(before: String): String {
         if (before.isEmpty()) return ""
-        var end = before.length
-        while (end > 0 && before[end - 1].isWhitespace()) end -= 1
-        if (end == 0) return ""
+        // Cursor is after a space: no token in progress.
+        if (before.last().isWhitespace()) return ""
+        val end = before.length
         var start = end
         while (start > 0) {
             val c = before[start - 1]

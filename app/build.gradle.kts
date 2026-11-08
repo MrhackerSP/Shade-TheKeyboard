@@ -77,6 +77,12 @@ android {
         }
     }
 
+    testOptions {
+        // Android stubs return defaults instead of throwing, so pure-logic classes that
+        // touch android.* types can still be unit-tested on the JVM.
+        unitTests.isReturnDefaultValues = true
+    }
+
     lint {
         abortOnError = true
         checkReleaseBuilds = true

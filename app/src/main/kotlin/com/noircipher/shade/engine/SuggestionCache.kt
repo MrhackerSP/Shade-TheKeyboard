@@ -23,6 +23,11 @@ object SuggestionCache {
 
     private val cache = ConcurrentHashMap<String, Entry>()
 
+    /** Time source; replaceable in tests. */
+    @Volatile internal var clock: () -> Long = { System.currentTimeMillis() }
+
+    internal fun size(): Int = cache.size
+
     /** Context that must not share cache entries (locale, incognito...). Set by the service. */
     @Volatile
     var salt: String = ""
@@ -39,7 +44,7 @@ object SuggestionCache {
     fun get(prev2: String?, prev1: String?, prefix: String): List<String>? {
         val k = key(prev2, prev1, prefix)
         val e = cache[k] ?: return null
-        if (System.currentTimeMillis() > e.expiresAt) {
+        if (clock() > e.expiresAt) {
             cache.remove(k)
             return null
         }
@@ -53,7 +58,7 @@ object SuggestionCache {
             // oldest by expiry (linear scan but bounded by MAX_ENTRIES).
             var oldestKey: String? = null
             var oldestExp = Long.MAX_VALUE
-            val now = System.currentTimeMillis()
+            val now = clock()
             for ((ek, ev) in cache) {
                 if (now > ev.expiresAt) {
                     cache.remove(ek)
@@ -66,7 +71,7 @@ object SuggestionCache {
             }
             oldestKey?.let { cache.remove(it) }
         }
-        cache[k] = Entry(candidates, System.currentTimeMillis() + TTL_MS)
+        cache[k] = Entry(candidates, clock() + TTL_MS)
     }
 
     fun invalidate() {

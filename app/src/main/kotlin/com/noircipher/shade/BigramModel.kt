@@ -15,10 +15,11 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class BigramModel(private val ctx: Context) {
 
-    private val bigrams = ConcurrentHashMap<String, HashMap<String, Float>>()
-    private val trigrams = ConcurrentHashMap<String, HashMap<String, Float>>()
-    private val bigramTotals = ConcurrentHashMap<String, Float>()
-    private val trigramTotals = ConcurrentHashMap<String, Float>()
+    private val stats = NgramStats(DECAY)
+    private val bigrams = stats.bigrams
+    private val trigrams = stats.trigrams
+    private val bigramTotals = stats.bigramTotals
+    private val trigramTotals = stats.trigramTotals
 
     private val store = File(ctx.filesDir, "ngram.json")
     private var dirty = false
@@ -49,65 +50,16 @@ class BigramModel(private val ctx: Context) {
 
     @Synchronized
     fun observe(prev2: String?, prev1: String?, word: String) {
-        val w = word.lowercase()
-        if (w.isEmpty()) return
-
-        if (prev1 != null) {
-            val p1 = prev1.lowercase()
-            val m = bigrams.getOrPut(p1) { HashMap() }
-            m[w] = (m[w] ?: 0f) * DECAY + 1f
-            bigramTotals[p1] = (bigramTotals[p1] ?: 0f) * DECAY + 1f
-        }
-        if (prev2 != null && prev1 != null) {
-            val key = "${prev2.lowercase()}|${prev1.lowercase()}"
-            val m = trigrams.getOrPut(key) { HashMap() }
-            m[w] = (m[w] ?: 0f) * DECAY + 1f
-            trigramTotals[key] = (trigramTotals[key] ?: 0f) * DECAY + 1f
-        }
-        dirty = true
+        if (stats.observe(prev2, prev1, word)) dirty = true
     }
 
     @Synchronized
-    fun predict(prev2: String?, prev1: String?, max: Int): List<Pair<String, Float>> {
-        if (prev1 == null) return emptyList()
-        val p1 = prev1.lowercase()
-        val p2 = prev2?.lowercase()
-
-        val scores = HashMap<String, Float>()
-
-        if (p2 != null) {
-            val tk = "$p2|$p1"
-            val tm = trigrams[tk]
-            val tt = trigramTotals[tk] ?: 0f
-            if (tm != null && tt > 0f) {
-                for ((w, c) in tm) scores[w] = (scores[w] ?: 0f) + 0.7f * (c / tt)
-            }
-        }
-        val bm = bigrams[p1]
-        val bt = bigramTotals[p1] ?: 0f
-        if (bm != null && bt > 0f) {
-            for ((w, c) in bm) scores[w] = (scores[w] ?: 0f) + 0.3f * (c / bt)
-        }
-
-        staticNext[p1]?.let { arr ->
-            for ((i, w) in arr.withIndex()) {
-                scores[w] = (scores[w] ?: 0f) + 0.18f - 0.06f * i
-            }
-        }
-
-        if (scores.isEmpty()) return emptyList()
-        return scores.entries
-            .sortedByDescending { it.value }
-            .take(max)
-            .map { it.key to it.value }
-    }
+    fun predict(prev2: String?, prev1: String?, max: Int): List<Pair<String, Float>> =
+        stats.predict(prev2, prev1, max, staticNext)
 
     @Synchronized
-    fun rerank(prev2: String?, prev1: String?, candidates: List<String>): List<String> {
-        if (candidates.isEmpty() || prev1 == null) return candidates
-        val scores = predict(prev2, prev1, candidates.size * 2).toMap()
-        return candidates.sortedByDescending { scores[it.lowercase()] ?: 0f }
-    }
+    fun rerank(prev2: String?, prev1: String?, candidates: List<String>): List<String> =
+        stats.rerank(prev2, prev1, candidates, staticNext)
 
     @Synchronized
     fun save() {
@@ -216,8 +168,7 @@ class BigramModel(private val ctx: Context) {
     }
 
     fun clear() {
-        bigrams.clear(); trigrams.clear()
-        bigramTotals.clear(); trigramTotals.clear()
+        stats.clear()
         store.delete()
     }
 

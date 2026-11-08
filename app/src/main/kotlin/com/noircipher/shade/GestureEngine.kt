@@ -20,7 +20,11 @@ import kotlin.math.hypot
  *   // Draw trail:
  *   gesture.drawTrail(canvas, paint)
  */
-class GestureEngine(private var keyWidth: Float) {
+class GestureEngine(
+    private var keyWidth: Float,
+    /** Time source; injectable so trail expiry can be unit-tested. */
+    private val clock: () -> Long = { SystemClock.uptimeMillis() }
+) {
     private var detectFastMoveSpeedThreshold = 1.5f * keyWidth // pixels/sec
     private var staticTimeThresholdAfterFastTyping = 350 // ms
     private var dynamicThresholdDecayDuration = 450 // ms
@@ -140,13 +144,13 @@ class GestureEngine(private var keyWidth: Float) {
      * so this only refreshes timestamps so the whole stroke starts fading from release.
      */
     fun addTrail() {
-        val now = SystemClock.uptimeMillis()
+        val now = clock()
         for (i in trailTimes.indices) trailTimes[i] = now
     }
 
     /** True while there are trail points still visible (used to stop endless redraws). */
     fun hasTrail(): Boolean {
-        val now = SystemClock.uptimeMillis()
+        val now = clock()
         while (trailTimes.isNotEmpty() && now - trailTimes[0] > trailLingerDuration) {
             trailX.removeAt(0); trailY.removeAt(0); trailTimes.removeAt(0)
         }
@@ -156,7 +160,7 @@ class GestureEngine(private var keyWidth: Float) {
     /** Draw the fading gesture trail on the canvas. */
     fun drawTrail(canvas: Canvas, paint: Paint) {
         if (trailX.size < 2) return
-        val now = SystemClock.uptimeMillis()
+        val now = clock()
         val path = Path()
         paint.color = trailColor
         paint.style = Paint.Style.STROKE
@@ -220,7 +224,7 @@ class GestureEngine(private var keyWidth: Float) {
         // Feed the visible trail live so it follows the finger (not only after release)
         trailX.add(x.toFloat())
         trailY.add(y.toFloat())
-        trailTimes.add(SystemClock.uptimeMillis())
+        trailTimes.add(clock())
     }
 
     private fun updateMajorEvent(x: Int, y: Int, time: Int) {

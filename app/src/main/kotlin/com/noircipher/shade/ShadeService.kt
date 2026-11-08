@@ -2677,7 +2677,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 // match a recently-computed result. Skips the whole pipeline.
                 com.noircipher.shade.engine.SuggestionCache.salt = "$configuredLocale|$incognito"
                 com.noircipher.shade.engine.SuggestionCache.get(prev2, prev1, prefix)?.let { cached ->
-                    withContext(Dispatchers.Main.immediate) { setCandidates(centerBest(cached.take(3))) }
+                    withContext(Dispatchers.Main.immediate) { setCandidates(cached) }
                     return@launch
                 }
                 val known = dict.contains(prefix)
@@ -2867,7 +2867,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 }
                 // #11 — Suggestion cache: nothing to inject here, but record the
                 // final ranked list so subsequent keystrokes can hit the cache.
-                com.noircipher.shade.engine.SuggestionCache.put(prev2, prev1, prefix, ranked)
                 // #32 — Multi-armed bandit exploration: occasionally swap top-2
                 // to learn whether the runner-up would have been accepted.
                 if (onlineRankerTrainer.shouldExplore() && ranked.size > 2) {
@@ -2878,37 +2877,23 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     ranked = mutable
                 }
 
-                val typedWordIsValid = dict.contains(prefix)
-                var shown: List<String> = when {
-                    grammarTop != null && !grammarTop.equals(prefix, ignoreCase = true) && !typedWordIsValid ->
-                        (listOf(grammarTop) + ranked + listOf(prefix)).distinct().take(3)
-
-                    !known && ranked.isNotEmpty() ->
-                        listOf(prefix) + ranked.take(2)
-
-                    else ->
-                        centerBest(ranked.ifEmpty { listOf(prefix) }.take(3))
-                }
-                // Final safety net: in word-by-word mode strip any candidate
-                // that still contains a space (could slip in from the neural
-                // model, the heuristic bigram engine, or the typed-word
-                // pipeline). Always preserve the typed-word itself and at
-                // least one candidate so the strip is never empty mid-word.
-                if (!phraseSuggestionsOn && shown.isNotEmpty()) {
-                    val singleWord = shown.filter { !it.contains(' ') }
-                    shown = if (singleWord.isEmpty()) shown else singleWord
-                }
+                val shown = com.noircipher.shade.engine.SuggestionFinalizer.finalize(
+                    prefix = prefix,
+                    known = known,
+                    grammarTop = grammarTop,
+                    ranked = ranked,
+                    phraseSuggestionsOn = phraseSuggestionsOn
+                )
+                // Cache the final list (after typo/grammar handling) so a cache hit
+                // shows exactly what the full pipeline would.
+                com.noircipher.shade.engine.SuggestionCache.put(prev2, prev1, prefix, shown)
                 withContext(Dispatchers.Main.immediate) { setCandidates(shown) }
             }
         }
     }
 
-    private fun centerBest(l: List<String>): List<String> = when (l.size) {
-        0 -> l
-        1 -> l
-        2 -> listOf(l[1], l[0])
-        else -> listOf(l[1], l[0], l[2])
-    }
+    private fun centerBest(l: List<String>): List<String> =
+        com.noircipher.shade.engine.SuggestionFinalizer.centerBest(l)
 
     /**
      * 4m — Smart number prediction. Surfaces short numeric completions after

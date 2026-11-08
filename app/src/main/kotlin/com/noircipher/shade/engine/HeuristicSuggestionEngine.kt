@@ -43,8 +43,8 @@ internal object PhraseSuggestions {
         if (previousWord.isNullOrBlank() || limit <= 0) return emptyList()
         val prefix = typedPrefix?.trim()?.lowercase().orEmpty()
         val all = CONTINUATIONS[previousWord.trim().lowercase()].orEmpty()
-        val filtered = if (prefix.isEmpty()) all else all.filter { it.startsWith(prefix) }
-        return filtered.take(limit)
+        val filtered = if (prefix.isEmpty()) all else all.filter { it.startsWith(prefix, ignoreCase = true) }
+        return filtered.distinct().take(limit)
     }
 }
 
@@ -81,8 +81,8 @@ internal object TrigramSuggestions {
         val key = contextWords.takeLast(3).joinToString(" ").trim().lowercase()
         val all = CONTINUATIONS[key].orEmpty()
         val prefix = typedPrefix?.trim()?.lowercase().orEmpty()
-        val filtered = if (prefix.isEmpty()) all else all.filter { it.startsWith(prefix) }
-        return filtered.take(limit)
+        val filtered = if (prefix.isEmpty()) all else all.filter { it.startsWith(prefix, ignoreCase = true) }
+        return filtered.distinct().take(limit)
     }
 }
 
@@ -214,6 +214,7 @@ internal object SmartSuggestions {
         return STEM_COMPLETIONS.entries
             .filter { it.key.startsWith(p) || p.startsWith(it.key) }
             .flatMap { it.value }
+            .filter { !it.equals(p, ignoreCase = true) } // never offer the word as typed
     }
 
     private fun inflectionContinuations(contextWords: List<String>, nextWord: Boolean): List<String> {
