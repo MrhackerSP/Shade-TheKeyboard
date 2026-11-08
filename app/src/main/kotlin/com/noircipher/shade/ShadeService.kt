@@ -1858,6 +1858,72 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         afterText()
     }
 
+    /**
+     * Accent variant picked from a long-press popup.
+     *
+     * Implements the “atomic swap of the just-typed base letter” (Expressive-style `replaceLast`)
+     * instead of the old append-only behaviour:
+     *
+     *   tap `a` → composing = "a"
+     *   long-press `a`, slide to `á`, release → composing = "á"   (was "aá" before this change)
+     *
+     * Conditions for the swap:
+     *  - we're in a composable text field (LETTERS mode, not a password/search field);
+     *  - the cursor sits at the end of the composing region (otherwise finishing the composing
+     *    region and re-setting it would yank the caret — same guard `backspace()` uses);
+     *  - the composing region's trailing char matches [base] (case-insensitive, so a shift-state
+     *    change between tap and long-press still works).
+     *
+     * If any condition fails we fall back to [onText], preserving the previous behaviour for
+     * non-letter fields, mid-word cursors, or accents that aren't a variant of the trailing char.
+     */
+    override fun onAccent(base: String, accent: String) {
+        if (!canCompose || mode != Mode.LETTERS || accent.length != 1) {
+            onText(accent)
+            return
+        }
+        val ic = currentInputConnection ?: return
+        val cursorAtComposingEnd = composingEnd < 0 || cursorPos < 0 || cursorPos == composingEnd
+        val tailMatches = composing.isNotEmpty() &&
+            composing.last().equals(base.firstOrNull() ?: '_', ignoreCase = true)
+        if (!cursorAtComposingEnd || !tailMatches) {
+            onText(accent)
+            return
+        }
+
+        // Clear touch offsets when modifying the composing word.
+        if (this::kb.isInitialized) kb.clearTouchOffsets()
+        currentTouchOffsets = emptyList()
+
+        // 4d — track keystroke timing for TypingSpeedAdapter.
+        com.noircipher.shade.engine.TypingSpeedAdapter.onKeystroke()
+        clearUndo()
+
+        if (shiftState == 1) {
+            shiftState = 0
+            autoShifted = false
+            kb.shiftState = 0
+        }
+
+        // Atomic swap: replace the last composing char with the chosen accent.
+        // setComposingText replaces the whole composing region atomically, so the editor sees a
+        // single edit and there's no visible "delete then insert" flicker.
+        lastCorrectionEvent = null
+        composing.deleteCharAt(composing.length - 1)
+        composing.append(accent)
+        popTail(1)
+        appendTail(accent)
+        ic.setComposingText(composing.toString(), 1)
+
+        if (composing.length >= 2) {
+            val locale = dictIds().split(',').firstOrNull()?.trim() ?: "en"
+            SystemSpell.request(this@ShadeService, locale, composing.toString(), debounceMs = 150L)
+        }
+
+        lastSpaceTime = 0L
+        afterText()
+    }
+
     private fun snapshotWordTouches() {
         lastWordTouches = touchTrace.last(touchTrace.size())
         touchTrace.clear()

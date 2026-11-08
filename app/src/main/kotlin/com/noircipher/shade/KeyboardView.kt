@@ -31,6 +31,18 @@ class KeyboardView(context: Context) : View(context) {
     interface Listener {
         fun onKey(code: Int)
         fun onText(text: String)
+        /**
+         * Accent variant selected from a long-press popup.
+         *
+         * @param base   the displayed label of the key that was long-pressed (already case-shifted
+         *               for the current shift state). This is what the IME should compare against
+         *               the trailing char of the composing region to decide whether to swap
+         *               (atomic replaceLast) or append.
+         * @param accent the chosen accented character (already case-shifted).
+         *
+         * Default impl falls back to [onText] for listeners that don’t care about the swap.
+         */
+        fun onAccent(base: String, accent: String) { onText(accent) }
         fun onCursor(delta: Int)
         fun onCursorMove(dx: Int, dy: Int)
         fun onLongPressSpecial()
@@ -157,12 +169,12 @@ class KeyboardView(context: Context) : View(context) {
     private var altItems: List<String> = emptyList()
     private var altSel = 0
     private var altCols = 1
-    private var altRows = 1
     private var altCell = 0f
     private var altOriginX = 0f
     private var altTop = 0f
     private var altProgress = 0f
     private var altAnimator: ValueAnimator? = null
+    private var altBaseLabel = ""   // raw label of the long-pressed key (for onAccent)
     private val altBg = Paint(Paint.ANTI_ALIAS_FLAG)
     private val altSelPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val altText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
@@ -847,15 +859,19 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    /**
+     * In-view fallback for the accent strip. Same geometry as the overlay path, but bounded by
+     * the keyboard view itself — used only when [KeyPopupOverlay.prepare] fails.
+     */
     private fun drawAltStrip(c: Canvas) {
         val n = altItems.size
         if (n == 0) return
         val scale = 0.75f + 0.25f * altProgress
         val cell = altCell * scale
-        val stripH = cell * altRows
-        val stripW = cell * altCols
+        val stripH = cell
+        val stripW = cell * n
         val left = altOriginX
-        val top = altTop + (altCell * altRows - stripH)
+        val top = altTop + (altCell - stripH)
 
         altRect.set(left, top + dp(3f), left + stripW, top + dp(3f) + stripH)
         altShadow.color = 0x55000000
@@ -866,59 +882,64 @@ class KeyboardView(context: Context) : View(context) {
         altBg.color = kbTheme.popupBg
         c.drawRoundRect(altRect, r, r, altBg)
 
-        val row = altSel / altCols
-        val col = altSel % altCols
+        // Selected cell pops up by dp(4) * progress — same look as the overlay strip.
+        val elev = dp(4f) * altProgress
+        val col = altSel.coerceIn(0, n - 1)
         val selLeft = left + col * cell + dp(4f) * scale
         val selRight = left + (col + 1) * cell - dp(4f) * scale
-        val selTop = top + row * cell + dp(4f) * scale
-        val selBottom = top + (row + 1) * cell - dp(4f) * scale
+        val selTop = top - elev + dp(4f) * scale
+        val selBottom = top - elev + cell - dp(4f) * scale
         altRect.set(selLeft, selTop, selRight, selBottom)
         altSelPaint.color = kbTheme.accent
         c.drawRoundRect(altRect, r * 0.75f, r * 0.75f, altSelPaint)
 
         altText.textSize = min(cell * 0.55f, dp(22f) * scale)
         for (i in 0 until n) {
-            val rrow = i / altCols
-            val ccol = i % altCols
+            val ccol = i % n
             altText.color = if (i == altSel) kbTheme.accentText else kbTheme.text
+            val yOff = if (i == altSel) -elev else 0f
             val cx = left + ccol * cell + cell / 2f
-            val cy = top + rrow * cell + cell / 2f - (altText.ascent() + altText.descent()) / 2f
+            val cy = top + yOff + cell / 2f - (altText.ascent() + altText.descent()) / 2f
             c.drawText(altItems[i].toString(), cx, cy, altText)
         }
     }
 
     private fun showAlt(p: Pointer, k: Key) {
-        val chars = k.alts.map { display(it.toString()) }.distinct()
+        // Display-shift the alts (so long-pressing 'a' with shift on shows 'Á'), then drop duplicates.
+        // Cap at MAX_STRIP_ITEMS — single horizontal row, no second row.
+        val chars = k.alts.map { display(it.toString()) }
+            .distinct()
+            .take(KeyPopupOverlay.MAX_STRIP_ITEMS)
         if (chars.isEmpty()) return
         val n = chars.size
-        altCols = minOf(9, n).coerceAtLeast(1)
-        altRows = ((n + altCols - 1) / altCols).coerceAtLeast(1)
-        val cell = min(dp(52f), (width - dp(8f)) / altCols)
-        val pw = cell * altCols
-        val ph = cell * altRows
+        altCols = n
+        val cell = min(dp(52f), (width - dp(8f)) / n)
+        val pw = cell * n
+        val ph = cell
 
         val keyCenter = k.centerX
         val origin = (keyCenter - pw / 2f)
             .coerceIn(0f, maxOf(0f, (width - pw).toFloat()))
 
-        // The shared popup layer can reach up into the suggestion strip, so top-row grids stay fully visible.
+        // The shared popup layer can reach up into the suggestion strip, so top-row strips stay visible.
         val useOverlay = popupLayer.prepare()
         val minTop = if (useOverlay) popupLayer.minTopInOwner() else dp(2f)
 
         altItems = chars
+        altBaseLabel = k.label
         altOriginX = origin
         altCell = cell
         altTop = (k.top - dp(6f) - ph).coerceAtLeast(minTop)
         altShown = true
-        val startCol = ((p.lastX - origin) / cell).toInt().coerceIn(0, altCols - 1)
-        val startRow = ((p.lastY - altTop) / cell).toInt().coerceIn(0, altRows - 1)
-        altSel = (startRow * altCols + startCol).coerceIn(0, n - 1)
+        // Default selection sits in the middle of the strip — long-press + release without sliding
+        // lands on the “primary” variant, matching modern (Gboard-style) behaviour.
+        altSel = (n / 2).coerceIn(0, n - 1)
 
         altAnimator?.cancel()
         if (useOverlay) {
             altUsesOverlay = true
             altProgress = 1f
-            popupLayer.showAccents(chars, altCols, altRows, cell, origin, altTop, altSel)
+            popupLayer.showAccents(chars, cell, origin, altTop, altSel)
         } else {
             altUsesOverlay = false
             altAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -932,12 +953,11 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun updateAlt(p: Pointer, x: Float, y: Float) {
         if (!altShown || altItems.isEmpty()) return
-        val col = ((x - altOriginX) / altCell).toInt().coerceIn(0, altCols - 1)
-        val row = ((y - altTop) / altCell).toInt().coerceIn(0, altRows - 1)
-        val idx = (row * altCols + col).coerceIn(0, altItems.size - 1)
-        if (idx != altSel) {
-            altSel = idx
-            if (altUsesOverlay) popupLayer.setAccentSelection(idx)
+        // Single-row strip: only the column matters.
+        val col = ((x - altOriginX) / altCell).toInt().coerceIn(0, altItems.size - 1)
+        if (col != altSel) {
+            altSel = col
+            if (altUsesOverlay) popupLayer.setAccentSelection(col)
             hapticTick()
             invalidate()
         }
@@ -1212,6 +1232,16 @@ class KeyboardView(context: Context) : View(context) {
     private fun move(id: Int, x: Float, y: Float) {
         val p = pointers.get(id) ?: return
         val k = p.key ?: return
+        // Accent popup takes priority over everything: once the long-press popup is open, the
+        // finger only navigates the accent strip. We must NOT feed the gesture engine or the
+        // slide path here, otherwise the glide-typing system records the slide-over-accents as a
+        // glide word and commits it on finger-up (inserting “letters behind the popup”).
+        if (altShown) {
+            p.lastX = x
+            p.lastY = y
+            updateAlt(p, x, y)
+            return
+        }
         if (id == slidePointerId && k.kind == KeyKind.CHAR) {
             slidePath.addLast(floatArrayOf(x, y))
             if (slidePath.size > 240) slidePath.removeFirst()
@@ -1231,12 +1261,6 @@ class KeyboardView(context: Context) : View(context) {
 
             // Draw trail via gesture engine
             updateTrail(x, y)
-        }
-        if (altShown) {
-            p.lastX = x
-            p.lastY = y
-            updateAlt(p, x, y)
-            return
         }
         if (k.kind == KeyKind.SPACE) {
             if (p.consumed) return
@@ -1345,7 +1369,10 @@ class KeyboardView(context: Context) : View(context) {
         if (p.swiping) endTrail()
 
         var slideConsumed = false
-        if (!cancel && id == slidePointerId && slidePath.size >= 4 && slidePathSpread(slidePath) > dp(48f)) {
+        // Don't commit a glide word if the finger ended on an accent selection — the accent
+        // branch below handles that. Without this guard, a slide that started before the
+        // long-press fired (recording a few glide points) would also commit a glide word.
+        if (!cancel && !altShown && id == slidePointerId && slidePath.size >= 4 && slidePathSpread(slidePath) > dp(48f)) {
             // Gesture typing: use the gesture engine's properly sampled path
             val path = gestureEngine?.getPath() ?: slidePath.toList()
             slideConsumed = listener?.onSwipePath(path) == true
@@ -1375,8 +1402,9 @@ class KeyboardView(context: Context) : View(context) {
             }
         } else if (altShown) {
             val s = altItems.getOrNull(altSel)
+            val base = altBaseLabel
             dismissAlt()
-            if (!cancel && s != null) listener?.onText(s)
+            if (!cancel && s != null) listener?.onAccent(display(base), s)
         } else if (!cancel && k != null && !p.consumed && !p.swiping) {
             fire(k)
         }
