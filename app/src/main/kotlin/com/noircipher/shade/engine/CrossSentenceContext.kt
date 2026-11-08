@@ -40,9 +40,24 @@ object CrossSentenceContext {
     fun truncateAtSentenceBoundary(text: String): String {
         val raw = text.trim()
         if (raw.isEmpty()) return ""
-        val lastTerminator = raw.lastIndexOfAny(sentenceTerminatorChars)
+        var lastTerminator = -1
+        for (i in raw.indices) {
+            if (raw[i] !in sentenceTerminatorChars) continue
+            // "5.99", "example.com", "e.g" - a terminator glued to the next character is not a sentence end.
+            if (i + 1 < raw.length && !raw[i + 1].isWhitespace()) continue
+            lastTerminator = i
+        }
         if (lastTerminator < 0) return raw
         return raw.substring(lastTerminator + 1).trimStart()
+    }
+
+    /**
+     * Sentence-start check on the RAW text before the typed word. [isSentenceStart] works on word
+     * lists whose punctuation was already stripped by the caller's tokenizer, so it rarely fires.
+     */
+    fun endsWithSentenceTerminator(rawBefore: String): Boolean {
+        val t = rawBefore.trimEnd()
+        return t.isEmpty() || t.last() in sentenceTerminatorChars
     }
 
     /**

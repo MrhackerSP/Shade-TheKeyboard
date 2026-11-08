@@ -383,6 +383,6 @@ class KeyPopupOverlay(
 
     companion object {
         /** Maximum number of cells shown in the accent strip. Longer [Key.alts] strings are truncated. */
-        const val MAX_STRIP_ITEMS = 8
+        const val MAX_STRIP_ITEMS = 10
     }
 }

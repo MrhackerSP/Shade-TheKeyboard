@@ -28,14 +28,14 @@ class VoiceInputController(
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(context, "Grant microphone permission to use voice typing", Toast.LENGTH_LONG).show()
             try {
+                // A keyboard can't show the permission dialog itself; a tiny transparent activity does.
                 context.startActivity(
-                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = Uri.parse("package:${context.packageName}")
+                    Intent(context, VoicePermissionActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                 )
             } catch (_: Exception) {
-                // Some restricted contexts cannot open settings.
+                // Some restricted contexts cannot start activities.
             }
             return
         }

@@ -194,7 +194,7 @@ class TypingStatsStore(context: Context) {
         val minutes = (activeMs / 60000L).coerceAtLeast(1L)
         return Snapshot(
             totalChars = chars,
-            activeMinutes = activeMs / 60000L,
+            activeMinutes = minutes, // same clamp the average uses, so the two never disagree
             averageWpm = ((chars / 5f) / minutes).coerceIn(0f, 300f),
             peakWpm = (counters["peak_wpm"] ?: 0L).toInt(),
             backspaces = counters["backspaces"] ?: 0L,
@@ -210,9 +210,11 @@ class TypingStatsStore(context: Context) {
 
     @Synchronized
     fun clear() {
-        scope.cancel()
+        // Keep the scope alive: only drop the pending flush, so stats keep saving after a reset.
+        flushJob?.cancel()
         prefs.edit().clear().apply()
         counters.clear()
         words.clear()
+        dirty = false
     }
 }

@@ -23,6 +23,8 @@ object ProfileStore {
 
     fun forPackage(pkg: String?, userProfiles: List<KeyboardProfile>): KeyboardProfile? {
         if (pkg == null) return null
+        // The user's own profile wins; otherwise fall back to the built-in privacy defaults.
         return userProfiles.firstOrNull { it.packageName == pkg }
+            ?: defaults.firstOrNull { it.packageName == pkg }
     }
 }

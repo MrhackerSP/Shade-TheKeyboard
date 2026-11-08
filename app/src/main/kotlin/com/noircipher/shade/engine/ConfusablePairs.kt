@@ -30,7 +30,6 @@ object ConfusablePairs {
         // your / you're
         Rule("your", "you're", contextTrigger = setOf("going", "welcome", "right", "the", "best", "here", "there", "invited", "awesome", "amazing", "great", "ready", "doing", "so")),
         Rule("youre", "you're"),
-        Rule("youre", "your", contextBlock = setOf("going", "welcome", "right")),
 
         // its / it's
         Rule("its", "it's", contextTrigger = setOf("going", "been", "not", "so", "a", "the", "going", "ok", "okay", "true", "been", "getting", "looking", "nice", "fine", "great", "awesome", "ready")),

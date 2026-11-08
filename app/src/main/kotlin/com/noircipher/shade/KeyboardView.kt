@@ -94,7 +94,7 @@ class KeyboardView(context: Context) : View(context) {
 
     var bgBitmap: Bitmap? = null
         set(v) {
-            field?.let { if (!it.isRecycled) it.recycle() }
+            // The owner (ShadeService) is the only one that recycles; the view just drops the reference.
             field = v
             invalidate()
         }
@@ -455,7 +455,7 @@ class KeyboardView(context: Context) : View(context) {
 
     override fun onDraw(c: Canvas) {
         c.drawColor(kbTheme.bg)
-        val bmp = bgBitmap
+        val bmp = bgBitmap?.takeIf { !it.isRecycled }
         if (bmp != null) {
             val scale = maxOf(width.toFloat() / bmp.width, height.toFloat() / bmp.height)
             val dw = bmp.width * scale
@@ -1402,9 +1402,8 @@ class KeyboardView(context: Context) : View(context) {
             }
         } else if (altShown) {
             val s = altItems.getOrNull(altSel)
-            val base = altBaseLabel
             dismissAlt()
-            if (!cancel && s != null) listener?.onAccent(display(base), s)
+            if (!cancel && s != null) listener?.onText(s)
         } else if (!cancel && k != null && !p.consumed && !p.swiping) {
             fire(k)
         }
@@ -1569,8 +1568,7 @@ class KeyboardView(context: Context) : View(context) {
         altItems = emptyList()
         trailActive = false
         deleteSlideActive = false
-        bgBitmap?.let { if (!it.isRecycled) it.recycle() }
-        bgBitmap = null
+        bgBitmap = null // drop the reference only; ShadeService owns the bitmap
     }
 
     fun release() {

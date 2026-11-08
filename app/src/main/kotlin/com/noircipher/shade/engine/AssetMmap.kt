@@ -45,12 +45,16 @@ internal object AssetMmap {
 
     private fun mmap(context: Context, path: String): MappedByteBuffer {
         val fd: AssetFileDescriptor = context.assets.openFd(path)
-        return FileInputStream(fd.fileDescriptor).channel.use { channel ->
-            channel.map(
-                FileChannel.MapMode.READ_ONLY,
-                fd.startOffset,
-                fd.declaredLength
-            )
-        }.also { fd.close() }
+        try {
+            return FileInputStream(fd.fileDescriptor).channel.use { channel ->
+                channel.map(
+                    FileChannel.MapMode.READ_ONLY,
+                    fd.startOffset,
+                    fd.declaredLength
+                )
+            }
+        } finally {
+            fd.close() // also on failure, so a failed map() doesn't leak the descriptor
+        }
     }
 }

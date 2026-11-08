@@ -46,7 +46,9 @@ object UrlEmailDetector {
         val before = beforeCursor.trim()
         // Combined last-token from beforeCursor + composing text — that's the
         // logical unit we're checking.
-        val lastToken = lastToken(before) + composing
+        // getTextBeforeCursor already contains the composing word, so don't add it a second time.
+        val lastToken = if (composing.isNotEmpty() && before.endsWith(composing)) lastToken(before)
+        else lastToken(before) + composing
         if (lastToken.isEmpty()) return Detection.NONE
 
         // URL: scheme prefix matches even partially.
@@ -81,8 +83,10 @@ object UrlEmailDetector {
             val afterSlash = before.substring(slashIdx)
             // Only if the slash is part of a URL-looking token (no whitespace
             // between scheme/host and slash).
-            val beforeSlash = before.substring(0, slashIdx)
-            if (urlRegex.containsMatchIn(beforeSlash) || urlPrefixRegex.containsMatchIn(beforeSlash)) {
+            // Judge only the whitespace-delimited token right before the slash, not the whole prefix
+            // (the anchored regex could never match a prefix containing earlier words).
+            val beforeSlash = before.substring(0, slashIdx).takeLastWhile { !it.isWhitespace() }
+            if (urlRegex.matches(beforeSlash) || urlPrefixRegex.containsMatchIn(beforeSlash)) {
                 val hasSpaceAfterSlash = afterSlash.any { it.isWhitespace() }
                 if (!hasSpaceAfterSlash) {
                     return Detection(isUrl = false, isEmail = false, isPhone = false, isPathSegment = true)

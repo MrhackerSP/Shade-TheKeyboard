@@ -119,14 +119,15 @@ class AdaptiveWordMemory(context: Context) {
     }
 
     fun shutdown() {
+        // Shared process-wide instance: flush now but keep the scope for the next service instance.
         flushJob?.cancel()
         flush()
-        scope.cancel()
     }
 
     @Synchronized
     fun clear() {
-        scope.cancel()
+        // Only cancel the pending flush; cancelling the whole scope would stop every later save.
+        flushJob?.cancel()
         values.clear()
         prefs.edit().clear().apply()
         dirty = false

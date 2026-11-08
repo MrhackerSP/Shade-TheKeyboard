@@ -180,13 +180,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private val slideDecoder: SlideDecoder by lazy { SlideDecoder(dict) }
     private var rankingScorer: com.noircipher.shade.engine.CandidateRankingScorer? = null
     private val userWordMemory: UserWordMemory by lazy { UserWordMemory(this) }
-    private val typingStatsStore: TypingStatsStore by lazy { TypingStatsStore(this) }
-    private val adaptiveWordMemory: AdaptiveWordMemory by lazy { AdaptiveWordMemory(this) }
-    private val appContextModel: AppContextModel by lazy { AppContextModel(this) }
-    private val autocorrectSuppressor: AutocorrectSuppressor by lazy { AutocorrectSuppressor(this) }
-    private val confidenceCalibrator: ConfidenceCalibrator by lazy { ConfidenceCalibrator(this) }
-    private val onlineRankerTrainer: OnlineRankerTrainer by lazy { OnlineRankerTrainer(this) }
-    private val touchBiasModel: TouchBiasModel by lazy { TouchBiasModel(this) }
+    private val typingStatsStore: TypingStatsStore by lazy { LiveStores.get { TypingStatsStore(applicationContext) } }
+    private val adaptiveWordMemory: AdaptiveWordMemory by lazy { LiveStores.get { AdaptiveWordMemory(applicationContext) } }
+    private val appContextModel: AppContextModel by lazy { LiveStores.get { AppContextModel(applicationContext) } }
+    private val autocorrectSuppressor: AutocorrectSuppressor by lazy { LiveStores.get { AutocorrectSuppressor(applicationContext) } }
+    private val confidenceCalibrator: ConfidenceCalibrator by lazy { LiveStores.get { ConfidenceCalibrator(applicationContext) } }
+    private val onlineRankerTrainer: OnlineRankerTrainer by lazy { LiveStores.get { OnlineRankerTrainer(applicationContext) } }
+    private val touchBiasModel: TouchBiasModel by lazy { LiveStores.get { TouchBiasModel(applicationContext) } }
     private val sessionBigramBoost by lazy { com.noircipher.shade.engine.SessionBigramBoost() }
     private val sentencePositionScorer by lazy { com.noircipher.shade.engine.SentencePositionScorer(this) }
     private val rejectionTracker by lazy { com.noircipher.shade.engine.SuggestionRejectionTracker(this) }
@@ -655,6 +655,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
+        try { voice?.cancel() } catch (_: Exception) {} // a late result must not land in the next field
         suggestJob?.cancel()
         suggestDebounceJob?.cancel()
         correctionJob?.cancel()
@@ -678,6 +679,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onFinishInput() {
         super.onFinishInput()
+        try { voice?.cancel() } catch (_: Exception) {}
         currentInputConnection?.finishComposingText()
         composing.clear()
         undoStack.clear()
@@ -1389,7 +1391,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 val buf = ByteArray(8192)
                 var total = 0
                 while (total < maxBytes) {
-                    val n = input.read(buf)
+                    val n = input.read(buf, 0, minOf(buf.size, maxBytes - total))
                     if (n < 0) break
                     out.write(buf, 0, n)
                     total += n
@@ -1626,10 +1628,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (path.size < 4) return false
         val layout = kbKeyLayout() ?: return false
         suggestJob?.cancel()
-        suggestJob = scope.launch(Dispatchers.Default) {
+        suggestJob = scope.launch {
             delay(32)
             if (!isActive) return@launch
-            val decoded = slideDecoder.decode(path, layout)
+            // Only the pure decoding runs off the main thread; all editor/UI work stays on Main.
+            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout) }
+            if (!isActive) return@launch
             if (!decoded.isNullOrEmpty()) {
                 // Clear the live preview composing text
                 composing.clear()
@@ -1787,8 +1791,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             ((text[0] != '\'' && WordDictionary.isWordChar(text[0])) || (text[0] == '\'' && composing.isNotEmpty()))
 
         if (isWordChar) {
-            recordLastTouch()
-
             if (shiftState == 1) {
                 shiftState = 0
                 autoShifted = false
@@ -1803,6 +1805,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 val upper = text.uppercase()
                 lastCorrectionEvent = null
                 composing.append(upper)
+                recordLastTouch(text[0])
                 ic.setComposingText(composing.toString(), 1)
                 pushUndo(upper.length, text)
                 appendTail(upper)
@@ -1812,6 +1815,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
             lastCorrectionEvent = null
             composing.append(text)
+            recordLastTouch(text[0]) // after the append, so the trace lines up with the typed character
             ic.setComposingText(composing.toString(), 1)
             appendTail(text)
 
@@ -1858,83 +1862,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         afterText()
     }
 
-    /**
-     * Accent variant picked from a long-press popup.
-     *
-     * Implements the “atomic swap of the just-typed base letter” (Expressive-style `replaceLast`)
-     * instead of the old append-only behaviour:
-     *
-     *   tap `a` → composing = "a"
-     *   long-press `a`, slide to `á`, release → composing = "á"   (was "aá" before this change)
-     *
-     * Conditions for the swap:
-     *  - we're in a composable text field (LETTERS mode, not a password/search field);
-     *  - the cursor sits at the end of the composing region (otherwise finishing the composing
-     *    region and re-setting it would yank the caret — same guard `backspace()` uses);
-     *  - the composing region's trailing char matches [base] (case-insensitive, so a shift-state
-     *    change between tap and long-press still works).
-     *
-     * If any condition fails we fall back to [onText], preserving the previous behaviour for
-     * non-letter fields, mid-word cursors, or accents that aren't a variant of the trailing char.
-     */
-    override fun onAccent(base: String, accent: String) {
-        if (!canCompose || mode != Mode.LETTERS || accent.length != 1) {
-            onText(accent)
-            return
-        }
-        val ic = currentInputConnection ?: return
-        val cursorAtComposingEnd = composingEnd < 0 || cursorPos < 0 || cursorPos == composingEnd
-        val tailMatches = composing.isNotEmpty() &&
-            composing.last().equals(base.firstOrNull() ?: '_', ignoreCase = true)
-        if (!cursorAtComposingEnd || !tailMatches) {
-            onText(accent)
-            return
-        }
-
-        // Clear touch offsets when modifying the composing word.
-        if (this::kb.isInitialized) kb.clearTouchOffsets()
-        currentTouchOffsets = emptyList()
-
-        // 4d — track keystroke timing for TypingSpeedAdapter.
-        com.noircipher.shade.engine.TypingSpeedAdapter.onKeystroke()
-        clearUndo()
-
-        if (shiftState == 1) {
-            shiftState = 0
-            autoShifted = false
-            kb.shiftState = 0
-        }
-
-        // Atomic swap: replace the last composing char with the chosen accent.
-        // setComposingText replaces the whole composing region atomically, so the editor sees a
-        // single edit and there's no visible "delete then insert" flicker.
-        lastCorrectionEvent = null
-        composing.deleteCharAt(composing.length - 1)
-        composing.append(accent)
-        popTail(1)
-        appendTail(accent)
-        ic.setComposingText(composing.toString(), 1)
-
-        if (composing.length >= 2) {
-            val locale = dictIds().split(',').firstOrNull()?.trim() ?: "en"
-            SystemSpell.request(this@ShadeService, locale, composing.toString(), debounceMs = 150L)
-        }
-
-        lastSpaceTime = 0L
-        afterText()
-    }
-
     private fun snapshotWordTouches() {
         lastWordTouches = touchTrace.last(touchTrace.size())
         touchTrace.clear()
     }
 
-    private fun recordLastTouch() {
-        val w = composing.toString()
-        if (w.isEmpty()) return
-        val last = w.last()
+    private fun recordLastTouch(typed: Char) {
         val layout = kbKeyLayout() ?: return
-        val k = layout[last.lowercaseChar()] ?: return
+        val k = layout[typed.lowercaseChar()] ?: return
         touchTrace.record(
             (k.left + k.right) / 2f,
             (k.top + k.bottom) / 2f
@@ -2115,7 +2050,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     ic.commitText(". ", 1)
                     popTail(1)
                     appendTail(". ")
-                    pushUndo(2, "  ")
+                    pushUndo(2, " ")
                     lastSpaceTime = 0L
                     resetBigramContext()
                     // Double-space produced a sentence end: allow auto-caps for
@@ -2205,7 +2140,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             val effectiveShouldCorrect = shouldCorrect && !isSlang && !suppressForUrl
 
             // 4f — Abbreviation expansion (btw → by the way).
-            val abbrevExpansion = if (effectiveShouldCorrect) {
+            // Only expand tokens that aren't real words ("bro", "babe" are words; "btw", "idk" are not).
+            val abbrevExpansion = if (effectiveShouldCorrect && !dict.contains(w)) {
                 com.noircipher.shade.engine.AbbreviationExpander.expand(w)
             } else null
 
@@ -2260,7 +2196,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             composing.clear()
 
             // 4g — Session bigram observation + rejection tracking.
-            sessionBigramBoost.observe(finalWord)
+            sessionBigramBoost.observeBigram(prev1, finalWord)
             if (lastShownCandidates.isNotEmpty() && finalWord !in lastShownCandidates) {
                 lastShownCandidates.take(3).forEach { suggested ->
                     if (suggested.isNotEmpty() && !suggested.equals(finalWord, ignoreCase = true)) {
@@ -2351,7 +2287,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             configuredLocale = locale
 
             dict.configure(locale)
+            val oldEmojiPredictor = emojiPredictor
             emojiPredictor = EmojiPredictionEngine.load(this@ShadeService, locale)
+            try { oldEmojiPredictor.close() } catch (_: Exception) {}
 
             try { rankingScorer?.close() } catch (_: Exception) {}
             rankingScorer = try { TfliteCandidateRankingScorer(this@ShadeService) } catch (_: Exception) { null }
@@ -2437,7 +2375,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (cleaned.isEmpty()) return
         currentInputConnection?.commitText("$cleaned ", 1)
         appendTail("$cleaned ")
-        userWordMemory.bump(cleaned)
+        if (personalLearningAllowed()) userWordMemory.bump(cleaned)
         pushUndo(cleaned.length + 1, "")
         composing.clear()
         afterText()
@@ -2447,7 +2385,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         endWord()
         currentInputConnection?.commitText("$word ", 1)
         appendTail("$word ")
-        userWordMemory.bump(word)
+        if (personalLearningAllowed()) userWordMemory.bump(word)
         pushUndo(word.length + 1, "")
         composing.clear()
         afterText()
@@ -2737,6 +2675,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             suggestJob = scope.launch(Dispatchers.Default) {
                 // #11 — short-circuit on SuggestionCache hit when (prev2, prev1, prefix)
                 // match a recently-computed result. Skips the whole pipeline.
+                com.noircipher.shade.engine.SuggestionCache.salt = "$configuredLocale|$incognito"
                 com.noircipher.shade.engine.SuggestionCache.get(prev2, prev1, prefix)?.let { cached ->
                     withContext(Dispatchers.Main.immediate) { setCandidates(centerBest(cached.take(3))) }
                     return@launch
@@ -2852,7 +2791,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 }
                 // #6+#7 — Cross-sentence context + sentence starters.
                 val extendedContext = com.noircipher.shade.engine.CrossSentenceContext.extendContext(contextWords)
-                if (com.noircipher.shade.engine.CrossSentenceContext.isSentenceStart(extendedContext)) {
+                val rawBeforeForSentence = currentInputConnection?.getTextBeforeCursor(40, 0)?.toString().orEmpty()
+                    .let { if (prefix.isNotEmpty() && it.endsWith(prefix, ignoreCase = true)) it.dropLast(prefix.length) else it }
+                if (com.noircipher.shade.engine.CrossSentenceContext.isSentenceStart(extendedContext) ||
+                    com.noircipher.shade.engine.CrossSentenceContext.endsWithSentenceTerminator(rawBeforeForSentence)) {
                     val starters = com.noircipher.shade.engine.CrossSentenceContext.sentenceStarters(prefix, limit = 2)
                     // In word-by-word mode drop multi-word starters ("let me",
                     // "thank you", "it would") and keep single-word ones ("the",
@@ -3129,7 +3071,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             acceptanceRateAdapter.recordAccepted()
             onlineRankerTrainer.setLearningRateMultiplier(acceptanceRateAdapter.learningRateMultiplier())
         }
-        sessionBigramBoost.observe(w)
+        sessionBigramBoost.observeBigram(contextWordsExcluding(w).lastOrNull(), w)
         val pos = sentencePositionScorer.currentPosition(contextWordsExcluding(w))
         if (personalLearningAllowed()) {
             sentencePositionScorer.recordAcceptance(pos)

@@ -60,7 +60,9 @@ class AppContextModel(context: Context) {
                 .forEach { app.remove(it.key) }
         }
         if (apps.size > MAX_APPS) {
-            apps.entries.sortedBy { a -> a.value.values.sum() }
+            // Never evict the app we just recorded for (it has the lowest total and would vanish at once).
+            apps.entries.filter { it.key != currentHash }
+                .sortedBy { a -> a.value.values.sum() }
                 .take(apps.size - MAX_APPS)
                 .forEach { apps.remove(it.key) }
         }
@@ -116,9 +118,9 @@ class AppContextModel(context: Context) {
     }
 
     fun shutdown() {
+        // Shared process-wide instance: flush now but keep the scope for the next service instance.
         flushJob?.cancel()
         flush()
-        scope.cancel()
     }
 
     private fun load() {
@@ -137,7 +139,7 @@ class AppContextModel(context: Context) {
 
     @Synchronized
     fun clear() {
-        scope.cancel()
+        flushJob?.cancel()
         apps.clear()
         prefs.edit().clear().apply()
         synchronized(dirtyLock) { dirty = false }

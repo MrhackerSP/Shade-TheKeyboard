@@ -19,21 +19,21 @@ object LearningDataCleaner {
     )
 
     fun clearAll(ctx: Context) {
-        AdaptiveWordMemory(ctx).clear()
-        AppContextModel(ctx).clear()
-        AutocorrectSuppressor(ctx).clear()
-        ConfidenceCalibrator(ctx).clear()
-        OnlineRankerTrainer(ctx).clear()
+        LiveStores.get { AdaptiveWordMemory(ctx.applicationContext) }.clear()
+        LiveStores.get { AppContextModel(ctx.applicationContext) }.clear()
+        LiveStores.get { AutocorrectSuppressor(ctx.applicationContext) }.clear()
+        LiveStores.get { ConfidenceCalibrator(ctx.applicationContext) }.clear()
+        LiveStores.get { OnlineRankerTrainer(ctx.applicationContext) }.clear()
         UserWordMemory(ctx).clear()
     }
 
     fun clearOne(ctx: Context, prefsFile: String) {
         when (prefsFile) {
-            "shade_adaptive_words" -> AdaptiveWordMemory(ctx).clear()
-            "shade_app_context" -> AppContextModel(ctx).clear()
-            "shade_autocorrect_suppressor" -> AutocorrectSuppressor(ctx).clear()
-            "shade_confidence_calibrator" -> ConfidenceCalibrator(ctx).clear()
-            "shade_online_ranker" -> OnlineRankerTrainer(ctx).clear()
+            "shade_adaptive_words" -> LiveStores.get { AdaptiveWordMemory(ctx.applicationContext) }.clear()
+            "shade_app_context" -> LiveStores.get { AppContextModel(ctx.applicationContext) }.clear()
+            "shade_autocorrect_suppressor" -> LiveStores.get { AutocorrectSuppressor(ctx.applicationContext) }.clear()
+            "shade_confidence_calibrator" -> LiveStores.get { ConfidenceCalibrator(ctx.applicationContext) }.clear()
+            "shade_online_ranker" -> LiveStores.get { OnlineRankerTrainer(ctx.applicationContext) }.clear()
         }
     }
 }

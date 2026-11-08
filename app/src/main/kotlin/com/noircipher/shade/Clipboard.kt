@@ -30,6 +30,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -153,7 +154,7 @@ class ClipboardStore(private val ctx: Context) {
         try {
             val arr = JSONArray(raw)
             for (i in 0 until arr.length()) {
-                try { out.add(parseOne(arr.getJSONObject(i))) } catch (_: Exception) { break }
+                try { out.add(parseOne(arr.getJSONObject(i))) } catch (_: Exception) { /* skip just this entry, keep the rest */ }
             }
         } catch (_: Exception) {}
         return out
@@ -183,9 +184,14 @@ class ClipboardStore(private val ctx: Context) {
     @Synchronized
     private fun save(list: List<Clip>) {
         val arr = JSONArray()
-        list.forEach {
-            val text = encrypt(it.text) ?: return@forEach
-            val image = it.image?.let { enc -> encrypt(enc) ?: return@forEach }
+        for (it in list) {
+            val text = encrypt(it.text)
+            val image = it.image?.let { enc -> encrypt(enc) }
+            if (text == null || (it.image != null && image == null)) {
+                // Don't silently drop clips: keep what's already stored rather than overwrite it with less.
+                android.util.Log.w("ClipboardStore", "Encryption failed; clipboard history not saved")
+                return
+            }
             arr.put(
                 JSONObject()
                     .put("t", text)
@@ -304,7 +310,7 @@ class ClipboardPanel(
 
     private var clips: List<ClipboardStore.Clip> = emptyList()
     private var theme: KbTheme = Themes.LIGHT
-    private val thumbScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var thumbScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val thumbCache = LruCache<String, android.graphics.Bitmap>(32)
     private val list = ListView(context)
     private val emptyView = TextView(context)
@@ -313,6 +319,12 @@ class ClipboardPanel(
     private val del = ImageView(context)
 
     private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // The panel view is reused across IME windows; a cancelled scope would break thumbnails forever.
+        if (!thumbScope.isActive) thumbScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()

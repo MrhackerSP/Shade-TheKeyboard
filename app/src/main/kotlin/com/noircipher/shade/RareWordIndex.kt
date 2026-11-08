@@ -33,6 +33,8 @@ class RareWordIndex private constructor(
 
     /** Rank of [w] in the frequency list, or -1 if not found. */
     fun rankOf(w: String): Int {
+        // A character the index never saw means the word can't be in it (compareAt's -1 would corrupt the search).
+        for (ch in w) if (codes[ch] == null) return -1
         var lo = 0
         var hi = size - 1
         while (lo <= hi) {

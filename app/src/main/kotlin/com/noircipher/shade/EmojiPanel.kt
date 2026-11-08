@@ -309,7 +309,7 @@ class EmojiPanel(
 
     private fun loadKeywordMap(): Map<String, List<String>> {
         val map = LinkedHashMap<String, MutableList<String>>()
-        for (tag in listOf("en", "hi", "hg")) {
+        for (tag in listOf("en", "hi", "concepts")) {
             try {
                 context.assets.open("emoji/emoji_keywords_${tag}.tsv").bufferedReader().useLines { lines ->
                     for (line in lines) {

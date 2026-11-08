@@ -249,8 +249,10 @@ class SettingsActivity : AppCompatActivity() {
                 }
             findPreference<EditTextPreference>("custom_layout")
                 ?.setOnPreferenceChangeListener { _, v ->
-                    if (Layouts.parseCustom(v?.toString() ?: "") == null) toast(R.string.layout_invalid)
-                    true
+                    if (Layouts.parseCustom(v?.toString() ?: "") == null) {
+                        toast(R.string.layout_invalid)
+                        false // reject the value instead of saving something unparseable
+                    } else true
                 }
             for (k in listOf("color_bg", "color_key", "color_keyfn", "color_text", "color_accent")) {
                 findPreference<EditTextPreference>(k)?.setOnBindEditTextListener { it.hint = "#RRGGBB" }

@@ -23,8 +23,13 @@ object SuggestionCache {
 
     private val cache = ConcurrentHashMap<String, Entry>()
 
+    /** Context that must not share cache entries (locale, incognito...). Set by the service. */
+    @Volatile
+    var salt: String = ""
+
     private fun key(prev2: String?, prev1: String?, prefix: String): String {
         val sb = StringBuilder(24)
+        sb.append(salt).append('\u0002')
         sb.append(prev2 ?: "").append('\u0001')
         sb.append(prev1 ?: "").append('\u0001')
         sb.append(prefix)

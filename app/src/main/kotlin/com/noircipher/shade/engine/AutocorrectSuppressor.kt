@@ -42,11 +42,8 @@ class AutocorrectSuppressor(context: Context) {
         val now = System.currentTimeMillis()
         val old = cache[key]
         cache[key] = Entry((old?.count ?: 0) + 1, now)
-        val it = cache.entries.iterator()
-        while (it.hasNext()) {
-            val e = it.next().value
-            if (now - e.lastSeen >= ttlMs) it.remove() else break
-        }
+        // The map is access-ordered, so expired entries aren't necessarily at the front: scan them all.
+        cache.entries.removeAll { now - it.value.lastSeen >= ttlMs }
         while (cache.size > maxEntries) {
             val first = cache.entries.iterator().next()
             cache.remove(first.key)

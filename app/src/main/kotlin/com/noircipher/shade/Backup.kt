@@ -176,7 +176,7 @@ object Backup {
                     }
                 }
             }
-            edit.apply()
+            // (Preferences are applied at the very end, only after every other part restored.)
 
             // Learned words. v1/v2 backups may hold ciphertext keys from the old store:
             // decode what this device's key can read, silently drop the rest.
@@ -219,6 +219,7 @@ object Backup {
                     e.apply()
                 }
             }
+            edit.apply()
             true
         } catch (_: Exception) {
             false

@@ -529,7 +529,15 @@ class WordDictionary(private val ctx: Context) {
     fun correction(word: String, isEnglishLocale: Boolean = true, touches: List<TouchGeometry.KeyTouch> = emptyList()): String? {
         val w = word.lowercase()
 
-        contractions[w]?.let { return match(word, it, isEnglishLocale) }
+        // English-only (Hinglish "id" must stay "id"), and never rewrite a genuine dictionary word
+        // such as "ill" / "its" / "lets" unless it is a known contraction typo.
+        if (isEnglishLocale) {
+            contractions[w]?.let {
+                if (!contains(w) || w in com.noircipher.shade.engine.MultiWordCorrector.SAFE_CONTRACTIONS) {
+                    return match(word, it, isEnglishLocale)
+                }
+            }
+        }
 
         if (w.length < 3 || !w.all { isWordChar(it) }) return null
         if (w.any { it.code > 0x24F }) return null
@@ -647,13 +655,20 @@ class WordDictionary(private val ctx: Context) {
 
     @Synchronized
     fun predictNext(prev2: String?, prev1: String?, max: Int): List<String> {
+        // Merge what the user taught the keyboard with the bundled table; before this, the bundled
+        // table returned early and learned bigrams were never consulted.
+        val scores = LinkedHashMap<String, Float>()
+        bigramModel?.predict(prev2, prev1, max * 2)?.forEach { (w, s) ->
+            scores[w] = (scores[w] ?: 0f) + s
+        }
         val gb = bundledBigrams
         if (gb != null && prev1 != null) {
-            val nexts = gb.next(prev1.lowercase())
-            if (nexts.isNotEmpty()) return nexts.take(max)
+            gb.next(prev1.lowercase()).take(max * 2).forEachIndexed { i, w ->
+                scores[w] = (scores[w] ?: 0f) + 0.3f - 0.02f * i
+            }
         }
-        val model = bigramModel ?: return emptyList()
-        return model.predict(prev2, prev1, max).map { it.first }
+        if (scores.isEmpty()) return emptyList()
+        return scores.entries.sortedByDescending { it.value }.take(max).map { it.key }
     }
 
     @Synchronized

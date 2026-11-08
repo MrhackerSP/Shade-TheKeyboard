@@ -109,6 +109,8 @@ object SystemSpell {
         session = null
         sessionLocale = ""
         while (queue.isNotEmpty()) finish(queue.removeFirst().second, null)
+        // Release anything still waiting so await() callers don't sit out their full timeout.
+        for (key in pending.keys.toList()) pending.remove(key)?.latch?.countDown()
     }
 
     fun currentName(context: Context): String? = runCatching {

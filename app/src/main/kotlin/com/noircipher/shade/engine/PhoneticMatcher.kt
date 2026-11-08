@@ -24,7 +24,9 @@ object PhoneticMatcher {
             if (code != '0' && code != prevCode) {
                 result.append(code)
             }
+            // Standard Soundex: a vowel separates two equal codes ("Tymczak" -> T522), but h and w don't.
             if (code != '0') prevCode = code
+            else if (c != 'h' && c != 'w') prevCode = '0'
             i++
         }
         while (result.length < 4) result.append('0')

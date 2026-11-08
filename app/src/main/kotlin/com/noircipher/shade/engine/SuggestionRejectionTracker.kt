@@ -24,6 +24,7 @@ class SuggestionRejectionTracker(context: Context) {
     fun recordRejection(word: String) {
         if (word.isEmpty()) return
         val w = word.trim().lowercase()
+        if (counts.size >= 2000) counts.clear() // bounded: don't grow for the whole service lifetime
         counts.computeIfAbsent(w) { AtomicInteger(0) }.incrementAndGet()
     }
 

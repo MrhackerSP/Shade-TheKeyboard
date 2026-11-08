@@ -30,7 +30,10 @@ object LayoutLoader {
 
     fun load(ctx: Context, id: String): List<List<Key>>? {
         if (!id.startsWith("file:")) return null
-        val f = File(layoutsDir(ctx), id.removePrefix("file:"))
+        val dir = layoutsDir(ctx)
+        val f = File(dir, id.removePrefix("file:"))
+        // Path-traversal guard: "file:../../x" must not escape the layouts folder.
+        if (!f.canonicalPath.startsWith(dir.canonicalPath + File.separator)) return null
         if (!f.exists()) return null
         return try {
             val root = JSONObject(f.readText())

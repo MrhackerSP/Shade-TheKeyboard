@@ -11,6 +11,18 @@ package com.noircipher.shade.engine
  */
 object MultiWordCorrector {
 
+    /**
+     * Apostrophe-less typos that are safe to fix even when the typed word is itself a dictionary
+     * word ("cant", "wont"). Deliberately excludes real words such as "ill", "id", "its", "lets",
+     * "well", "were" - those must never be rewritten just because a contraction exists.
+     */
+    val SAFE_CONTRACTIONS: Set<String> = setOf(
+        "dont", "doesnt", "didnt", "cant", "wont", "isnt", "arent", "wasnt", "werent",
+        "hasnt", "havent", "hadnt", "couldnt", "wouldnt", "shouldnt",
+        "im", "ive", "youre", "youve", "youll", "theyre", "theyve", "theyll", "weve",
+        "thats", "whats", "heres", "theres", "wheres", "hes", "shes"
+    )
+
     private val table: Map<String, String> = mapOf(
         "alot" to "a lot",
         "aswell" to "as well",
@@ -106,7 +118,7 @@ object MultiWordCorrector {
         // Don't suggest a fix for words the dictionary already knows about
         // unless they look like a contraction ("dont" -> "don't"). Those
         // apostrophe-style contractions are always worth suggesting.
-        if (isDictionaryWord && !fix.contains('\'')) return null
+        if (isDictionaryWord && lower !in SAFE_CONTRACTIONS) return null
         // Preserve capitalization.
         return when {
             typed.length > 1 && typed.all { it.isUpperCase() } -> fix.uppercase()

@@ -86,15 +86,14 @@ class TfliteCandidateRankingScorer(
     private fun tryResizeBatch(targetBatch: Int) {
         if (targetBatch <= maxBatchSize) return
         try {
+            // The model has a single input [batch, FEATURE_SIZE]; there is no second input.
             interpreter.resizeInput(0, intArrayOf(targetBatch, FEATURE_SIZE))
-            interpreter.resizeInput(1, intArrayOf(targetBatch, 1))
             interpreter.allocateTensors()
             maxBatchSize = targetBatch
         } catch (t: Throwable) {
             Log.w(TAG, "Batch resize to $targetBatch failed; staying at 1", t)
             try {
                 interpreter.resizeInput(0, intArrayOf(1, FEATURE_SIZE))
-                interpreter.resizeInput(1, intArrayOf(1, 1))
                 interpreter.allocateTensors()
             } catch (t2: Throwable) {
                 Log.e(TAG, "Failed to restore interpreter shape after batch resize failure", t2)

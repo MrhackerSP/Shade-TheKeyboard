@@ -108,7 +108,7 @@ class TouchBiasModel(context: Context) {
 
     @Synchronized
     fun clear() {
-        scope.cancel()
+        flushJob?.cancel()
         prefs.edit().clear().apply()
         values.clear()
     }

@@ -104,16 +104,14 @@ class UserWordMemory(context: Context) {
         }
 
         fun flush() {
-            val data: Map<String, Float>
-            val v: Long
-            val s: EncryptedMapFile
+            // Hold the lock across the write so a concurrent clear() can't be undone by an
+            // in-flight save that finishes after the file was deleted.
             synchronized(lock) {
                 if (!dirty) return
-                s = store ?: return
-                data = counts?.mapValues { it.value.toFloat() } ?: return
-                v = version
+                val s = store ?: return
+                val data = counts?.mapValues { it.value.toFloat() } ?: return
+                if (s.save(data)) dirty = false
             }
-            if (s.save(data)) synchronized(lock) { if (version == v) dirty = false }
         }
 
         fun clear(ctx: Context) {

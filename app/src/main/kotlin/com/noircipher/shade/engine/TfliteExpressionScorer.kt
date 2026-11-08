@@ -32,9 +32,17 @@ class TfliteExpressionScorer(
     private val semanticIndex: Int = findOutput("semantic_output")
     private val triggerIndex: Int = findOutput("triggering_output")
 
-    override val isAvailable: Boolean
-        get() = interpreter != null && concepts.isNotEmpty() && semanticIndex >= 0
+    // The bundled transformer takes INT32 token ids ([1,10]), which would need the tokenizer
+    // (token.csym) to feed. Until that exists the scorer is disabled instead of silently returning
+    // nothing; it also requires the named outputs to really be present.
+    private val acceptsText: Boolean = interpreter?.let {
+        it.getInputTensor(0).dataType() == DataType.STRING
+    } ?: false
 
+    override val isAvailable: Boolean
+        get() = interpreter != null && acceptsText && concepts.isNotEmpty() && semanticIndex >= 0
+
+    @Synchronized
     override fun suggestEmojis(query: String, limit: Int): List<String> {
         val itp = interpreter ?: return emptyList()
         if (query.isBlank() || limit <= 0 || !isAvailable) return emptyList()
@@ -78,6 +86,7 @@ class TfliteExpressionScorer(
         }
     }
 
+    @Synchronized
     override fun close() {
         interpreter?.close()
     }

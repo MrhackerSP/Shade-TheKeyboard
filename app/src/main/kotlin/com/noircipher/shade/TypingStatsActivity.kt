@@ -21,8 +21,8 @@ class TypingStatsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        stats = TypingStatsStore(this)
-        touch = TouchBiasModel(this)
+        stats = LiveStores.get { com.noircipher.shade.analytics.TypingStatsStore(applicationContext) }
+        touch = LiveStores.get { com.noircipher.shade.analytics.TouchBiasModel(applicationContext) }
         supportActionBar?.setTitle(R.string.typing_stats_title)
         window.statusBarColor = Color.BLACK
 
