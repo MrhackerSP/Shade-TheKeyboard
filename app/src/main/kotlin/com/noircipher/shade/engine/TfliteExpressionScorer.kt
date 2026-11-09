@@ -32,8 +32,8 @@ class TfliteExpressionScorer(
     private val semanticIndex: Int = findOutput("semantic_output")
     private val triggerIndex: Int = findOutput("triggering_output")
 
-    // The bundled transformer takes INT32 token ids ([1,10]), which would need the tokenizer
-    // (token.csym) to feed. Until that exists the scorer is disabled instead of silently returning
+    // The bundled transformer takes INT32 token ids ([1,10]), which would need a
+    // tokenizer to feed. Until that exists the scorer is disabled instead of silently returning
     // nothing; it also requires the named outputs to really be present.
     private val acceptsText: Boolean = interpreter?.let {
         it.getInputTensor(0).dataType() == DataType.STRING

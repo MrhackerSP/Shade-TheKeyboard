@@ -26,7 +26,7 @@ import kotlin.math.min
  *
  * Every popup looks and animates like the original bottom-row preview (scale 0.82 -> 1 with a fade,
  * a soft shadow, the theme's popup colour), and long-pressing morphs that bubble into a
- * horizontal accent strip — the selected cell pops up slightly above its neighbours (à la Gboard).
+ * horizontal accent strip — the selected cell pops up slightly above its neighbours.
  *
  * All coordinates passed in are in the owning view's (the keyboard's) coordinate space; the layer
  * converts them to window space itself.
@@ -56,7 +56,7 @@ class KeyPopupOverlay(
 
     // ---- accent strip -------------------------------------------------------------------
     // Single horizontal row, at most MAX_STRIP_ITEMS cells. The selected cell pops up slightly
-    // above the others (elevationPx), matching modern (Gboard-style) behaviour.
+    // above the others (elevationPx), matching modern popup-strip behaviour.
     // The bubble→strip morph is anchored on the last [showPreview] geometry (keyL/keyT/keyR/rowH),
     // so no extra key-position state is stored here.
     private var accActive = false

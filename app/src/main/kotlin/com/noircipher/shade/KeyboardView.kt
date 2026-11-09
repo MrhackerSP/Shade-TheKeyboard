@@ -932,7 +932,7 @@ class KeyboardView(context: Context) : View(context) {
         altTop = (k.top - dp(6f) - ph).coerceAtLeast(minTop)
         altShown = true
         // Default selection sits in the middle of the strip — long-press + release without sliding
-        // lands on the “primary” variant, matching modern (Gboard-style) behaviour.
+        // lands on the “primary” variant, matching modern accent-strip behaviour.
         altSel = (n / 2).coerceIn(0, n - 1)
 
         altAnimator?.cancel()
