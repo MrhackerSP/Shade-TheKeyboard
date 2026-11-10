@@ -20,6 +20,7 @@ cp keystore.properties.example keystore.properties  # then fill in your keystore
 - Symbols pages, number pad (auto for number/phone fields), optional number row, emoji panel
 - Shift / caps-lock, auto-capitalize, double-space period, long-press accents, key previews
 - Space-bar swipe to move the cursor; long-press space for the keyboard picker
+- Long-press accent panel: grid sized to the character count (e.g. 6 → 3×2, 8 → 4×2), round selection highlight, keyboard dims behind it
 
 **Text correction**
 - Offline suggestions from one or more dictionaries (English, Hindi, Hinglish bundled)

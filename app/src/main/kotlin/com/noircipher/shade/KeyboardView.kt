@@ -179,23 +179,21 @@ class KeyboardView(context: Context) : View(context) {
     // keyboard window. The in-view drawing below is only a fallback if the layer can't attach.
     private val popupLayer = KeyPopupOverlay(this) { kbTheme }
     private var popupActive = false
-    private var altUsesOverlay = false
-
+    // Accent panel state. The panel itself is drawn by [popupLayer]; this is the bookkeeping the
+    // touch handling needs (what is shown, where, and which item is selected).
     private var altShown = false
     private var altItems: List<String> = emptyList()
-    private var altSel = 0
-    private var altCols = 1
-    private var altCell = 0f
-    private var altOriginX = 0f
-    private var altTop = 0f
-    private var altProgress = 0f
-    private var altAnimator: ValueAnimator? = null
-    private var altBaseLabel = ""   // raw label of the long-pressed key (for onAccent)
-    private val altBg = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val altSelPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val altText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
-    private val altRect = RectF()
-    private val altShadow = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var altSel = 0                       // index into altItems
+    private var altLayout: AccentGrid.Layout? = null
+    private var altGeo: AccentGrid.Geometry? = null
+    private var altKeyLeft = 0f                  // pressed key's horizontal extent, for the "stay on the default" zone
+    private var altKeyRight = 0f
+    private var altBaseLabel = ""                // raw label of the long-pressed key (for onAccent)
+
+    /** The view the accent panel dims while it is open (normally the whole keyboard container). */
+    var popupScrimAnchor: View?
+        get() = popupLayer.scrimAnchor
+        set(v) { popupLayer.scrimAnchor = v }
 
     private var trailActive = false
     private var trailStartX = 0f
@@ -579,7 +577,6 @@ class KeyboardView(context: Context) : View(context) {
 
         if (trailActive && trailAlpha > 0f) drawTrail(c)
         if (burstActive && typingBurstEnabled) drawTypingBurst(c)
-        if (altShown && altItems.isNotEmpty() && !altUsesOverlay) drawAltStrip(c)
         previewKey?.let { if (previewProgress > 0f && !popupActive) drawKeyPreview(c, it) }
     }
 
@@ -886,136 +883,77 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    /**
-     * In-view fallback for the accent strip. Same geometry as the overlay path, but bounded by
-     * the keyboard view itself — used only when [KeyPopupOverlay.prepare] fails.
-     */
-    private fun drawAltStrip(c: Canvas) {
-        val n = altItems.size
-        if (n == 0) return
-        val scale = 0.75f + 0.25f * altProgress
-        val cell = altCell * scale
-        val stripH = cell
-        val stripW = cell * n
-        val left = altOriginX
-        val top = altTop + (altCell - stripH)
-
-        altRect.set(left, top + dp(3f), left + stripW, top + dp(3f) + stripH)
-        altShadow.color = 0x55000000
-        val r = dp(16f) * scale
-        c.drawRoundRect(altRect, r, r, altShadow)
-
-        altRect.set(left, top, left + stripW, top + stripH)
-        altBg.color = kbTheme.popupBg
-        c.drawRoundRect(altRect, r, r, altBg)
-
-        // Selected cell pops up by dp(4) * progress — same look as the overlay strip.
-        val elev = dp(4f) * altProgress
-        val col = altSel.coerceIn(0, n - 1)
-        val selLeft = left + col * cell + dp(4f) * scale
-        val selRight = left + (col + 1) * cell - dp(4f) * scale
-        val selTop = top - elev + dp(4f) * scale
-        val selBottom = top - elev + cell - dp(4f) * scale
-        altRect.set(selLeft, selTop, selRight, selBottom)
-        altSelPaint.color = kbTheme.accent
-        c.drawRoundRect(altRect, r * 0.75f, r * 0.75f, altSelPaint)
-
-        altText.textSize = min(cell * 0.55f, dp(22f) * scale)
-        for (i in 0 until n) {
-            val ccol = i % n
-            altText.color = if (i == altSel) kbTheme.accentText else kbTheme.text
-            val yOff = if (i == altSel) -elev else 0f
-            val cx = left + ccol * cell + cell / 2f
-            val cy = top + yOff + cell / 2f - (altText.ascent() + altText.descent()) / 2f
-            c.drawText(altItems[i].toString(), cx, cy, altText)
-        }
-    }
-
-    private fun showAlt(p: Pointer, k: Key) {
+    /** Opens the accent panel for [k]. Returns false (and shows nothing) if there is nothing to show. */
+    private fun showAlt(p: Pointer, k: Key): Boolean {
         // Display-shift the alts (so long-pressing 'a' with shift on shows 'Á'), then drop duplicates.
-        // Cap at MAX_STRIP_ITEMS — single horizontal row, no second row.
         val chars = k.alts.map { display(it.toString()) }
             .distinct()
-            .take(KeyPopupOverlay.MAX_STRIP_ITEMS)
-        if (chars.isEmpty()) return
+            .take(AccentGrid.MAX_ITEMS)
+        if (chars.isEmpty()) return false
+        // The popup layer is the only renderer; without it there is no panel to show.
+        if (!popupLayer.prepare()) return false
         val n = chars.size
-        altCols = n
-        val cell = min(dp(52f), (width - dp(8f)) / n)
-        val pw = cell * n
-        val ph = cell
 
-        val keyCenter = k.centerX
-        val origin = (keyCenter - pw / 2f)
-            .coerceIn(0f, maxOf(0f, (width - pw).toFloat()))
+        // The default item: the number printed on a top-row key (q -> 1, w -> 2 ...) or else the
+        // first accent. Releasing without sliding commits it; it sits right above the key.
+        val numberIdx = chars.indexOfFirst { it.length == 1 && it[0].isDigit() }
+        val defaultItem = if (numberIdx >= 0) numberIdx else 0
 
-        // The shared popup layer can reach up into the suggestion strip, so top-row strips stay visible.
-        val useOverlay = popupLayer.prepare()
-        val minTop = if (useOverlay) popupLayer.minTopInOwner() else dp(2f)
+        val margin = dp(4f)
+        val pad = dp(6f)
+        val preferredCell = dp(48f)
+        // Reserve the strip/headroom above the keyboard; the layer knows how far up the window goes.
+        val minTop = popupLayer.minTopInOwner()
+
+        // Two passes: place once to learn the left edge, find the column above the key, then
+        // build the layout around that column (the placement itself does not depend on it).
+        val geo = AccentGrid.place(
+            n = n, keyCenterX = k.centerX, keyTop = k.top, preferredCell = preferredCell,
+            pad = pad, viewWidth = width.toFloat(), margin = margin, gap = dp(6f), minTop = minTop
+        )
+        val anchorCol = AccentGrid.anchorColumn(k.centerX, geo.left, geo.pad, geo.cell, geo.cols)
+        val layout = AccentGrid.layout(n, anchorCol, defaultItem)
 
         altItems = chars
         altBaseLabel = k.label
-        altOriginX = origin
-        altCell = cell
-        altTop = (k.top - dp(6f) - ph).coerceAtLeast(minTop)
+        altLayout = layout
+        altGeo = geo
+        altKeyLeft = k.left
+        altKeyRight = k.right
+        altSel = defaultItem
         altShown = true
-        // Long-press + release without sliding lands on the number printed on a top-row key
-        // (q -> 1, w -> 2 ...). Keys without a number hint default to the middle of the strip,
-        // the "primary" variant. Sliding still reaches every accent.
-        val numberIdx = chars.indexOfFirst { it.length == 1 && it[0].isDigit() }
-        altSel = if (numberIdx >= 0) numberIdx else (n / 2).coerceIn(0, n - 1)
-
-        altAnimator?.cancel()
-        if (useOverlay) {
-            altUsesOverlay = true
-            altProgress = 1f
-            popupLayer.showAccents(chars, cell, origin, altTop, altSel)
-        } else {
-            altUsesOverlay = false
-            altAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = ShadeMotion.KEY_POPUP_IN_MS
-                interpolator = ShadeMotion.FAST_OUT_SLOW_IN
-                addUpdateListener { altProgress = it.animatedValue as Float; invalidate() }
-                start()
-            }
-        }
+        popupLayer.showAccents(chars, layout, geo, altSel)
+        return true
     }
 
     private fun updateAlt(p: Pointer, x: Float, y: Float) {
+        val layout = altLayout ?: return
+        val geo = altGeo ?: return
         if (!altShown || altItems.isEmpty()) return
-        // Single-row strip: only the column matters.
-        val col = ((x - altOriginX) / altCell).toInt().coerceIn(0, altItems.size - 1)
-        if (col != altSel) {
-            altSel = col
-            if (altUsesOverlay) popupLayer.setAccentSelection(col)
+
+        // While the finger is still on the pressed key (below the panel, within the key's width)
+        // the default item stays selected, so a small wobble after the long press changes nothing.
+        val item = if (y >= geo.bottom && x >= altKeyLeft && x <= altKeyRight) {
+            layout.itemOfCell[layout.anchorCell]
+        } else {
+            AccentGrid.hit(layout, geo, x, y)
+        }
+        if (item < 0) return // empty cell: keep the current selection
+        if (item != altSel) {
+            altSel = item
+            popupLayer.setAccentSelection(item)
             hapticTick()
-            invalidate()
         }
     }
 
     private fun dismissAlt() {
         if (!altShown) return
-        altAnimator?.cancel()
-        if (altUsesOverlay) {
-            // The layer keeps its own copy of the grid and animates it out.
-            popupLayer.hideAccents()
-            altUsesOverlay = false
-            altShown = false
-            altItems = emptyList()
-            return
-        }
-        altAnimator = ValueAnimator.ofFloat(altProgress, 0f).apply {
-            duration = ShadeMotion.KEY_POPUP_OUT_MS
-            interpolator = ShadeMotion.FAST_OUT_LINEAR_IN
-            addUpdateListener { altProgress = it.animatedValue as Float; invalidate() }
-            addListener(object : android.animation.AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: android.animation.Animator) {
-                    altShown = false
-                    altItems = emptyList()
-                    invalidate()
-                }
-            })
-            start()
-        }
+        // The layer keeps its own copy of the panel and animates it (and the scrim) out.
+        popupLayer.hideAccents()
+        altShown = false
+        altItems = emptyList()
+        altLayout = null
+        altGeo = null
     }
 
     // ------------------------------------------------------------------ typing burst
@@ -1583,9 +1521,9 @@ class KeyboardView(context: Context) : View(context) {
             return
         }
         if (k.kind == KeyKind.CHAR && k.alts.isNotEmpty()) {
-            p.consumed = true
-            // Don't call hidePreview() — showAlt() will morph the existing
-            showAlt(p, k)
+            // Don't call hidePreview() — showAlt() will morph the existing bubble into the panel.
+            // If no panel could be shown, the key stays a normal tap instead of being swallowed.
+            if (showAlt(p, k)) p.consumed = true
         }
     }
 
@@ -1666,7 +1604,6 @@ class KeyboardView(context: Context) : View(context) {
         cancelPressTick()
         layoutAnimator?.cancel()
         previewAnimator?.cancel()
-        altAnimator?.cancel()
         burstAnimator?.cancel()
         trailAnimator?.cancel()
         splitAnimator?.cancel()
@@ -1681,7 +1618,6 @@ class KeyboardView(context: Context) : View(context) {
         pointers.clear()
         popupLayer.detach() // re-attached on the next key press, which also covers a new IME window
         popupActive = false
-        altUsesOverlay = false
         previewKey = null
         altShown = false
         altItems = emptyList()
@@ -1696,7 +1632,6 @@ class KeyboardView(context: Context) : View(context) {
         cancelPressTick()
         layoutAnimator?.cancel()
         previewAnimator?.cancel()
-        altAnimator?.cancel()
         burstAnimator?.cancel()
         trailAnimator?.cancel()
         splitAnimator?.cancel()
@@ -1709,7 +1644,6 @@ class KeyboardView(context: Context) : View(context) {
         touchOffsets.clear()
         popupLayer.detach()
         popupActive = false
-        altUsesOverlay = false
         previewKey = null
         altShown = false
         altItems = emptyList()

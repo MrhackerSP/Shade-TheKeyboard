@@ -25,8 +25,10 @@ import kotlin.math.min
  * or the toolbar, and it needs no separate window whose position could drift.
  *
  * Every popup looks and animates like the original bottom-row preview (scale 0.82 -> 1 with a fade,
- * a soft shadow, the theme's popup colour), and long-pressing morphs that bubble into a
- * horizontal accent strip — the selected cell pops up slightly above its neighbours.
+ * a soft shadow, the theme's popup colour). Long-pressing morphs that bubble into an
+ * accent panel: a rounded grid of cells with a round highlight on the selected one, while the rest
+ * of the keyboard is dimmed by a scrim so the panel is the only thing in focus. Key previews never
+ * dim anything; only the accent panel does.
  *
  * All coordinates passed in are in the owning view's (the keyboard's) coordinate space; the layer
  * converts them to window space itself.
@@ -54,27 +56,33 @@ class KeyPopupOverlay(
     private var previewT = 0f
     private var previewAnim: ValueAnimator? = null
 
-    // ---- accent strip -------------------------------------------------------------------
-    // Single horizontal row, at most MAX_STRIP_ITEMS cells. The selected cell pops up slightly
-    // above the others (elevationPx), matching modern popup-strip behaviour.
-    // The bubble→strip morph is anchored on the last [showPreview] geometry (keyL/keyT/keyR/rowH),
-    // so no extra key-position state is stored here.
+    // ---- accent panel -------------------------------------------------------------------
+    // A grid of cells (see [AccentGrid]) inside one rounded panel. The panel is anchored above the
+    // pressed key; the bubble -> panel morph starts from the last [showPreview] geometry
+    // (keyL/keyT/keyR/rowH), so no extra key-position state is stored here.
     private var accActive = false
     private var accHiding = false
     private var hadBubble = false
     private var accT = 0f
     private var accAnim: ValueAnimator? = null
     private var accItems: List<String> = emptyList()
-    private var accCell = 0f
-    private var accOriginX = 0f
-    private var accTop = 0f
+    private var accLayout: AccentGrid.Layout? = null
+    private var accGeo: AccentGrid.Geometry? = null
     private var accSel = 0
+
+    /**
+     * The view whose bounds get dimmed while the accent panel is open (the whole keyboard: key
+     * area, suggestion strip and toolbar). Null dims the owner view only.
+     */
+    var scrimAnchor: View? = null
+    private val scrimRect = RectF()
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val selPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val itemPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val scrimPaint = Paint()
     private val rect = RectF()
     private val bubbleRect = RectF()
     private val gridRect = RectF()
@@ -157,31 +165,29 @@ class KeyPopupOverlay(
     // ------------------------------------------------------------------ accent strip
 
     /**
-     * Show the accent strip.
+     * Show the accent panel.
      *
-     * @param items  accented variants (already display-shifted, deduplicated, ≤ [MAX_STRIP_ITEMS]).
-     * @param cell   square cell pitch in px (owner coords).
-     * @param originX left edge of the strip in owner coords (already screen-clamped).
-     * @param top    top edge of the strip in owner coords (above the pressed key).
-     * @param sel    initial selection (typically the middle index — default-in-middle convention).
+     * @param items  the characters, already display-shifted and deduplicated (at most [AccentGrid.MAX_ITEMS]).
+     * @param layout which cell each item sits in.
+     * @param geo    where the panel and its cells are, in owner coordinates.
+     * @param sel    initially selected item (normally the one in the anchor cell).
      */
     fun showAccents(
         items: List<String>,
-        cell: Float,
-        originX: Float,
-        top: Float,
+        layout: AccentGrid.Layout,
+        geo: AccentGrid.Geometry,
         sel: Int
     ) {
         hadBubble = previewActive && previewT > 0.05f
         accItems = items
-        accCell = cell
-        accOriginX = originX
-        accTop = top
+        accLayout = layout
+        accGeo = geo
         accSel = sel.coerceIn(0, items.size - 1)
         accActive = true
         accHiding = false
+        updateScrimRect()
         previewAnim?.cancel()
-        previewActive = false // the bubble morphs into the strip
+        previewActive = false // the bubble morphs into the panel
         accAnim?.cancel()
         accT = 0f
         accAnim = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -193,10 +199,27 @@ class KeyPopupOverlay(
         invalidateSelf()
     }
 
+    /** Selects the item with index [sel]. */
     fun setAccentSelection(sel: Int) {
         if (!accActive || sel == accSel) return
         accSel = sel
         invalidateSelf()
+    }
+
+    private fun updateScrimRect() {
+        val h = host
+        val anchor = scrimAnchor
+        if (h != null && anchor != null && anchor.isAttachedToWindow && anchor.width > 0) {
+            val a = IntArray(2)
+            val b = IntArray(2)
+            anchor.getLocationInWindow(a)
+            h.getLocationInWindow(b)
+            val l = (a[0] - b[0]).toFloat()
+            val t = (a[1] - b[1]).toFloat()
+            scrimRect.set(l, t, l + anchor.width, t + anchor.height)
+        } else {
+            scrimRect.set(offX, offY, offX + owner.width, offY + owner.height)
+        }
     }
 
     fun hideAccents() {
@@ -211,7 +234,11 @@ class KeyPopupOverlay(
                 private var cancelled = false
                 override fun onAnimationCancel(animation: Animator) { cancelled = true }
                 override fun onAnimationEnd(animation: Animator) {
-                    if (!cancelled) { accActive = false; accHiding = false; accItems = emptyList(); invalidateSelf() }
+                    if (!cancelled) {
+                        accActive = false; accHiding = false
+                        accItems = emptyList(); accLayout = null; accGeo = null
+                        invalidateSelf()
+                    }
                 }
             })
             start()
@@ -226,6 +253,8 @@ class KeyPopupOverlay(
         accActive = false
         accHiding = false
         accItems = emptyList()
+        accLayout = null
+        accGeo = null
         previewT = 0f
         accT = 0f
         invalidateSelf()
@@ -286,31 +315,34 @@ class KeyPopupOverlay(
 
     private fun drawAccents(c: Canvas) {
         val th = theme()
+        val geo = accGeo ?: return
+        val layout = accLayout ?: return
         val t = accT.coerceIn(0f, 1f)
-        val n = accItems.size.coerceAtLeast(1)
-        val stripW = accCell * n
-        val stripH = accCell
 
-        // Final strip rect in window coords.
-        gridRect.set(
-            offX + accOriginX, offY + accTop,
-            offX + accOriginX + stripW, offY + accTop + stripH
+        // 1. Scrim: dims the whole keyboard so the panel is the only thing in focus. It fades with
+        //    the panel and is never drawn for plain key previews.
+        scrimPaint.color = ColorUtils.setAlphaComponent(
+            0x000000, (scrimAlpha(th) * min(1f, t * 1.4f)).toInt()
         )
+        c.drawRect(scrimRect, scrimPaint)
 
-        // The morph always starts from a single-char bubble anchored above the pressed key.
-        // If the press actually showed a bubble, we read its geometry (top, centre x, size);
-        // otherwise we synthesise a small bubble at the strip's bottom centre so the morph
-        // still reads as "a bubble grew into the strip".
+        // Final panel rect in window coordinates.
+        gridRect.set(offX + geo.left, offY + geo.top, offX + geo.right, offY + geo.bottom)
+
+        // The morph starts from the single-character bubble above the pressed key. If the press
+        // showed no bubble (e.g. it was dismissed already) a small bubble is synthesised at the
+        // panel's bottom centre so the panel still reads as "growing out of the key".
         bubbleGeometry(1f, bubbleRect)
         if (!hadBubble) {
             val s = 0.75f + 0.25f * t
+            val w = gridRect.width() * s
+            val h = gridRect.height() * s
             bubbleRect.set(
-                gridRect.centerX() - stripW * s / 2f, gridRect.bottom - stripH * s,
-                gridRect.centerX() + stripW * s / 2f, gridRect.bottom
+                gridRect.centerX() - w / 2f, gridRect.bottom - h,
+                gridRect.centerX() + w / 2f, gridRect.bottom
             )
         }
 
-        // Lerped outer rect (bubble → strip).
         rect.set(
             lerp(bubbleRect.left, gridRect.left, t), lerp(bubbleRect.top, gridRect.top, t),
             lerp(bubbleRect.right, gridRect.right, t), lerp(bubbleRect.bottom, gridRect.bottom, t)
@@ -321,9 +353,9 @@ class KeyPopupOverlay(
             else -> min(1f, t * 1.6f)
         }
         val alpha = (255 * a).toInt()
-        val r = lerp(dp(14f), dp(16f), t)
+        val r = lerp(dp(14f), dp(PANEL_RADIUS_DP), t)
 
-        // shadow + background of the strip container
+        // 2. Shadow + panel background.
         selRect.set(rect)
         selRect.offset(0f, dp(3f))
         shadowPaint.color = ColorUtils.setAlphaComponent(0x000000, (0x55 * a).toInt())
@@ -331,45 +363,42 @@ class KeyPopupOverlay(
         bgPaint.color = ColorUtils.setAlphaComponent(th.popupBg, alpha)
         c.drawRoundRect(rect, r, r, bgPaint)
 
-        // The just-typed base char fades out as the strip fades in.
+        // The just-typed base character fades out as the cells fade in.
         if (hadBubble && t < 0.99f) {
             val charAlpha = (alpha * (1f - t)).toInt().coerceIn(0, 255)
             drawBubbleChar(c, rect, ColorUtils.setAlphaComponent(th.text, charAlpha))
         }
 
-        // Strip content, clipped to the lerped rect (extended upward by elevPx so the popped-up
-        // selected cell isn't cut off).
-        val stripAlpha = if (hadBubble) (255 * t).toInt() else alpha
-        if (stripAlpha <= 0 || accItems.isEmpty()) return
-        val elevPx = dp(4f) * t
-        c.save()
-        c.clipRect(rect.left, rect.top - elevPx - dp(4f), rect.right, rect.bottom)
+        val cellsAlpha = if (hadBubble) (255 * t).toInt() else alpha
+        if (cellsAlpha <= 0 || accItems.isEmpty()) return
 
-        // Selection background (popped up).
-        val col = accSel.coerceIn(0, n - 1)
-        selRect.set(
-            gridRect.left + col * accCell + dp(4f),
-            gridRect.top - elevPx + dp(4f),
-            gridRect.left + (col + 1) * accCell - dp(4f),
-            gridRect.top - elevPx + accCell - dp(4f)
-        )
-        selPaint.color = ColorUtils.setAlphaComponent(th.accent, stripAlpha)
-        c.drawRoundRect(selRect, r * 0.75f, r * 0.75f, selPaint)
+        // 3. Round highlight on the selected cell, then the characters.
+        val selCell = layout.cellOfItem.getOrNull(accSel) ?: return
+        val hr = (geo.cell - dp(6f)) / 2f
+        val sx = offX + geo.cellCenterX(layout.col(selCell))
+        val sy = offY + geo.cellCenterY(layout.row(selCell))
+        selPaint.color = ColorUtils.setAlphaComponent(th.text, cellsAlpha)
+        c.drawCircle(sx, sy, hr, selPaint)
 
-        // Item characters. Selected one uses accentText colour and pops up; others use text.
-        itemPaint.textSize = min(accCell * 0.55f, dp(22f))
+        itemPaint.textSize = min(geo.cell * 0.5f, dp(24f))
+        val baseline = -(itemPaint.ascent() + itemPaint.descent()) / 2f
         for (i in accItems.indices) {
-            val cc = i % n
-            val isSel = i == accSel
-            val base = if (isSel) th.accentText else th.text
-            itemPaint.color = ColorUtils.setAlphaComponent(base, stripAlpha)
-            val yOff = if (isSel) -elevPx else 0f
-            val cx = gridRect.left + cc * accCell + accCell / 2f
-            val cy = gridRect.top + yOff + accCell / 2f - (itemPaint.ascent() + itemPaint.descent()) / 2f
-            c.drawText(accItems[i], cx, cy, itemPaint)
+            val cell = layout.cellOfItem[i]
+            itemPaint.color = ColorUtils.setAlphaComponent(
+                if (i == accSel) th.popupBg else th.text, cellsAlpha
+            )
+            c.drawText(
+                accItems[i],
+                offX + geo.cellCenterX(layout.col(cell)),
+                offY + geo.cellCenterY(layout.row(cell)) + baseline,
+                itemPaint
+            )
         }
-        c.restore()
     }
+
+    /** Scrim strength: a little lighter on light themes so they do not turn muddy grey. */
+    private fun scrimAlpha(th: KbTheme): Int =
+        if (ColorUtils.calculateLuminance(th.bg) > 0.5) 0x59 else 0x8C
 
     private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
 
@@ -382,7 +411,8 @@ class KeyPopupOverlay(
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
     companion object {
-        /** Maximum number of cells shown in the accent strip. Longer [Key.alts] strings are truncated. */
-        const val MAX_STRIP_ITEMS = 10
+        /** Maximum number of cells shown in the accent panel. Longer [Key.alts] strings are truncated. */
+        const val MAX_STRIP_ITEMS = AccentGrid.MAX_ITEMS
+        private const val PANEL_RADIUS_DP = 24f
     }
 }

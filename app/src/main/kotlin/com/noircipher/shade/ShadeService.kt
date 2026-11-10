@@ -133,6 +133,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private lateinit var clips: ClipboardStore
     private lateinit var cm: ClipboardManager
     private lateinit var root: LinearLayout
+    // Transparent, touch-through band above the keyboard. Long-press accent panels have two rows
+    // and are taller than the suggestion strip, so on the top key row they need room above the
+    // keyboard. The band is excluded from the insets (see onComputeInsets), so apps are not
+    // resized for it and touches on it reach the app underneath.
+    private lateinit var headroom: View
     private lateinit var strip: LinearLayout
     private lateinit var toggle: TextView
     // floating drag handle above the keyboard. Dragging vertically
@@ -511,6 +516,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             addView(content, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
         }
 
+        // [root] (opaque keyboard background, side/nav-bar padding, float offset) is wrapped so a
+        // transparent headroom band can sit above it for the accent panel.
+        headroom = View(this).apply { visibility = if (keyboardOffsetY == 0f) View.VISIBLE else View.GONE }
+        val windowRoot = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false   // keep the float-offset translation of [root] unclipped, as before
+            addView(headroom, LinearLayout.LayoutParams(MATCH, dp(ACCENT_HEADROOM_DP).toInt()))
+            addView(root, LinearLayout.LayoutParams(MATCH, WRAP))
+        }
+        // The accent panel dims the whole keyboard container, not the app above it.
+        kb.popupScrimAnchor = root
+
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val b = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
             navBarBottomPx = b
@@ -531,7 +548,21 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             kb.relayout()
         }
 
-        return root
+        return windowRoot
+    }
+
+    /**
+     * The headroom band above the keyboard is transparent and must neither resize the app nor eat
+     * its touches, so both top insets are moved down by its height.
+     */
+    override fun onComputeInsets(outInsets: android.inputmethodservice.InputMethodService.Insets) {
+        super.onComputeInsets(outInsets)
+        if (!this::headroom.isInitialized || !isInputViewShown) return
+        val h = if (headroom.visibility == View.VISIBLE) headroom.height else 0
+        if (h > 0) {
+            outInsets.contentTopInsets += h
+            outInsets.visibleTopInsets += h
+        }
     }
 
     private fun registerInsetAnimationCallback() {
@@ -1326,6 +1357,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (this::root.isInitialized == false) return
         // Negative translationY moves the view UP, so we negate the offset.
         root.translationY = -keyboardOffsetY
+        // A floating (offset) keyboard has no room-above semantics; drop the band so it can't
+        // end up covering the keyboard's touchable area.
+        if (this::headroom.isInitialized) {
+            val want = if (keyboardOffsetY == 0f) View.VISIBLE else View.GONE
+            if (headroom.visibility != want) headroom.visibility = want
+        }
     }
 
     /**
@@ -3395,6 +3432,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     companion object {
         private const val MAX_UNDO = 10
+        // Height of the transparent band above the keyboard that accent panels may extend into.
+        private const val ACCENT_HEADROOM_DP = 64f
         private const val NEURAL_FAILURE_TTL_MS = 5L * 60L * 1000L
         private const val SUGGEST_DEBOUNCE_MS = 32L
         // 4o — autocorrect confidence threshold. Combined with the typing-speed
