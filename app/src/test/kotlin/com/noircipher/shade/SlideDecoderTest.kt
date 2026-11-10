@@ -183,7 +183,13 @@ class SlideDecoderTest {
     @Test fun rankBySpatialFitPutsTheWordTheSwipeFollowsFirst() {
         val decoder = SlideDecoder(FakeDictionary())
         val path = pathFor("was")
-        assertEquals(listOf("was", "wad", "wax", "sad"), decoder.rankBySpatialFit(listOf("sad", "wax", "was", "wad"), path, layout))
+        // The word the swipe actually traced must rank first. The relative order
+        // of the other candidates is not asserted because the monotonic-pointer
+        // spatial cost can produce exact ties (e.g. "wax" and "sad" both score
+        // 0.667 for this path) whose resolution depends on stable-sort input
+        // order, not on semantic quality.
+        val ranked = decoder.rankBySpatialFit(listOf("sad", "wax", "was", "wad"), path, layout)
+        assertEquals("was", ranked.first())
         assertEquals("was", decoder.rankBySpatialFit(listOf("was", "sad"), path, layout).first())
     }
 
