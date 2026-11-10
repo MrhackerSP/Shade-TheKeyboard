@@ -66,6 +66,11 @@ class SlideDecoder(
 
     private companion object {
         const val SHAPE_N = 24
+        const val LOOP_MIN_TURNING = 4.5f
+        const val MAX_DOUBLE_LETTER_WORD = 16
+        const val CROSSING_THRESHOLD = 0.4f
+        const val MAX_SUBSEQ_RAW = 14
+        const val MAX_SUBSEQ_CANDIDATES = 64
     }
 
     suspend fun decode(path: List<FloatArray>, layout: Map<Char, Key>): String? {
@@ -513,12 +518,4 @@ class SlideDecoder(
     }
 
     private fun atan2(y: Float, x: Float): Float = kotlin.math.atan2(y, x)
-
-    private companion object {
-        const val LOOP_MIN_TURNING = 4.5f
-        const val MAX_DOUBLE_LETTER_WORD = 16
-        const val CROSSING_THRESHOLD = 0.4f
-        const val MAX_SUBSEQ_RAW = 14
-        const val MAX_SUBSEQ_CANDIDATES = 64
-    }
 }

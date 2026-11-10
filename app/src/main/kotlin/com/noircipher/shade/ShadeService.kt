@@ -39,6 +39,11 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.inputmethod.EditorInfoCompat
+import com.noircipher.shade.gif.GifController
+import com.noircipher.shade.translate.TranslationService
+import com.noircipher.shade.gif.GifItem
+import com.noircipher.shade.gif.KlipyConfig
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.TextViewCompat
@@ -111,13 +116,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     )
 
     private val toolDefs = listOf(
-        "clip" to "📋", "emoji" to "😀", "numpad" to "123", "left" to "◀", "right" to "▶",
+        "clip" to "📋", "emoji" to "😀", "gif" to "GIF", "translate" to "🌐", "numpad" to "123", "left" to "◀", "right" to "▶",
         "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste",
         "undo" to "Undo", "incognito" to "🕶", "onehand" to "1-hand",
         "resize" to "Resize", "voice" to "🎤", "settings" to "⚙"
     )
     private val toolIcons = mapOf(
-        "clip" to R.drawable.ic_tb_clip, "emoji" to R.drawable.ic_tb_emoji,
+        "clip" to R.drawable.ic_tb_clip, "emoji" to R.drawable.ic_tb_emoji, "gif" to R.drawable.ic_tb_gif, "translate" to R.drawable.ic_tb_translate,
         "numpad" to R.drawable.ic_tb_numpad, "left" to R.drawable.ic_tb_left,
         "right" to R.drawable.ic_tb_right, "selectall" to R.drawable.ic_tb_selectall,
         "copy" to R.drawable.ic_tb_copy, "cut" to R.drawable.ic_tb_cut,
@@ -138,6 +143,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // keyboard. The band is excluded from the insets (see onComputeInsets), so apps are not
     // resized for it and touches on it reach the app underneath.
     private lateinit var headroom: View
+    // GIF picker (KLIPY): a compact bar above the keyboard. While it is open, keystrokes edit its
+    // search query instead of the text field.
+    private lateinit var gifController: GifController
+    private var gifActive = false
+    // Translator
+    private var translatorActive = false
+    private var translatorInput = StringBuilder()
+    private var translatorTarget = "en"
     private lateinit var strip: LinearLayout
     private lateinit var toggle: TextView
     // floating drag handle above the keyboard. Dragging vertically
@@ -514,7 +527,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             addView(strip, LinearLayout.LayoutParams(MATCH, dp(52f).toInt()))
             addView(resizeHandle, LinearLayout.LayoutParams(MATCH, dp(22f).toInt()))
             addView(content, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
-        }
+
+        gifController = GifController(
+            context = this, scope = scope, prefs = prefs,
+            onClose = { closeGif() },
+            onSend = { item, query -> sendGif(item, query) }
+        )
+        gifController.bar.visibility = View.GONE
+        root.addView(gifController.bar, 2, LinearLayout.LayoutParams(MATCH, WRAP))
 
         // [root] (opaque keyboard background, side/nav-bar padding, float offset) is wrapped so a
         // transparent headroom band can sit above it for the accent panel.
@@ -604,6 +624,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onStartInputView(editorInfo: EditorInfo, restarting: Boolean) {
         super.onStartInputView(editorInfo, restarting)
+        closeGif()
+        closeTranslator()
         info = editorInfo
         fieldNoPersonalizedLearning =
             (editorInfo.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
@@ -709,6 +731,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
+        closeGif()
+        closeTranslator()
         clearAutofillChips()
         try { voice?.cancel() } catch (_: Exception) {} // a late result must not land in the next field
         suggestJob?.cancel()
@@ -870,6 +894,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         emoji.setTheme(kbTheme)
         clipPanel.setTheme(kbTheme)
+        if (this::gifController.isInitialized) gifController.bar.setTheme(kbTheme)
 
         root.setBackgroundColor(kbTheme.bg)
         toggle.setTextColor(kbTheme.hint)
@@ -915,6 +940,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val enabled = prefs.getStringSet("toolbar_keys", null) ?: toolDefs.map { it.first }.toSet()
         for ((id, label) in toolDefs) {
             if (enabled.contains(id) == false) continue
+            if (id == "gif" && !gifAvailable()) continue
             val tv = ImageView(this).apply {
                 setImageResource(toolIcons[id] ?: R.drawable.ic_tb_settings)
                 setColorFilter(if (id == "incognito" && incognito) kbTheme.accent else kbTheme.text)
@@ -1055,6 +1081,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val currentComposing = composing.toString()
         val emojiContext = if (currentComposing.isNotEmpty()) currentComposing else lastWord().orEmpty()
         if (p != Panel.NONE) endWord()
+        if (p != Panel.NONE) closeGif()
         if (panel == p) return
 
         val outgoing = when (panel) {
@@ -1136,6 +1163,115 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         refreshStrip()
     }
 
+    // ------------------------------------------------------------------ GIFs (KLIPY)
+
+    private fun gifAvailable(): Boolean = KlipyConfig.isConfigured && prefs.getBoolean("gif_enabled", true)
+
+    private fun openGif() {
+        if (!this::gifController.isInitialized || !gifAvailable()) return
+        if (fieldSecureInput || currentFieldType == FieldTypeDetector.FieldType.PASSWORD) {
+            Toast.makeText(this, R.string.gif_blocked_secure, Toast.LENGTH_SHORT).show()
+            return
+        }
+        endWord()
+        if (panel != Panel.NONE) transitionToPanel(Panel.NONE, animate = false)
+        gifActive = true
+        strip.visibility = View.GONE
+        gifController.bar.visibility = View.VISIBLE
+        gifController.open()
+    }
+
+    private fun closeGif() {
+        if (!gifActive) return
+        gifActive = false
+        gifController.close()
+        gifController.bar.visibility = View.GONE
+        if (panel == Panel.NONE) strip.visibility = View.VISIBLE
+    }
+
+    private fun sendGif(item: GifItem, query: String) {
+        val mime = item.send.mime
+        val editor = info
+        val accepts = editor != null &&
+            EditorInfoCompat.getContentMimeTypes(editor).any { ClipDescription.compareMimeTypes(mime, it) }
+        if (!accepts) { sendGifAsLink(item, query); return }
+        scope.launch {
+            val file = gifController.downloadForSend(item)
+            if (file == null) {
+                Toast.makeText(this@ShadeService, R.string.gif_error, Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val committed = try {
+                val uri = FileProvider.getUriForFile(this@ShadeService, "$packageName.fileprovider", file)
+                val desc = ClipDescription(item.title.ifBlank { "GIF" }, arrayOf(mime))
+                currentInputConnection?.commitContent(
+                    InputContentInfo(uri, desc, null),
+                    android.view.inputmethod.InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION,
+                    null
+                ) == true
+            } catch (_: Exception) { false }
+            if (committed) {
+                Handler(Looper.getMainLooper()).postDelayed({ file.delete() }, 60_000L)
+                gifController.registerShare(item, query)
+                closeGif()
+                afterText()
+            } else { file.delete(); sendGifAsLink(item, query) }
+        }
+    }
+
+    private fun sendGifAsLink(item: GifItem, query: String) {
+        val ic = currentInputConnection ?: return
+        ic.commitText(item.send.url + " ", 1)
+        gifController.registerShare(item, query)
+        Toast.makeText(this, R.string.gif_pasted_link, Toast.LENGTH_SHORT).show()
+        closeGif()
+        afterText()
+    }
+
+    // ------------------------------------------------------------------ Translator
+
+    private fun openTranslator() {
+        if (!prefs.getBoolean("translator_enabled", true)) return
+        if (fieldSecureInput || currentFieldType == FieldTypeDetector.FieldType.PASSWORD) return
+        endWord()
+        if (panel != Panel.NONE) transitionToPanel(Panel.NONE, animate = false)
+        if (gifActive) closeGif()
+        translatorActive = true
+        translatorInput.clear()
+        strip.visibility = View.GONE
+        Toast.makeText(this, R.string.translator_hint, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun closeTranslator() {
+        if (!translatorActive) return
+        translatorActive = false
+        translatorInput.clear()
+        if (panel == Panel.NONE) strip.visibility = View.VISIBLE
+    }
+
+    private fun onTranslatorKey(code: Int, text: String?) {
+        when (code) {
+            Codes.DELETE -> { if (translatorInput.isNotEmpty()) translatorInput.deleteCharAt(translatorInput.length - 1) }
+            Codes.SPACE -> translatorInput.append(' ')
+            Codes.ENTER -> {
+                val query = translatorInput.toString().trim()
+                if (query.isNotEmpty()) {
+                    scope.launch {
+                        val result = TranslationService.translate(query, "auto", translatorTarget)
+                        if (result != null) {
+                            currentInputConnection?.commitText(result + " ", 1)
+                        } else {
+                            Toast.makeText(this@ShadeService, R.string.translator_error, Toast.LENGTH_SHORT).show()
+                        }
+                        closeTranslator()
+                    }
+                } else closeTranslator()
+            }
+            Codes.SHIFT, Codes.SYMBOLS, Codes.SYMBOLS2, Codes.LETTERS -> { /* mode keys work normally */ }
+            else -> { text?.let { translatorInput.append(it) } }
+        }
+    }
+
     // ------------------------------------------------------------------ toolbar
 
     private fun onTool(id: String) {
@@ -1143,6 +1279,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         when (id) {
             "clip" -> transitionToPanel(Panel.CLIP)
             "emoji" -> transitionToPanel(Panel.EMOJI)
+            "gif" -> openGif()
+            "translate" -> openTranslator()
             "voice" -> {
                 if (!prefs.getBoolean("voice_input", true)) return
                 val v = voice
@@ -1853,6 +1991,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     /** Glide typing: live preview while the finger is still moving. */
     override fun onGlidePreview(word: String?) {
+        if (gifActive || translatorActive) return
         if (word.isNullOrEmpty()) {
             // Clear the composing text
             if (composing.isNotEmpty()) {
@@ -1868,6 +2007,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onSwipePath(path: List<FloatArray>): Boolean {
+        if (gifActive || translatorActive) return false
         if (path.size < 4) return false
         val layout = kbKeyLayout() ?: return false
         suggestJob?.cancel()
@@ -1900,6 +2040,19 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // to normal typing).
         if (resizeModeActive) {
             setResizeMode(false)
+        }
+        if (gifActive) {
+            when (code) {
+                Codes.DELETE -> { gifController.backspace(); return }
+                Codes.SPACE -> { gifController.type(" "); return }
+                Codes.ENTER -> { gifController.submit(); return }
+                Codes.SHIFT, Codes.SYMBOLS, Codes.SYMBOLS2, Codes.LETTERS -> {}
+                else -> closeGif()
+            }
+        }
+        if (translatorActive) {
+            onTranslatorKey(code, null)
+            return
         }
         when (code) {
             Codes.SHIFT -> onShift()
@@ -2035,6 +2188,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onText(text: String) {
+        if (gifActive) {
+            gifController.type(text)
+            if (shiftState == 1) { shiftState = 0; autoShifted = false; kb.shiftState = 0 }
+            return
+        }
+        if (translatorActive) {
+            onTranslatorKey(0, text)
+            if (shiftState == 1) { shiftState = 0; autoShifted = false; kb.shiftState = 0 }
+            return
+        }
         // Clear touch offsets when starting a new composing word
         if (this::kb.isInitialized) kb.clearTouchOffsets()
         currentTouchOffsets = emptyList()
