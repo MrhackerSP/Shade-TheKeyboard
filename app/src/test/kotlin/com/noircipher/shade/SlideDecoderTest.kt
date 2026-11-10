@@ -68,6 +68,8 @@ class SlideDecoderTest {
 
     private fun decode(path: List<FloatArray>, dict: SlideDictionary = FakeDictionary(), keys: Map<Char, Key> = layout) =
         runBlocking { SlideDecoder(dict).decode(path, keys) }
+    private fun decode(path: List<FloatArray>, decoder: SlideDecoder, keys: Map<Char, Key> = layout) =
+        runBlocking { decoder.decode(path, keys) }
 
     // ---- decode ----
 
