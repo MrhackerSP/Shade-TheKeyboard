@@ -7,6 +7,8 @@ import android.content.DialogInterface
 import android.os.Bundle
 import android.text.InputType
 import android.view.View
+import android.text.Editable
+import android.text.TextWatcher
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
@@ -68,10 +70,96 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<View>(R.id.row_typing).setOnClickListener { startActivity(Intent(this, TypingStatsActivity::class.java)) }
         findViewById<View>(R.id.row_backup).setOnClickListener { openScreen("screen_backup", R.string.pref_backup) }
         findViewById<View>(R.id.row_about).setOnClickListener { openScreen("screen_about", R.string.pref_about) }
+
+        // Settings search: filters the main menu rows by their text
+        setupSettingsSearch()
     }
 
     private fun toast(res: Int) {
         Toast.makeText(this, res, Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Settings search: filters the main menu rows by their title and subtitle text.
+     * Typing "haptic" shows the Feedback row; typing "theme" shows the Theme row.
+     */
+    private fun setupSettingsSearch() {
+        val search = findViewById<EditText>(R.id.settings_search) ?: return
+
+        // Map row IDs to their searchable text (title + subtitle + keywords)
+        val rowTexts = mapOf(
+            R.id.row_languages to listOf("language", "layout", "dictionary", "qwerty", "keyboard", "model"),
+            R.id.row_preferences to listOf("haptic", "sound", "vibration", "glide", "swipe", "gesture", "trackpad", "feedback", "longpress", "repeat", "burst"),
+            R.id.row_theme to listOf("theme", "dark", "light", "appearance", "border", "key height", "popup", "hint"),
+            R.id.row_colors to listOf("color", "accent", "background", "custom", "palette"),
+            R.id.row_corrections to listOf("autocorrect", "correction", "suggestion", "neural", "prediction", "smart", "caps", "double space", "autofill", "privacy", "incognito"),
+            R.id.row_learning to listOf("learning", "adaptive", "app context", "suppressor", "calibrator", "ranker", "memory", "word"),
+            R.id.row_voice to listOf("voice", "speech", "microphone", "dictation"),
+            R.id.row_emoji to listOf("emoji", "gif", "translate", "translator", "search"),
+            R.id.row_clipboard to listOf("clipboard", "toolbar", "copy", "paste", "cut", "undo"),
+            R.id.row_typing to listOf("typing", "stats", "statistics", "heatmap", "insights"),
+            R.id.row_backup to listOf("backup", "restore", "export", "import", "data"),
+            R.id.row_about to listOf("about", "update", "version", "check", "auto")
+        )
+
+        search.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                val query = s?.toString()?.trim()?.lowercase().orEmpty()
+                if (query.isEmpty()) {
+                    // Show all rows and section labels
+                    for ((rowId, _) in rowTexts) {
+                        findViewById<View>(rowId)?.visibility = View.VISIBLE
+                    }
+                    // Show section labels too
+                    val scroll = findViewById<androidx.core.widget.NestedScrollView>(android.R.id.content)
+                    scroll?.let { sv ->
+                        val container = sv.getChildAt(0) as? android.widget.LinearLayout
+                        container?.let { showAllSectionLabels(it) }
+                    }
+                    return
+                }
+                // Filter rows by search text
+                for ((rowId, keywords) in rowTexts) {
+                    val row = findViewById<View>(rowId)
+                    val match = keywords.any { it.contains(query) || query.contains(it) }
+                    row?.visibility = if (match) View.VISIBLE else View.GONE
+                }
+                // Hide section labels when searching
+                val scroll = findViewById<androidx.core.widget.NestedScrollView>(android.R.id.content)
+                scroll?.let { sv ->
+                    val container = sv.getChildAt(0) as? android.widget.LinearLayout
+                    container?.let { hideSectionLabels(it) }
+                }
+            }
+        })
+    }
+
+    private fun showAllSectionLabels(container: android.widget.LinearLayout) {
+        for (i in 0 until container.childCount) {
+            val child = container.getChildAt(i)
+            if (child is android.widget.TextView && child.id == android.R.id.title) {
+                child.visibility = View.VISIBLE
+            }
+            if (child is android.widget.LinearLayout) {
+                showAllSectionLabels(child)
+            }
+        }
+    }
+
+    private fun hideSectionLabels(container: android.widget.LinearLayout) {
+        // Hide section labels (the styled SettingsSectionLabel TextViews)
+        for (i in 0 until container.childCount) {
+            val child = container.getChildAt(i)
+            if (child is android.widget.TextView) {
+                val styleResId = child.getTag(android.R.id.tag1)
+                // Section labels have textAllCaps=true and text size 11sp
+                if (child.textSize <= 12f * resources.displayMetrics.scaledDensity && child.paint?.isFakeBoldText == true) {
+                    child.visibility = View.GONE
+                }
+            }
+        }
     }
 
     /**

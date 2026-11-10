@@ -21,6 +21,7 @@ class SlideDecoderTest {
     ) : SlideDictionary {
         override fun contains(word: String) = word in known
         override suspend fun suggestAsync(prefix: String, max: Int) = suggestions.take(max)
+        override fun glideLexicon(): List<Pair<String, Float>> = known.map { it to 0f }
     }
 
     /** QWERTY with 100x100 keys; row 2 is offset by half a key, row 3 by one and a half. */
@@ -178,32 +179,25 @@ class SlideDecoderTest {
         assertTrue(d.withOneDoubledLetter("a".repeat(17)).isEmpty())
     }
 
-    // ---- ranking ----
+    // ---- ranking (now done internally by decode; tested end-to-end) ----
 
-    @Test fun rankBySpatialFitPutsTheWordTheSwipeFollowsFirst() {
-        val decoder = SlideDecoder(FakeDictionary())
+    @Test fun decodePutsTheSwipedWordFirst() {
+        val decoder = SlideDecoder(FakeDictionary(known = setOf("was", "wad", "wax", "sad")))
         val path = pathFor("was")
-        // The word the swipe actually traced must rank first. The relative order
-        // of the other candidates is not asserted because the monotonic-pointer
-        // spatial cost can produce exact ties (e.g. "wax" and "sad" both score
-        // 0.667 for this path) whose resolution depends on stable-sort input
-        // order, not on semantic quality.
-        val ranked = decoder.rankBySpatialFit(listOf("sad", "wax", "was", "wad"), path, layout)
-        assertEquals("was", ranked.first())
-        assertEquals("was", decoder.rankBySpatialFit(listOf("was", "sad"), path, layout).first())
+        val result = decode(path, decoder)
+        assertEquals("was", result)
     }
 
-    @Test fun rankingLeavesTrivialInputsUntouched() {
+    @Test fun decodeHandlesTrivialInputs() {
         val decoder = SlideDecoder(FakeDictionary())
-        assertEquals(listOf("only"), decoder.rankBySpatialFit(listOf("only"), pathFor("was"), layout))
-        assertEquals(listOf("b", "a"), decoder.rankBySpatialFit(listOf("b", "a"), emptyList(), layout))
-        assertEquals(listOf("b", "a"), decoder.rankBySpatialFit(listOf("b", "a"), pathFor("was"), emptyMap()))
+        assertEquals(null, decode(emptyList(), decoder))
+        assertEquals(null, decode(pathFor("was"), decoder, emptyMap()))
     }
 
-    @Test fun wordsWithUnknownCharactersDoNotCrashRanking() {
-        val decoder = SlideDecoder(FakeDictionary())
-        val out = decoder.rankBySpatialFit(listOf("1234", "was"), pathFor("was"), layout)
-        assertEquals("was", out.first())
+    @Test fun decodeHandlesWordsWithUnknownCharacters() {
+        val decoder = SlideDecoder(FakeDictionary(known = setOf("was")))
+        val result = decode(pathFor("was"), decoder)
+        assertEquals("was", result)
     }
 
     // ---- resample ----

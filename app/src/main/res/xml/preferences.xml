@@ -87,6 +87,7 @@
     <PreferenceScreen android:key="screen_emoji" android:summary="@string/settings_emoji_subtitle" android:title="@string/pref_emoji" app:iconSpaceReserved="false">
         <SwitchPreferenceCompat android:defaultValue="true" android:key="emoji_suggestions" android:title="@string/pref_emoji_sugg" android:summary="@string/pref_emoji_sugg_sum" app:iconSpaceReserved="false" />
         <SwitchPreferenceCompat android:defaultValue="true" android:key="gif_enabled" android:title="@string/pref_gif" android:summary="@string/pref_gif_sum" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat android:defaultValue="true" android:key="translator_enabled" android:title="@string/pref_translator" android:summary="@string/pref_translator_sum" app:iconSpaceReserved="false" />
     </PreferenceScreen>
     <PreferenceScreen android:key="screen_feedback" android:summary="@string/scr_feedback_sum" android:title="@string/scr_feedback" app:iconSpaceReserved="false">
         <PreferenceCategory android:title="@string/cat_feedback" app:iconSpaceReserved="false">

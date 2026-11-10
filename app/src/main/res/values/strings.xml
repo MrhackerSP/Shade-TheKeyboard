@@ -275,6 +275,8 @@
     <string-array name="tool_entries">
         <item>Clipboard</item>
         <item>Emoji</item>
+        <item>GIF</item>
+        <item>Translate</item>
         <item>Number pad</item>
         <item>Cursor left</item>
         <item>Cursor right</item>
@@ -292,6 +294,8 @@
     <string-array name="tool_values">
         <item>clip</item>
         <item>emoji</item>
+        <item>gif</item>
+        <item>translate</item>
         <item>numpad</item>
         <item>left</item>
         <item>right</item>
@@ -309,6 +313,7 @@
 
     <string name="settings_header_title">Shade</string>
     <string name="settings_header_subtitle">Keyboard settings</string>
+    <string name="settings_search_hint">Search settings…</string>
     <string name="settings_section_general">General</string>
     <string name="settings_section_typing">Typing</string>
     <string name="settings_section_advanced">Advanced</string>
@@ -364,6 +369,15 @@
     <string name="gif_consent_continue">Continue</string>
     <string name="gif_blocked_secure">GIFs are disabled in password fields</string>
     <string name="gif_pasted_link">This app doesn’t accept GIFs, so a link was inserted</string>
+
+    <!-- Translator -->
+    <string name="translator_hint">Type to translate</string>
+    <string name="translator_loading">Translating…</string>
+    <string name="translator_error">Translation failed — check your connection</string>
+    <string name="translator_target">Target language</string>
+    <string name="translator_auto">Auto</string>
+    <string name="pref_translator">Translator</string>
+    <string name="pref_translator_sum">Show a translate button in the toolbar</string>
     <string name="pref_gif">GIF search (KLIPY)</string>
     <string name="pref_gif_sum">Show the GIF button in the toolbar. Searches are sent to KLIPY after you accept the notice.</string>
 

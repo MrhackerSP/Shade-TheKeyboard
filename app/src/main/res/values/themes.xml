@@ -1,27 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Custom attributes for settings theming -->
+    <attr name="settingsCardColor" format="color" />
+    <attr name="settingsCardStrokeColor" format="color" />
+    <attr name="settingsIconBg" format="color" />
+    <attr name="settingsIconTint" format="color" />
+
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.DarkActionBar">
-        <item name="colorPrimary">#000000</item>
-        <item name="colorPrimaryDark">#000000</item>
-        <item name="colorAccent">#FFFFFF</item>
-        <item name="android:colorBackground">#000000</item>
-        <item name="android:textColorPrimary">#F5F5F5</item>
-        <item name="android:textColorSecondary">#8E8E8E</item>
-        <item name="android:statusBarColor">#000000</item>
-        <item name="android:navigationBarColor">#000000</item>
-        <item name="android:windowBackground">#000000</item>
+        <item name="colorPrimary">@color/settings_accent</item>
+        <item name="colorPrimaryDark">@color/settings_background</item>
+        <item name="colorAccent">@color/settings_accent</item>
+        <item name="android:colorBackground">@color/settings_background</item>
+        <item name="android:textColorPrimary">@color/settings_title</item>
+        <item name="android:textColorSecondary">@color/settings_subtitle</item>
+        <item name="android:statusBarColor">@color/settings_background</item>
+        <item name="android:navigationBarColor">@color/settings_background</item>
+        <item name="android:windowBackground">@color/settings_background</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="colorControlNormal">#777777</item>
-        <item name="colorControlActivated">#FFFFFF</item>
+        <item name="colorControlNormal">@color/settings_chevron</item>
+        <item name="colorControlActivated">@color/settings_accent</item>
         <item name="colorControlHighlight">#22FFFFFF</item>
         <item name="preferenceTheme">@style/ShadePreferenceTheme</item>
         <item name="alertDialogTheme">@style/ShadeDialogTheme</item>
+        <!-- Custom settings attrs -->
+        <item name="settingsCardColor">@color/settings_card</item>
+        <item name="settingsCardStrokeColor">@color/settings_card_stroke</item>
+        <item name="settingsIconBg">@color/settings_icon_background</item>
+        <item name="settingsIconTint">@color/settings_icon_tint</item>
     </style>
 
     <style name="ShadePreferenceTheme" parent="PreferenceThemeOverlay">
-        <item name="android:textColorPrimary">#F5F5F5</item>
-        <item name="android:textColorSecondary">#8E8E8E</item>
-        <item name="colorAccent">#FFFFFF</item>
-        <item name="colorControlActivated">#FFFFFF</item>
+        <item name="android:textColorPrimary">@color/settings_title</item>
+        <item name="android:textColorSecondary">@color/settings_subtitle</item>
+        <item name="colorAccent">@color/settings_accent</item>
+        <item name="colorControlActivated">@color/settings_accent</item>
         <item name="colorControlHighlight">#22FFFFFF</item>
     </style>
 
@@ -32,18 +44,18 @@
         <item name="android:layout_height">wrap_content</item>
         <item name="android:paddingStart">14dp</item>
         <item name="android:paddingEnd">14dp</item>
-        <item name="android:paddingTop">15dp</item>
-        <item name="android:paddingBottom">15dp</item>
+        <item name="android:paddingTop">14dp</item>
+        <item name="android:paddingBottom">14dp</item>
         <item name="android:background">@drawable/bg_settings_row</item>
         <item name="android:clickable">true</item>
         <item name="android:focusable">true</item>
-        <item name="android:minHeight">72dp</item>
+        <item name="android:minHeight">68dp</item>
     </style>
 
     <style name="SettingsCard">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginBottom">18dp</item>
+        <item name="android:layout_marginBottom">16dp</item>
         <item name="android:background">@drawable/bg_settings_card</item>
         <item name="android:orientation">vertical</item>
     </style>
@@ -51,11 +63,11 @@
     <style name="SettingsSectionLabel">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginStart">6dp</item>
-        <item name="android:layout_marginBottom">8dp</item>
+        <item name="android:layout_marginStart">8dp</item>
+        <item name="android:layout_marginBottom">6dp</item>
         <item name="android:textAllCaps">true</item>
         <item name="android:textColor">@color/settings_section</item>
-        <item name="android:textSize">12sp</item>
+        <item name="android:textSize">11sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:letterSpacing">0.12</item>
     </style>
@@ -66,12 +78,13 @@
         <item name="android:layout_marginStart">70dp</item>
         <item name="android:background">@color/settings_divider</item>
     </style>
-    <style name="ShadeDialogTheme" parent="Theme.AppCompat.Dialog.Alert">
-        <item name="android:background">#000000</item>
-        <item name="android:textColorPrimary">#F5F5F5</item>
-        <item name="android:textColorSecondary">#8E8E8E</item>
-        <item name="colorAccent">#FFFFFF</item>
-        <item name="colorControlNormal">#777777</item>
-        <item name="colorControlActivated">#FFFFFF</item>
+
+    <style name="ShadeDialogTheme" parent="Theme.AppCompat.DayNight.Dialog.Alert">
+        <item name="android:colorBackground">@color/settings_background</item>
+        <item name="android:textColorPrimary">@color/settings_title</item>
+        <item name="android:textColorSecondary">@color/settings_subtitle</item>
+        <item name="colorAccent">@color/settings_accent</item>
+        <item name="colorControlNormal">@color/settings_chevron</item>
+        <item name="colorControlActivated">@color/settings_accent</item>
     </style>
 </resources>

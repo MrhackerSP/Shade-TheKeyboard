@@ -3,8 +3,10 @@ package com.noircipher.shade
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PathMeasure
 import android.os.SystemClock
 import kotlin.math.hypot
+import kotlin.math.max
 
 /**
  * Gesture (glide) typing sampler and trail renderer.
@@ -63,11 +65,20 @@ class GestureEngine(
     private val trailY = ArrayList<Float>()
     private val trailTimes = ArrayList<Long>()
     private var trailColor = 0x80FFFFFF.toInt()
-    private var trailStartWidth = 8f
-    private var trailEndWidth = 2f
-    private var trailFadeoutDelay = 300L // ms
-    private var trailFadeoutDuration = 400L // ms
-    private var trailLingerDuration = 800L // ms
+    private var trailReleaseTime = 0L  // 0 = still drawing; >0 = finger lifted, fading out
+
+    // Trail visual parameters
+    private var trailStartWidth = 10f    // px at the finger (thick end)
+    private var trailEndWidth = 1f      // px at the tail (thin end)
+    private var trailLingerDuration = 600L   // ms the trail stays visible after release
+    private var trailFadeDuration = 200L     // ms for the whole-trail fade-out after release
+    private val trailMaxPoints = 120        // cap memory; old points are dropped
+
+    // Reusable buffers for smooth drawing
+    private val smoothPath = Path()
+    private val pathMeasure = PathMeasure()
+    private val posBuffer = FloatArray(2)
+    private val tanBuffer = FloatArray(2)
 
     fun setTrailColor(color: Int) { trailColor = color }
     fun setTrailWidths(start: Float, end: Float) { trailStartWidth = start; trailEndWidth = end }
@@ -140,58 +151,110 @@ class GestureEngine(
     }
 
     /**
-     * Kept for API compatibility. Trail points are now recorded live in [appendPoint],
-     * so this only refreshes timestamps so the whole stroke starts fading from release.
+     * Called on finger-up: marks the trail for whole-trail fade-out (the entire
+     * the entire trail fades together over [trailFadeDuration], not per-point).
      */
     fun addTrail() {
-        val now = clock()
-        for (i in trailTimes.indices) trailTimes[i] = now
+        trailReleaseTime = clock()
     }
 
     /** True while there are trail points still visible (used to stop endless redraws). */
     fun hasTrail(): Boolean {
-        val now = clock()
-        while (trailTimes.isNotEmpty() && now - trailTimes[0] > trailLingerDuration) {
-            trailX.removeAt(0); trailY.removeAt(0); trailTimes.removeAt(0)
-        }
-        return trailX.size >= 2
+        if (trailX.size < 2) return false
+        if (trailReleaseTime == 0L) return true  // still drawing
+        val elapsed = clock() - trailReleaseTime
+        return elapsed < trailFadeDuration
     }
 
-    /** Draw the fading gesture trail on the canvas. */
+    /**
+     * Draw the gesture trail as a smooth bezier curve with width taper and alpha fade.
+     *
+     * Trail characteristics:
+     * - Smooth quadratic bezier through midpoints (no jagged segments)
+     * - Width tapers from thick (near finger) to thin (at tail)
+     * - Alpha fades from opaque (near finger) to transparent (at tail)
+     * - Round stroke caps for a blob look
+     * - After release, the whole trail fades out together over ~200ms
+     */
     fun drawTrail(canvas: Canvas, paint: Paint) {
-        if (trailX.size < 2) return
-        val now = clock()
-        val path = Path()
-        paint.color = trailColor
-        paint.style = Paint.Style.STROKE
-        paint.isAntiAlias = true
+        val n = trailX.size
+        if (n < 2) return
 
-        // Remove old points (beyond linger duration)
-        while (trailTimes.isNotEmpty() && now - trailTimes[0] > trailLingerDuration) {
-            trailX.removeAt(0)
-            trailY.removeAt(0)
-            trailTimes.removeAt(0)
+        // Compute global alpha for whole-trail fade-out after release.
+        var globalAlpha = 1f
+        if (trailReleaseTime > 0L) {
+            val elapsed = clock() - trailReleaseTime
+            if (elapsed >= trailFadeDuration) {
+                trailX.clear(); trailY.clear(); trailTimes.clear()
+                trailReleaseTime = 0L
+                return
+            }
+            globalAlpha = 1f - elapsed.toFloat() / trailFadeDuration
         }
 
-        if (trailX.size < 2) return
+        // Build a smooth path through the trail points using quadratic beziers.
+        // Method: connect consecutive midpoints with quadratic curves, using the
+        // actual points as control points. This produces a smooth, C1-continuous
+        // path that passes through the midpoints and approximates the original points.
+        smoothPath.reset()
+        smoothPath.moveTo(trailX[0], trailY[0])
+        for (i in 1 until n - 1) {
+            val midX = (trailX[i] + trailX[i + 1]) / 2f
+            val midY = (trailY[i] + trailY[i + 1]) / 2f
+            smoothPath.quadTo(trailX[i], trailY[i], midX, midY)
+        }
+        // Last segment: straight line to the final point
+        smoothPath.lineTo(trailX[n - 1], trailY[n - 1])
 
-        // Draw trail with tapering width and alpha fade
-        var startX = trailX[0]
-        var startY = trailY[0]
-        for (i in 1 until trailX.size) {
-            val elapsedTime = now - trailTimes[i]
-            val alpha = getTrailAlpha(elapsedTime)
-            val width = getTrailWidth(elapsedTime)
+        // Measure the path to draw it in segments with varying width and alpha.
+        pathMeasure.setPath(smoothPath, false)
+        val totalLen = pathMeasure.length
+        if (totalLen <= 0f) return
 
-            paint.alpha = alpha
+        // Draw the trail in ~40 segments, each with its own width and alpha.
+        // Segment 0 = tail (oldest, thin, transparent); last segment = head (newest, thick, opaque).
+        val segments = max(2, min(40, n))
+        paint.style = Paint.Style.STROKE
+        paint.isAntiAlias = true
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeJoin = Paint.Join.ROUND
+
+        // Extract the base color's RGB (we'll modulate alpha per segment).
+        val baseR = (trailColor shr 16) and 0xFF
+        val baseG = (trailColor shr 8) and 0xFF
+        val baseB = trailColor and 0xFF
+
+        var prevX = 0f
+        var prevY = 0f
+        pathMeasure.getPosTan(0f, posBuffer, tanBuffer)
+        prevX = posBuffer[0]
+        prevY = posBuffer[1]
+
+        for (i in 1..segments) {
+            val t = i.toFloat() / segments
+            val distance = totalLen * t
+            pathMeasure.getPosTan(distance, posBuffer, tanBuffer)
+            val cx = posBuffer[0]
+            val cy = posBuffer[1]
+
+            // Width: thick at the head (t=1), thin at the tail (t=0).
+            val width = trailEndWidth + (trailStartWidth - trailEndWidth) * t
+
+            // Alpha: opaque at the head (t=1), transparent at the tail (t=0).
+            // During live drawing, the tail is very short; after release the whole
+            // trail fades together via globalAlpha.
+            val segAlpha = (0.15f + 0.85f * t) * globalAlpha
+            val alpha = (255 * segAlpha).toInt().coerceIn(0, 255)
+
+            paint.color = (alpha shl 24) or (baseR shl 16) or (baseG shl 8) or baseB
             paint.strokeWidth = width
-            path.reset()
-            path.moveTo(startX, startY)
-            path.lineTo(trailX[i], trailY[i])
-            canvas.drawPath(path, paint)
 
-            startX = trailX[i]
-            startY = trailY[i]
+            // Draw a small segment from prev to current.
+            // Using drawLine with ROUND cap gives the smooth blob look.
+            canvas.drawLine(prevX, prevY, cx, cy, paint)
+
+            prevX = cx
+            prevY = cy
         }
     }
 
@@ -206,6 +269,7 @@ class GestureEngine(
 
     private fun reset() {
         trailX.clear(); trailY.clear(); trailTimes.clear()
+        trailReleaseTime = 0L
         incrementalRecognitionSize = 0
         eventTimes.clear()
         xCoords.clear()
@@ -225,6 +289,12 @@ class GestureEngine(
         trailX.add(x.toFloat())
         trailY.add(y.toFloat())
         trailTimes.add(clock())
+        // Cap trail length to avoid unbounded memory on long swipes
+        while (trailX.size > trailMaxPoints) {
+            trailX.removeAt(0)
+            trailY.removeAt(0)
+            trailTimes.removeAt(0)
+        }
     }
 
     private fun updateMajorEvent(x: Int, y: Int, time: Int) {
@@ -281,18 +351,6 @@ class GestureEngine(
             (dynamicTimeThresholdFrom - dynamicTimeThresholdTo) *
             deltaTime / dynamicThresholdDecayDuration
         return dynamicTimeThresholdFrom - decayedThreshold
-    }
-
-    private fun getTrailAlpha(elapsedTime: Long): Int {
-        if (elapsedTime < trailFadeoutDelay) return 255
-        val decreasingAlpha = (255 * (elapsedTime - trailFadeoutDelay) / trailFadeoutDuration).toInt()
-        return (255 - decreasingAlpha).coerceIn(0, 255)
-    }
-
-    private fun getTrailWidth(elapsedTime: Long): Float {
-        val deltaWidth = trailStartWidth - trailEndWidth
-        return (trailStartWidth - (deltaWidth * elapsedTime) / trailLingerDuration)
-            .coerceIn(trailEndWidth, trailStartWidth)
     }
 
     private fun getDistance(x1: Int, y1: Int, x2: Int, y2: Int): Int {

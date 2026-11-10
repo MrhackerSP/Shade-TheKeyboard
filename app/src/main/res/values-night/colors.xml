@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Night theme overrides -->
+    <color name="settings_background">#000000</color>
+    <color name="settings_card">#0F0F0F</color>
+    <color name="settings_card_stroke">#1E1E1E</color>
+    <color name="settings_section">#777777</color>
+    <color name="settings_title">#F5F5F5</color>
+    <color name="settings_subtitle">#8E8E8E</color>
+    <color name="settings_divider">#161616</color>
+    <color name="settings_icon_background">#141414</color>
+    <color name="settings_icon_tint">#DADADA</color>
+    <color name="settings_chevron">#4A4A4A</color>
+    <color name="settings_switch_track_off">#2A2A2A</color>
+    <color name="settings_switch_track_on">#FFB300</color>
+    <color name="settings_switch_thumb">#FFFFFF</color>
+</resources>

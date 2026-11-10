@@ -41,6 +41,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.inputmethod.EditorInfoCompat
 import com.noircipher.shade.gif.GifController
+import com.noircipher.shade.translate.TranslationService
 import com.noircipher.shade.gif.GifItem
 import com.noircipher.shade.gif.KlipyConfig
 import androidx.core.view.WindowInsetsAnimationCompat
@@ -115,13 +116,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     )
 
     private val toolDefs = listOf(
-        "clip" to "📋", "emoji" to "😀", "gif" to "GIF", "numpad" to "123", "left" to "◀", "right" to "▶",
+        "clip" to "📋", "emoji" to "😀", "gif" to "GIF", "translate" to "🌐", "numpad" to "123", "left" to "◀", "right" to "▶",
         "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste",
         "undo" to "Undo", "incognito" to "🕶", "onehand" to "1-hand",
         "resize" to "Resize", "voice" to "🎤", "settings" to "⚙"
     )
     private val toolIcons = mapOf(
-        "clip" to R.drawable.ic_tb_clip, "emoji" to R.drawable.ic_tb_emoji, "gif" to R.drawable.ic_tb_gif,
+        "clip" to R.drawable.ic_tb_clip, "emoji" to R.drawable.ic_tb_emoji, "gif" to R.drawable.ic_tb_gif, "translate" to R.drawable.ic_tb_translate,
         "numpad" to R.drawable.ic_tb_numpad, "left" to R.drawable.ic_tb_left,
         "right" to R.drawable.ic_tb_right, "selectall" to R.drawable.ic_tb_selectall,
         "copy" to R.drawable.ic_tb_copy, "cut" to R.drawable.ic_tb_cut,
@@ -146,6 +147,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // search query instead of the text field.
     private lateinit var gifController: GifController
     private var gifActive = false
+    // Translator
+    private var translatorActive = false
+    private var translatorInput = StringBuilder()
+    private var translatorTarget = "en"
     private lateinit var strip: LinearLayout
     private lateinit var toggle: TextView
     // floating drag handle above the keyboard. Dragging vertically
@@ -620,6 +625,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onStartInputView(editorInfo: EditorInfo, restarting: Boolean) {
         super.onStartInputView(editorInfo, restarting)
         closeGif()
+        closeTranslator()
         info = editorInfo
         fieldNoPersonalizedLearning =
             (editorInfo.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
@@ -726,6 +732,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
         closeGif()
+        closeTranslator()
         clearAutofillChips()
         try { voice?.cancel() } catch (_: Exception) {} // a late result must not land in the next field
         suggestJob?.cancel()
@@ -1221,6 +1228,50 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         afterText()
     }
 
+    // ------------------------------------------------------------------ Translator
+
+    private fun openTranslator() {
+        if (!prefs.getBoolean("translator_enabled", true)) return
+        if (fieldSecureInput || currentFieldType == FieldTypeDetector.FieldType.PASSWORD) return
+        endWord()
+        if (panel != Panel.NONE) transitionToPanel(Panel.NONE, animate = false)
+        if (gifActive) closeGif()
+        translatorActive = true
+        translatorInput.clear()
+        strip.visibility = View.GONE
+        Toast.makeText(this, R.string.translator_hint, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun closeTranslator() {
+        if (!translatorActive) return
+        translatorActive = false
+        translatorInput.clear()
+        if (panel == Panel.NONE) strip.visibility = View.VISIBLE
+    }
+
+    private fun onTranslatorKey(code: Int, text: String?) {
+        when (code) {
+            Codes.DELETE -> { if (translatorInput.isNotEmpty()) translatorInput.deleteCharAt(translatorInput.length - 1) }
+            Codes.SPACE -> translatorInput.append(' ')
+            Codes.ENTER -> {
+                val query = translatorInput.toString().trim()
+                if (query.isNotEmpty()) {
+                    scope.launch {
+                        val result = TranslationService.translate(query, "auto", translatorTarget)
+                        if (result != null) {
+                            currentInputConnection?.commitText(result + " ", 1)
+                        } else {
+                            Toast.makeText(this@ShadeService, R.string.translator_error, Toast.LENGTH_SHORT).show()
+                        }
+                        closeTranslator()
+                    }
+                } else closeTranslator()
+            }
+            Codes.SHIFT, Codes.SYMBOLS, Codes.SYMBOLS2, Codes.LETTERS -> { /* mode keys work normally */ }
+            else -> { text?.let { translatorInput.append(it) } }
+        }
+    }
+
     // ------------------------------------------------------------------ toolbar
 
     private fun onTool(id: String) {
@@ -1229,6 +1280,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             "clip" -> transitionToPanel(Panel.CLIP)
             "emoji" -> transitionToPanel(Panel.EMOJI)
             "gif" -> openGif()
+            "translate" -> openTranslator()
             "voice" -> {
                 if (!prefs.getBoolean("voice_input", true)) return
                 val v = voice
@@ -1939,7 +1991,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     /** Glide typing: live preview while the finger is still moving. */
     override fun onGlidePreview(word: String?) {
-        if (gifActive) return
+        if (gifActive || translatorActive) return
         if (word.isNullOrEmpty()) {
             // Clear the composing text
             if (composing.isNotEmpty()) {
@@ -1955,7 +2007,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onSwipePath(path: List<FloatArray>): Boolean {
-        if (gifActive) return false
+        if (gifActive || translatorActive) return false
         if (path.size < 4) return false
         val layout = kbKeyLayout() ?: return false
         suggestJob?.cancel()
@@ -1997,6 +2049,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 Codes.SHIFT, Codes.SYMBOLS, Codes.SYMBOLS2, Codes.LETTERS -> {}
                 else -> closeGif()
             }
+        }
+        if (translatorActive) {
+            onTranslatorKey(code, null)
+            return
         }
         when (code) {
             Codes.SHIFT -> onShift()
@@ -2134,6 +2190,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onText(text: String) {
         if (gifActive) {
             gifController.type(text)
+            if (shiftState == 1) { shiftState = 0; autoShifted = false; kb.shiftState = 0 }
+            return
+        }
+        if (translatorActive) {
+            onTranslatorKey(0, text)
             if (shiftState == 1) { shiftState = 0; autoShifted = false; kb.shiftState = 0 }
             return
         }

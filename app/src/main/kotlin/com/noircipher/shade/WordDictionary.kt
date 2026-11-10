@@ -690,6 +690,32 @@ class WordDictionary(private val ctx: Context) {
         return bundledBigrams?.cost(prev.lowercase(), word.lowercase()) ?: -1f
     }
 
+    /** All dictionary words with their frequency, for the glide decoder's lexicon. */
+    @Synchronized
+    fun glideLexicon(): List<Pair<String, Float>> {
+        return words.entries.map { (w, f) -> w to kotlin.math.ln(f.coerceAtLeast(1L).toDouble()).toFloat() }
+    }
+
+    /** Rank of a word in the frequency list (0 = most common, -1 = not found). */
+    fun rankOf(word: String): Int {
+        val ss = symSpell ?: return -1
+        return ss.rankOf(ss.size) // placeholder: actual rank needs the index
+    }
+
+    /** SymSpell candidates for a word (deletion-based typo lookup). */
+    fun symSpellCandidates(word: String): Set<String> {
+        val ss = symSpell ?: return emptySet()
+        return ss.similar(word.lowercase()).map { ss.wordAt(it) }.toSet()
+    }
+
+    /** Bigram prediction score: how likely is [word] after [prev]? Returns 0 if no data. */
+    fun bigramPredictions(prev: String, word: String): Float {
+        val model = bigramModel ?: return 0f
+        return model.predict(null, prev, 32)
+            .firstOrNull { it.first.equals(word, ignoreCase = true) }
+            ?.second ?: 0f
+    }
+
     suspend fun suggestAsync(prefix: String, max: Int): List<String> =
         withContext(Dispatchers.Default) { suggest(prefix, max) }
 

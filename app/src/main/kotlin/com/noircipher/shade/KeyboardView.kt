@@ -761,10 +761,10 @@ class KeyboardView(context: Context) : View(context) {
             c.drawCircle(x1, y1, dp(5f), fill)
         }
 
-        // Draw the gesture engine trail (glide typing) with fade + width taper
+        // Draw the gesture engine trail (glide typing) — smooth bezier with width taper + alpha fade
         val ge = gestureEngine
         if (ge != null) {
-            ge.setTrailColor(ColorUtils.setAlphaComponent(kbTheme.accent, 0x80))
+            ge.setTrailColor(kbTheme.accent)
             ge.drawTrail(c, trailPaint)
             // Schedule redraw for trail animation
             if (ge.hasTrail()) invalidate()
