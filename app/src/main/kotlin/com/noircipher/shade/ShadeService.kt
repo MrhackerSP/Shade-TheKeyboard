@@ -137,14 +137,15 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private lateinit var clips: ClipboardStore
     private lateinit var cm: ClipboardManager
     private lateinit var root: LinearLayout
-private lateinit var headroom: View
-private lateinit var gifController: GifController
-private var gifActive = false
     // Transparent, touch-through band above the keyboard. Long-press accent panels have two rows
     // and are taller than the suggestion strip, so on the top key row they need room above the
     // keyboard. The band is excluded from the insets (see onComputeInsets), so apps are not
     // resized for it and touches on it reach the app underneath.
     private lateinit var headroom: View
+    // GIF picker (KLIPY): a compact bar above the keyboard. While it is open, keystrokes edit its
+    // search query instead of the text field.
+    private lateinit var gifController: GifController
+    private var gifActive = false
     private lateinit var strip: LinearLayout
     private lateinit var toggle: TextView
     // floating drag handle above the keyboard. Dragging vertically
@@ -529,16 +530,6 @@ private var gifActive = false
         )
         gifController.bar.visibility = View.GONE
         root.addView(gifController.bar, 2, LinearLayout.LayoutParams(MATCH, WRAP))
-
-        headroom = View(this).apply { visibility = if (keyboardOffsetY == 0f) View.VISIBLE else View.GONE }
-        val windowRoot = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            clipChildren = false
-            addView(headroom, LinearLayout.LayoutParams(MATCH, dp(64f).toInt()))
-            addView(root, LinearLayout.LayoutParams(MATCH, WRAP))
-        }
-        kb.popupScrimAnchor = root
-        }
 
         // [root] (opaque keyboard background, side/nav-bar padding, float offset) is wrapped so a
         // transparent headroom band can sit above it for the accent panel.
@@ -1452,10 +1443,6 @@ private var gifActive = false
         if (this::root.isInitialized == false) return
         // Negative translationY moves the view UP, so we negate the offset.
         root.translationY = -keyboardOffsetY
-        if (this::headroom.isInitialized) {
-            val want = if (keyboardOffsetY == 0f) View.VISIBLE else View.GONE
-            if (headroom.visibility != want) headroom.visibility = want
-        }
         // A floating (offset) keyboard has no room-above semantics; drop the band so it can't
         // end up covering the keyboard's touchable area.
         if (this::headroom.isInitialized) {
@@ -3547,7 +3534,6 @@ private var gifActive = false
 
     companion object {
         private const val MAX_UNDO = 10
-        private const val ACCENT_HEADROOM_DP = 64f
         // Height of the transparent band above the keyboard that accent panels may extend into.
         private const val ACCENT_HEADROOM_DP = 64f
         private const val NEURAL_FAILURE_TTL_MS = 5L * 60L * 1000L
