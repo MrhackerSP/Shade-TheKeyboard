@@ -527,6 +527,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             addView(strip, LinearLayout.LayoutParams(MATCH, dp(52f).toInt()))
             addView(resizeHandle, LinearLayout.LayoutParams(MATCH, dp(22f).toInt()))
             addView(content, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
+        }
 
         gifController = GifController(
             context = this, scope = scope, prefs = prefs,

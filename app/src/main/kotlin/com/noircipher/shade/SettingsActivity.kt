@@ -153,7 +153,6 @@ class SettingsActivity : AppCompatActivity() {
         for (i in 0 until container.childCount) {
             val child = container.getChildAt(i)
             if (child is android.widget.TextView) {
-                val styleResId = child.getTag(android.R.id.tag1)
                 // Section labels have textAllCaps=true and text size 11sp
                 if (child.textSize <= 12f * resources.displayMetrics.scaledDensity && child.paint?.isFakeBoldText == true) {
                     child.visibility = View.GONE
