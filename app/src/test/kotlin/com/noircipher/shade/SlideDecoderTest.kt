@@ -86,6 +86,27 @@ class SlideDecoderTest {
         assertEquals("was", decode(pathFor("was")))
     }
 
+    @Test fun diagonalSwipeDoesNotCommitEveryCrossedKey() {
+        // A straight a->y swipe passes near s and t; those near-misses used to be
+        // registered as crossings and the whole soup was committed verbatim.
+        val decoded = decode(pathFor("ay"))
+        assertTrue("got '$decoded'", decoded != null && decoded.length <= 4)
+    }
+
+    @Test fun subsequenceFallbackFindsTheIntendedWord() {
+        // Finger crosses j and u between h and i; only "hi" is a dictionary word
+        // whose letters appear in order along the crossed keys.
+        val viaJU = pathFor("hjui")
+        assertEquals("hi", decode(viaJU, FakeDictionary(known = setOf("hi"))))
+    }
+
+    @Test fun subsequenceFallbackRecoversDogFromCrossedSoup() {
+        // d->o->g crosses f, u, i, h on the way; "dog" is a subsequence of that soup.
+        val dict = FakeDictionary(known = setOf("dog", "dig", "fig"))
+        val decoded = decode(pathFor("dog"), dict)
+        assertTrue("expected a real word, got '$decoded'", decoded in setOf("dog", "dig", "fig"))
+    }
+
     @Test fun suggestionsAreChosenByHowWellTheyFollowTheSwipe() {
         // Suggestions arrive in the "wrong" order; the swipe clearly went w -> a -> s.
         val dict = FakeDictionary(suggestions = listOf("wax", "was"))

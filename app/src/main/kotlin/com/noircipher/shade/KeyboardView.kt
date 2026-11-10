@@ -100,6 +100,8 @@ class KeyboardView(context: Context) : View(context) {
         }
 
     var trackpadEnabled = true
+    /** Glide (swipe) typing: when off, swipes behave like plain taps. */
+    var glideEnabled = true
     private var trackpadActive = false
     private var trackpadStartX = 0f
     private var trackpadStartY = 0f
@@ -1111,18 +1113,20 @@ class KeyboardView(context: Context) : View(context) {
             val offset = TouchGeometry.computeTouchOffset(k, x, y)
             if (offset != null) touchOffsets.add(offset)
 
-            slidePointerId = id
-            slidePath.clear()
-            slidePath.addLast(floatArrayOf(x, y))
+            if (glideEnabled) {
+                slidePointerId = id
+                slidePath.clear()
+                slidePath.addLast(floatArrayOf(x, y))
 
-            // Initialize gesture engine on first key down
-            val keyW = if (rows.isNotEmpty() && rows[0].isNotEmpty()) {
-                rows[0][0].right - rows[0][0].left
-            } else 100f
-            val ge0 = gestureEngine
-            if (ge0 == null) gestureEngine = GestureEngine(keyW) else ge0.setKeyWidth(keyW)
-            gestureStartTime = android.os.SystemClock.uptimeMillis()
-            gestureEngine?.onDown(x, y, 0)
+                // Initialize gesture engine on first key down
+                val keyW = if (rows.isNotEmpty() && rows[0].isNotEmpty()) {
+                    rows[0][0].right - rows[0][0].left
+                } else 100f
+                val ge0 = gestureEngine
+                if (ge0 == null) gestureEngine = GestureEngine(keyW) else ge0.setKeyWidth(keyW)
+                gestureStartTime = android.os.SystemClock.uptimeMillis()
+                gestureEngine?.onDown(x, y, 0)
+            }
         }
         feedback(k)
         onKeyBurst()
@@ -1335,7 +1339,7 @@ class KeyboardView(context: Context) : View(context) {
         for (point in path) {
             val x = point[0]
             val y = point[1]
-            var best: Char? = null
+            var best: Key? = null
             var bestDist = Float.MAX_VALUE
             for (row in rows) {
                 for (k in row) {
@@ -1347,16 +1351,29 @@ class KeyboardView(context: Context) : View(context) {
                     val dist = dx * dx + dy * dy
                     if (dist < bestDist) {
                         bestDist = dist
-                        best = k.label[0].lowercaseChar()
+                        best = k
                     }
                 }
             }
-            if (best != null && best != last) {
-                out.append(best)
-                last = best
+            // Same crossing gate as the decoder: preview must show crossed keys
+            // only, not every key the swipe happened to pass nearest to.
+            val k = best
+            if (k != null && bestDist <= slideKeyThreshold(k) * slideKeyThreshold(k)) {
+                val c = k.label[0].lowercaseChar()
+                if (c != last) {
+                    out.append(c)
+                    last = c
+                }
             }
         }
         return out.toString().ifEmpty { null }
+    }
+
+    /** Max distance from a key center that still counts as crossing the key (0.4 key sizes). */
+    private fun slideKeyThreshold(k: Key): Float {
+        val w = (k.right - k.left).coerceAtLeast(1f)
+        val h = (k.bottom - k.top).coerceAtLeast(1f)
+        return 0.4f * minOf(w, h)
     }
 
     private fun up(id: Int, cancel: Boolean) {
@@ -1377,9 +1394,10 @@ class KeyboardView(context: Context) : View(context) {
             val path = gestureEngine?.getPath() ?: slidePath.toList()
             slideConsumed = listener?.onSwipePath(path) == true
             if (slideConsumed) p.consumed = true
-            // Add trail points and clear preview
+            // Add trail points and clear the live preview — also when decoding
+            // failed, otherwise the raw preview letters linger as composing text.
             gestureEngine?.addTrail()
-            if (slideConsumed) listener?.onGlidePreview(null)
+            listener?.onGlidePreview(null)
         }
         if (id == slidePointerId) {
             slidePointerId = -1

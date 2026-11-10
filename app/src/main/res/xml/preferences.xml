@@ -94,6 +94,7 @@
             <SwitchPreferenceCompat android:defaultValue="false" android:key="typing_burst" android:title="@string/pref_typing_burst" android:summary="@string/pref_typing_burst_sum" app:iconSpaceReserved="false" />
         </PreferenceCategory>
         <PreferenceCategory android:title="@string/cat_gestures" app:iconSpaceReserved="false">
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="glide_typing" android:title="@string/pref_glide" android:summary="@string/pref_glide_sum" app:iconSpaceReserved="false" />
             <SwitchPreferenceCompat android:defaultValue="true" android:key="trackpad_mode" android:title="@string/pref_trackpad" android:summary="@string/pref_trackpad_sum" app:iconSpaceReserved="false" />
             <SeekBarPreference android:defaultValue="300" android:key="longpress_delay" android:max="700" android:title="@string/pref_longpress" app:iconSpaceReserved="false" app:min="200" app:showSeekBarValue="true" />
             <SeekBarPreference android:defaultValue="400" android:key="repeat_delay" android:max="800" android:title="@string/pref_repeat_delay" android:summary="@string/pref_repeat_delay_sum" app:iconSpaceReserved="false" app:min="200" app:showSeekBarValue="true" />

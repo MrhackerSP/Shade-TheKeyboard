@@ -11,15 +11,18 @@ import kotlin.math.PI
  * Gesture-based glide typing decoder.
  *
  * Takes a swipe path (list of x,y points) and decodes it into a word by:
- * 1. Detecting "key crossings" — points where the path is closest to a key center
+ * 1. Detecting "key crossings" — path points that pass within a fraction of a
+ *    key size of a key center (mere "nearest key" doesn't count: a diagonal
+ *    swipe would otherwise register every key it passes between)
  * 2. Building a raw letter sequence from those crossings
- * 3. Finding dictionary words that match the raw sequence (allowing skips)
+ * 3. Finding dictionary words that match the raw sequence (exact, doubled
+ *    letters, prefix suggestions, and in-order subsequence matches)
  * 4. Scoring candidates by spatial proximity to the actual path
  *
  * The decoder handles:
- * - Double letters (path stays near one key → two of that letter)
- * - Skipped letters (path passes near a key but doesn't stop)
- * - Inflection points (direction changes → letter boundaries)
+ * - Double letters (path loops on one key → two of that letter)
+ * - Crossed-but-unintended keys (deleted to recover the intended word)
+ * - U-turn words ("mom" revisits the first key)
  */
 /** The slice of the dictionary the decoder needs (lets tests use a tiny fake). */
 interface SlideDictionary {
@@ -67,28 +70,27 @@ class SlideDecoder(
     }
 
     /**
-     * Find points where the path is closest to a key center, or where
-     * the path changes direction (inflection points).
+     * Find points where the path actually passes over a key center.
+     *
+     * Only points within [CROSSING_THRESHOLD] of a key center count: on a diagonal
+     * swipe every intermediate point still has *some* nearest key, and registering
+     * those used to turn the raw sequence into the whole soup of crossed keys
+     * (a swipe from A to Y decoded as "asdrty…" and committed every crossed letter).
      */
     private fun findKeyCrossings(path: List<FloatArray>, layout: Map<Char, Key>): List<KeyHit> {
         val hits = ArrayList<KeyHit>()
         val keyList = layout.values.filter { it.label.length == 1 }
         if (keyList.isEmpty()) return hits
 
-        var i = 0
-        while (i < path.size) {
-            val point = path[i]
-            val x = point[0]
-            val y = point[1]
+        for (i in path.indices) {
+            val x = path[i][0]
+            val y = path[i][1]
 
-            // Find closest key to this point
             val nearest = nearestKey(x, y, keyList)
-            if (nearest != null) {
-                hits.add(KeyHit(nearest.label[0].lowercaseChar(), x, y, nearest.dist, i))
+            // Only count the crossing when the finger really passed over the key
+            if (nearest != null && nearest.dist <= keyThreshold(nearest.key)) {
+                hits.add(KeyHit(nearest.key.label[0].lowercaseChar(), x, y, nearest.dist, i))
             }
-
-            // Skip ahead — don't sample every point, just key transitions
-            i += if ((nearest?.dist ?: Float.MAX_VALUE) < 20f) 3 else 2
         }
 
         // Group consecutive hits on the same key into runs; keep the closest hit of each run
@@ -107,7 +109,7 @@ class SlideDecoder(
         }
     }
 
-    private class Nearest(val label: String, val dist: Float)
+    private class Nearest(val key: Key, val label: String, val dist: Float)
 
     private fun nearestKey(x: Float, y: Float, keyList: List<Key>): Nearest? {
         var best: Key? = null
@@ -116,7 +118,14 @@ class SlideDecoder(
             val d = hypot(x - (k.left + k.right) / 2f, y - (k.top + k.bottom) / 2f)
             if (d < bestDist) { bestDist = d; best = k }
         }
-        return best?.let { Nearest(it.label, bestDist) }
+        return best?.let { Nearest(it, it.label, bestDist) }
+    }
+
+    /** Max distance from a key center that still counts as "crossed this key". */
+    internal fun keyThreshold(k: Key): Float {
+        val w = (k.right - k.left).coerceAtLeast(1f)
+        val h = (k.bottom - k.top).coerceAtLeast(1f)
+        return CROSSING_THRESHOLD * minOf(w, h)
     }
 
     /**
@@ -181,28 +190,73 @@ class SlideDecoder(
         withOneDoubledLetter(lower).firstOrNull { dictionary.contains(it) }?.let { return it }
 
         // Get dictionary suggestions for the raw sequence
-        val candidates = dictionary.suggestAsync(lower, 12)
-        if (candidates.isEmpty()) return lower
+        val candidates = LinkedHashSet<String>()
+        candidates.addAll(dictionary.suggestAsync(lower, 12))
 
         // Also try prefix-based candidates
         if (lower.length >= 3) {
-            val prefixCands = dictionary.suggestAsync(lower.substring(0, minOf(3, lower.length)), 8)
-            // Merge and deduplicate
-            val merged = (candidates + prefixCands).distinctBy { it.lowercase() }
-            if (merged.size > 1) {
-                return rankBySpatialFit(merged, path, layout).firstOrNull()
-            }
+            candidates.addAll(dictionary.suggestAsync(lower.substring(0, minOf(3, lower.length)), 8))
         }
 
-        return rankBySpatialFit(candidates, path, layout).firstOrNull() ?: lower
+        // Prefix matching fails when the finger crossed unrelated keys on the way:
+        // also offer words whose letters appear in order along the crossed keys
+        // ("hjui" traced on the way to "hi", "dfguioihg" on the way to "dog").
+        candidates.addAll(subsequenceWords(lower))
+
+        if (candidates.isEmpty()) return lower
+
+        val merged = candidates.distinctBy { it.lowercase() }
+        if (merged.size > 1) {
+            // Spatial fit, plus a small penalty per skipped crossed key: when several
+            // words fit the path equally well ("hell" vs "hello" traced through all
+            // five keys), prefer the one that explains more of the swipe.
+            val rawLen = lower.length.coerceAtLeast(1)
+            return merged.sortedBy { rankingCost(it, path, layout, rawLen) }.firstOrNull()
+                ?: merged.first()
+        }
+
+        return merged.firstOrNull() ?: lower
+    }
+
+    /** Spatial cost adjusted by how many crossed keys the word leaves unexplained. */
+    private fun rankingCost(word: String, path: List<FloatArray>, layout: Map<Char, Key>, rawLength: Int): Float {
+        val skipped = (rawLength - word.length).coerceAtLeast(0)
+        return spatialCost(word, path, layout) + SKIP_PENALTY * skipped / rawLength
+    }
+
+    /**
+     * Dictionary words obtainable by deleting letters from [raw] without reordering.
+     * Tries longer matches first; bounded to [MAX_SUBSEQ_RAW] letters so the 2^n
+     * enumeration stays trivial (< 16k lookups) on a phone.
+     */
+    internal fun subsequenceWords(raw: String): List<String> {
+        val n = raw.length
+        if (n < 2 || n > MAX_SUBSEQ_RAW) return emptyList()
+        val letters = raw.lowercase().toCharArray()
+        val out = LinkedHashSet<String>()
+        // Bitmask over letter slots; require at least 2 letters per candidate.
+        val masks = 1 shl n
+        for (mask in 0 until masks) {
+            if (mask.countOneBits() < 2) continue
+            val sb = StringBuilder(mask.countOneBits())
+            for (i in 0 until n) {
+                if (mask and (1 shl i) != 0) sb.append(letters[i])
+            }
+            val w = sb.toString()
+            if (dictionary.contains(w)) {
+                out.add(w)
+                if (out.size >= MAX_SUBSEQ_CANDIDATES) break
+            }
+        }
+        return out.toList()
     }
 
     /**
      * Orders candidates by how well the swipe passes through their letters, best first.
      *
-     * The swipe has many more points than a word has letters, so the path is resampled to
-     * one point per letter (evenly along its length) before comparing. Comparing letter i
-     * with raw point i would only ever look at the start of the swipe.
+     * Each letter is matched against its closest path point with a monotonic pointer
+     * (see [spatialCost]), so candidates are compared on where the finger actually
+     * went, not on letter count or raw point order.
      */
     internal fun rankBySpatialFit(
         candidates: List<String>,
@@ -213,19 +267,35 @@ class SlideDecoder(
         return candidates.sortedBy { spatialCost(it, path, layout) }
     }
 
-    /** Mean squared distance, in key sizes, between each letter's key and its resampled path point. */
+    /**
+     * Mean squared distance, in key sizes, between each letter's key and the path.
+     *
+     * Each letter is matched against its closest path point with a monotonic pointer,
+     * so a loop drawn for a double letter doesn't distort the measurement the way
+     * arc-length resampling does, and a letter revisited later in the swipe (a
+     * U-turn word like "mom") can match its later visit.
+     */
     private fun spatialCost(word: String, path: List<FloatArray>, layout: Map<Char, Key>): Float {
-        if (word.isEmpty()) return Float.MAX_VALUE
-        val points = resample(path, word.length)
+        if (word.isEmpty() || path.isEmpty()) return Float.MAX_VALUE
+        var pointer = 0
         var total = 0f
         var counted = 0
-        for (i in word.indices) {
-            val key = layout[word[i].lowercaseChar()] ?: continue
+        for (ch in word) {
+            val key = layout[ch.lowercaseChar()] ?: continue
+            val cx = (key.left + key.right) / 2f
+            val cy = (key.top + key.bottom) / 2f
             val w = (key.right - key.left).coerceAtLeast(1f)
             val h = (key.bottom - key.top).coerceAtLeast(1f)
-            val dx = (points[i][0] - (key.left + key.right) / 2f) / w
-            val dy = (points[i][1] - (key.top + key.bottom) / 2f) / h
-            total += dx * dx + dy * dy
+            var bestJ = pointer
+            var bestCost = Float.MAX_VALUE
+            for (j in pointer until path.size) {
+                val dx = (path[j][0] - cx) / w
+                val dy = (path[j][1] - cy) / h
+                val cost = dx * dx + dy * dy
+                if (cost < bestCost) { bestCost = cost; bestJ = j }
+            }
+            pointer = bestJ
+            total += bestCost
             counted++
         }
         // Letters without a key (apostrophes etc.) are skipped; a word with none is a poor fit.
@@ -277,7 +347,7 @@ class SlideDecoder(
         for (point in path) {
             val x = point[0]
             val y = point[1]
-            var best: Char? = null
+            var best: Key? = null
             var bestDist = Float.MAX_VALUE
             for ((ch, key) in layout) {
                 if (!ch.isLetter()) continue
@@ -288,13 +358,18 @@ class SlideDecoder(
                 val dist = dx * dx + dy * dy
                 if (dist < bestDist) {
                     bestDist = dist
-                    best = ch
+                    best = key
                 }
             }
-            val c = best?.lowercaseChar()
-            if (c != null && c != last) {
-                out.append(c)
-                last = c
+            val key = best
+            // Same distance gate as findKeyCrossings: a point whose nearest key is
+            // still a full key-width away is travel, not a crossed letter.
+            if (key != null && bestDist <= keyThreshold(key) * keyThreshold(key)) {
+                val c = key.label[0].lowercaseChar()
+                if (c != last) {
+                    out.append(c)
+                    last = c
+                }
             }
         }
         return out.toString()
@@ -304,5 +379,12 @@ class SlideDecoder(
         /** Total turning (radians, ~258 degrees) that counts as a loop; a lone U-turn is only ~pi. */
         const val LOOP_MIN_TURNING = 4.5f
         const val MAX_DOUBLE_LETTER_WORD = 16
+        /** Fraction of key size within which a path point counts as crossing that key. */
+        const val CROSSING_THRESHOLD = 0.4f
+        /** Weight of the skipped-crossed-keys tie-break in [rankingCost]. */
+        const val SKIP_PENALTY = 0.3f
+        /** Raw sequences longer than this skip the subsequence-word search. */
+        const val MAX_SUBSEQ_RAW = 14
+        const val MAX_SUBSEQ_CANDIDATES = 64
     }
 }

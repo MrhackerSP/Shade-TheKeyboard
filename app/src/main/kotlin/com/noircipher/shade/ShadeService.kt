@@ -767,6 +767,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         incognito = prefs.getBoolean("incognito", false) || fieldNoPersonalizedLearning || fieldSecureInput
         layoutName = prefs.getString("layout", "qwerty") ?: "qwerty"
         kb.trackpadEnabled = prefs.getBoolean("trackpad_mode", true)
+        kb.glideEnabled = prefs.getBoolean("glide_typing", true)
         kb.typingBurstEnabled = prefs.getBoolean("typing_burst", false)
         kb.longPressMs = prefs.getInt("longpress_delay", 300).toLong()
         kb.repeatDelayMs = prefs.getInt("repeat_delay", 350).toLong()
@@ -1639,6 +1640,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 composing.clear()
                 currentInputConnection?.finishComposingText()
                 commitSlideWord(decoded)
+            } else {
+                // Decoding failed: drop the raw preview letters instead of
+                // leaving them behind as composing text.
+                if (composing.isNotEmpty()) {
+                    composing.clear()
+                    currentInputConnection?.finishComposingText()
+                }
             }
         }
         return true
