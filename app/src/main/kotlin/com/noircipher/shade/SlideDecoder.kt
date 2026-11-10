@@ -184,7 +184,7 @@ class SlideDecoder(
             if (len < minStep) continue
             arc += len
             if (hasPrev) {
-                turning += abs(atan2(prevDx * dy - prevDy * dx, prevDx * dx + prevDy * dx))
+                turning += abs(atan2(prevDx * dy - prevDy * dx, prevDx * dx + prevDy * dy))
             }
             prevDx = dx; prevDy = dy; hasPrev = true
             anchorX = path[i][0]; anchorY = path[i][1]

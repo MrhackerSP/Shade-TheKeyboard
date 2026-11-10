@@ -71,8 +71,8 @@ class GestureEngine(
     // Trail visual parameters
     private var trailStartWidth = 10f    // px at the finger (thick end)
     private var trailEndWidth = 1f      // px at the tail (thin end)
-    private var trailLingerDuration = 600L   // ms the trail stays visible after release
-    private var trailFadeDuration = 200L     // ms for the whole-trail fade-out after release
+    private var trailLingerDuration = 800L   // ms the trail stays visible after the last point before fading
+    private var trailFadeDuration = 800L     // ms for the whole-trail fade-out after release
     private val trailMaxPoints = 120        // cap memory; old points are dropped
 
     // Reusable buffers for smooth drawing
@@ -162,9 +162,14 @@ class GestureEngine(
     /** True while there are trail points still visible (used to stop endless redraws). */
     fun hasTrail(): Boolean {
         if (trailX.size < 2) return false
-        if (trailReleaseTime == 0L) return true  // still drawing
+        if (trailReleaseTime == 0L) {
+            // Still drawing: trail lingers for [trailLingerDuration] after the last point
+            // was added. After that it's gone (no more redraws).
+            val last = if (trailTimes.isEmpty()) 0L else trailTimes.last()
+            return clock() - last <= trailLingerDuration
+        }
         val elapsed = clock() - trailReleaseTime
-        return elapsed < trailFadeDuration
+        return elapsed <= trailFadeDuration
     }
 
     /**
