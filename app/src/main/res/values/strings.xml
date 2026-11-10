@@ -351,6 +351,22 @@
     <string name="emoji_recent">Recent</string>
     <string name="emoji_no_results">No matching emoji</string>
 
+    <!-- GIF picker (KLIPY) -->
+    <string name="gif_search_hint">Search KLIPY</string>
+    <string name="gif_powered_by">Powered by KLIPY</string>
+    <string name="gif_close">Close GIF picker</string>
+    <string name="gif_item">GIF</string>
+    <string name="gif_loading">Loading…</string>
+    <string name="gif_no_results">No GIFs found</string>
+    <string name="gif_error">Couldn’t load GIFs. Check your connection.</string>
+    <string name="gif_unavailable">GIF search isn’t available in this build.</string>
+    <string name="gif_consent_message">GIFs come from KLIPY. What you type here is sent to KLIPY to find GIFs; the text in your message never is.</string>
+    <string name="gif_consent_continue">Continue</string>
+    <string name="gif_blocked_secure">GIFs are disabled in password fields</string>
+    <string name="gif_pasted_link">This app doesn’t accept GIFs, so a link was inserted</string>
+    <string name="pref_gif">GIF search (KLIPY)</string>
+    <string name="pref_gif_sum">Show the GIF button in the toolbar. Searches are sent to KLIPY after you accept the notice.</string>
+
     <!-- Onboarding -->
     <string name="try_keyboard">Try the keyboard</string>
     <string name="set_as_default">Set as default</string>
