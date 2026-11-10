@@ -26,6 +26,9 @@ import java.util.ArrayDeque
 import kotlin.math.abs
 import kotlin.math.min
 
+/** Finger speed (dp per ms) above which a slide on delete selects word by word instead of character by character. */
+private const val DELETE_FAST_DP_PER_MS = 0.55f
+
 class KeyboardView(context: Context) : View(context) {
 
     interface Listener {
@@ -50,7 +53,14 @@ class KeyboardView(context: Context) : View(context) {
         fun onTrackpadEnter()
         fun onTrackpadExit()
         fun onDeleteWords(count: Int)
-        fun onDeletePreview(travelPx: Float): Int
+        /** A slide on the delete key has begun: remember the caret and start selecting backwards. */
+        fun onDeleteSlideStart()
+        /**
+         * Move the selection edge by [units] steps (positive = further left, negative = back
+         * towards the caret). A step is one word when [byWord] (fast slide) and one character
+         * otherwise (slow slide). Returns the number of characters now selected.
+         */
+        fun onDeleteSlideStep(units: Int, byWord: Boolean): Int
         fun onDeleteCommit()
         fun onDeleteCancel()
         fun onSwipePath(path: List<FloatArray>): Boolean = false
@@ -111,7 +121,11 @@ class KeyboardView(context: Context) : View(context) {
 
     private var deleteSlideActive = false
     private var deleteSlideStartX = 0f
-    private var deleteSlideWordCount = 0
+    private var deleteSlideWordCount = 0 // characters currently selected by the slide
+    private var deleteSlideLastX = 0f
+    private var deleteSlideLastT = 0L
+    private var deleteSlideAccum = 0f
+    private var deleteSlideSpeed = 0f // smoothed finger speed in dp per millisecond
 
     private var splitProgress = if (splitKeyboard) 1f else 0f
     private var splitAnimator: ValueAnimator? = null
@@ -346,6 +360,16 @@ class KeyboardView(context: Context) : View(context) {
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         layoutKeys()
+        // Edge to edge: with gesture navigation the system reserves a strip at each screen edge for
+        // "back". Claim those strips for the keyboard so the outermost keys (q/p, a/l, ...) can be
+        // pressed right up to the screen edge.
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val edge = dp(40f).toInt()
+            systemGestureExclusionRects = listOf(
+                android.graphics.Rect(0, 0, edge, h),
+                android.graphics.Rect(w - edge, 0, w, h)
+            )
+        }
     }
 
     private fun layoutKeys() {
@@ -483,13 +507,14 @@ class KeyboardView(context: Context) : View(context) {
         val radius = dp(7f)
         val outerRadius = dp(24f)
         val combinedAlpha = ((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255)
-        val pressDown = dp(0.7f) * pressProgress
+        val pressDown = dp(0.7f)
 
         for (row in rows) for (k in row) {
             if (k.kind == KeyKind.SPACER) continue
             if (k.right < clipL || k.left > clipR || k.bottom < clipT || k.top > clipB) continue
-            val isPressed = k in pressedKeys
-            val topShift = if (isPressed) pressDown else 0f
+            val pressAmt = k.pressAmt
+            val isPressed = pressAmt > 0.003f
+            val topShift = pressDown * pressAmt
             rect.set(
                 k.left + gx,
                 k.top + gy + topShift,
@@ -533,7 +558,7 @@ class KeyboardView(context: Context) : View(context) {
             }
             if (bmp != null && !isPressed) baseCol = ColorUtils.setAlphaComponent(baseCol, 0xCC)
             val col = if (isPressed) {
-                ColorUtils.blendARGB(baseCol, kbTheme.pressed, pressProgress)
+                ColorUtils.blendARGB(baseCol, kbTheme.pressed, pressAmt)
             } else {
                 baseCol
             }
@@ -933,9 +958,11 @@ class KeyboardView(context: Context) : View(context) {
         altCell = cell
         altTop = (k.top - dp(6f) - ph).coerceAtLeast(minTop)
         altShown = true
-        // Default selection sits in the middle of the strip — long-press + release without sliding
-        // lands on the “primary” variant, matching modern accent-strip behaviour.
-        altSel = (n / 2).coerceIn(0, n - 1)
+        // Long-press + release without sliding lands on the number printed on a top-row key
+        // (q -> 1, w -> 2 ...). Keys without a number hint default to the middle of the strip,
+        // the "primary" variant. Sliding still reaches every accent.
+        val numberIdx = chars.indexOfFirst { it.length == 1 && it[0].isDigit() }
+        altSel = if (numberIdx >= 0) numberIdx else (n / 2).coerceIn(0, n - 1)
 
         altAnimator?.cancel()
         if (useOverlay) {
@@ -1130,30 +1157,79 @@ class KeyboardView(context: Context) : View(context) {
         }
         feedback(k)
         onKeyBurst()
-        startPressAnimation()
+        touchKey(k)
         pressKey(p)
         invalidate(k)
     }
 
-    private fun startPressAnimation() {
-        pressAnimator?.cancel()
-        pressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = ShadeMotion.KEY_PRESS_DOWN_MS
-            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
-            addUpdateListener { pressProgress = it.animatedValue as Float; invalidate() }
-            start()
+    // ---- Per-key press feedback -------------------------------------------------------------
+    // Every key has its own pressAmt that eases towards 1 while held (fast) and back to 0 after
+    // release (slower), so a key fades out instead of snapping back, and two keys pressed in
+    // quick succession animate independently. Driven by Choreographer so it follows the display.
+    private val animKeys = ArrayList<Key>(8)
+    private var pressTickRunning = false
+    private var pressTickLastNanos = 0L
+
+    private val pressTick = object : android.view.Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            val dtMs = if (pressTickLastNanos == 0L) 16f
+            else ((frameTimeNanos - pressTickLastNanos) / 1_000_000f).coerceIn(1f, 50f)
+            pressTickLastNanos = frameTimeNanos
+            var moving = false
+            var i = animKeys.size - 1
+            while (i >= 0) {
+                val k = animKeys[i]
+                val target = if (isHeld(k)) 1f else 0f
+                val cur = k.pressAmt
+                if (cur != target) {
+                    k.pressAmt = if (target > cur) {
+                        minOf(1f, cur + dtMs / ShadeMotion.KEY_PRESS_DOWN_MS)
+                    } else {
+                        maxOf(0f, cur - dtMs / ShadeMotion.KEY_PRESS_UP_MS)
+                    }
+                    invalidate(k)
+                    if (k.pressAmt != target) moving = true
+                }
+                if (k.pressAmt == 0f && target == 0f) animKeys.removeAt(i)
+                i--
+            }
+            if (moving) {
+                android.view.Choreographer.getInstance().postFrameCallback(this)
+            } else {
+                pressTickRunning = false
+                pressTickLastNanos = 0L
+            }
         }
     }
 
-    private fun stopPressAnimation() {
-        pressAnimator?.cancel()
-        pressAnimator = ValueAnimator.ofFloat(pressProgress, 0f).apply {
-            duration = ShadeMotion.KEY_PRESS_UP_MS
-            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
-            addUpdateListener { pressProgress = it.animatedValue as Float; invalidate() }
-            start()
-        }
+    private fun isHeld(k: Key): Boolean {
+        for (i in 0 until pointers.size()) if (pointers.valueAt(i).key === k) return true
+        return false
     }
+
+    private fun touchKey(k: Key) {
+        if (!animKeys.contains(k)) animKeys.add(k)
+        kickPressTick()
+    }
+
+    private fun kickPressTick() {
+        if (pressTickRunning) return
+        pressTickRunning = true
+        pressTickLastNanos = 0L
+        android.view.Choreographer.getInstance().postFrameCallback(pressTick)
+    }
+
+    private fun cancelPressTick() {
+        android.view.Choreographer.getInstance().removeFrameCallback(pressTick)
+        pressTickRunning = false
+        pressTickLastNanos = 0L
+        for (k in animKeys) k.pressAmt = 0f
+        animKeys.clear()
+    }
+
+    private fun startPressAnimation() { kickPressTick() }
+
+    private fun stopPressAnimation() { kickPressTick() }
 
     private fun animateShiftTap() {
         shiftTapAnimator?.cancel()
@@ -1286,20 +1362,44 @@ class KeyboardView(context: Context) : View(context) {
         }
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             val dx = x - p.downX
-            if (!deleteSlideActive && dx < -dp(20f)) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (!deleteSlideActive && dx < -dp(16f)) {
                 deleteSlideActive = true
                 deleteSlideStartX = p.downX
                 deleteSlideWordCount = 0
+                deleteSlideLastX = x
+                deleteSlideLastT = now
+                deleteSlideAccum = 0f
+                deleteSlideSpeed = 0f
                 cancelLong(p)
                 hapticTick()
+                listener?.onDeleteSlideStart()
+                // The distance already travelled to cross the threshold counts as the first steps.
+                deleteSlideAccum = -dx - dp(16f)
+            } else if (deleteSlideActive) {
+                // Speed picks the unit: a slow drag selects character by character, a fast flick
+                // word by word. The speed is smoothed so one jittery sample can't flip the mode.
+                val moved = deleteSlideLastX - x // positive = moving left
+                val dt = (now - deleteSlideLastT).coerceAtLeast(1L)
+                val instant = abs(moved) / dp(1f) / dt
+                deleteSlideSpeed = deleteSlideSpeed * 0.6f + instant * 0.4f
+                deleteSlideLastX = x
+                deleteSlideLastT = now
+                deleteSlideAccum += moved
             }
             if (deleteSlideActive) {
-                val travel = (p.downX - x).coerceAtLeast(0f)
-                val words = listener?.onDeletePreview(travel) ?: 0
-                if (words != deleteSlideWordCount) {
-                    deleteSlideWordCount = words
-                    hapticTick()
-                    invalidate()
+                val fast = deleteSlideSpeed >= DELETE_FAST_DP_PER_MS
+                val stepPx = if (fast) dp(22f) else dp(9f)
+                var units = 0
+                while (deleteSlideAccum >= stepPx) { units++; deleteSlideAccum -= stepPx }
+                while (deleteSlideAccum <= -stepPx) { units--; deleteSlideAccum += stepPx }
+                if (units != 0) {
+                    val selected = listener?.onDeleteSlideStep(units, fast) ?: 0
+                    if (selected != deleteSlideWordCount) {
+                        deleteSlideWordCount = selected
+                        hapticTick()
+                        invalidate()
+                    }
                 }
             }
             return
@@ -1311,6 +1411,7 @@ class KeyboardView(context: Context) : View(context) {
             hidePreview()
             p.key = nk
             p.repeated = false
+            touchKey(nk)
             pressKey(p)
             invalidate(old)
             invalidate(nk)
@@ -1427,7 +1528,7 @@ class KeyboardView(context: Context) : View(context) {
         }
         if (k != null) invalidate(k)
         recyclePointer(p)
-        if (pointers.size() == 0) stopPressAnimation()
+        stopPressAnimation() // lets the released key fade out, even while another finger is down
     }
 
     private fun invalidate(k: Key) {
@@ -1562,7 +1663,7 @@ class KeyboardView(context: Context) : View(context) {
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        pressAnimator?.cancel()
+        cancelPressTick()
         layoutAnimator?.cancel()
         previewAnimator?.cancel()
         altAnimator?.cancel()
@@ -1592,7 +1693,7 @@ class KeyboardView(context: Context) : View(context) {
     fun release() {
         listener = null
         bgBitmap = null
-        pressAnimator?.cancel()
+        cancelPressTick()
         layoutAnimator?.cancel()
         previewAnimator?.cancel()
         altAnimator?.cancel()

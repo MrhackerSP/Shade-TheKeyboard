@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
     <!--
-        Defense in depth. Shade declares no INTERNET permission and makes
-        no network calls, but if a future dependency adds one, this config
-        blocks all cleartext traffic and pins no CAs (i.e., only HTTPS with
-        system-trusted CAs works).
+        Defense in depth. The only network use is the opt-in update check
+        (Updater.kt, GitHub releases). This config blocks all cleartext
+        traffic and pins no CAs (i.e., only HTTPS with system-trusted CAs works).
     -->
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>

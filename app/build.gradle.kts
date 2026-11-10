@@ -105,6 +105,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.appcompat:appcompat:1.8.0")
+    // Styling helpers for inline autofill chips (password / address suggestions in the strip).
+    implementation("androidx.autofill:autofill:1.1.0")
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.asynclayoutinflater:asynclayoutinflater:1.1.0")
     implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")

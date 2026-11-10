@@ -47,6 +47,7 @@
             <SwitchPreferenceCompat android:defaultValue="true" android:key="autocorrect" android:title="@string/pref_autocorrect" android:summary="@string/pref_autocorrect_sum" app:iconSpaceReserved="false" />
             <SwitchPreferenceCompat android:defaultValue="true" android:key="smart_correction" android:title="@string/pref_smart_correction" android:summary="@string/pref_smart_correction_sum" app:iconSpaceReserved="false" />
             <SwitchPreferenceCompat android:defaultValue="true" android:key="auto_caps" android:title="@string/pref_auto_caps" app:iconSpaceReserved="false" />
+            <SwitchPreferenceCompat android:defaultValue="true" android:key="autofill_chips" android:title="@string/pref_autofill_chips" android:summary="@string/pref_autofill_chips_sum" app:iconSpaceReserved="false" />
             <SwitchPreferenceCompat android:defaultValue="true" android:key="double_space" android:title="@string/pref_double_space" app:iconSpaceReserved="false" />
         </PreferenceCategory>
         <PreferenceCategory android:title="@string/cat_privacy" app:iconSpaceReserved="false">
@@ -115,7 +116,7 @@
     <PreferenceScreen android:key="screen_about" android:summary="@string/about_sum" android:title="@string/about_title" app:iconSpaceReserved="false">
         <Preference android:selectable="false" android:summary="@string/about_text" android:title="@string/about_title" app:iconSpaceReserved="false" />
         <SwitchPreferenceCompat
-            android:defaultValue="true"
+            android:defaultValue="false"
             android:key="auto_update_check"
             android:title="@string/pref_auto_update"
             android:summary="@string/pref_auto_update_sum"

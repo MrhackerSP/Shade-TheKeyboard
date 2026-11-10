@@ -32,6 +32,9 @@ class Key(
     val centerY: Float get() = (top + bottom) / 2f
 
     var invalidateRect: Rect? = null
+
+    /** 0 = resting, 1 = fully pressed. Animated per key so each key fades out on its own after release. */
+    var pressAmt = 0f
     var outerCorner: KeyOuterCorner = KeyOuterCorner.NONE
 
     fun updateInvalidateRect(pad: Int) {

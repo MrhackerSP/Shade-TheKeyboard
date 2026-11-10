@@ -80,7 +80,11 @@
     <string name="keyboard_docked">Keyboard docked to bottom</string>
     <string name="keyboard_size_reset">Keyboard size reset to default</string>
     <string name="keyboard_resized">Keyboard resized</string>
-    <string name="resize_handle_hint">Drag the handle to resize • Long-press to move. Tap a key to finish.</string>
+    <string name="resize_handle_hint">Drag the handles to resize. Tap Done to finish.</string>
+    <string name="resize_done">Done</string>
+    <string name="pref_autofill_chips">Autofill suggestions</string>
+    <string name="pref_autofill_chips_sum">Show saved passwords, addresses and cards from your autofill service above the keys (Android 11+)</string>
+    <string name="resize_reset">Reset</string>
     <string name="pref_bg_pick">Background image</string>
     <string name="pref_bg_sum">Choose a picture to show behind the keys</string>
     <string name="pref_bg_clear">Remove background image</string>
@@ -281,6 +285,7 @@
         <item>Undo</item>
         <item>Incognito</item>
         <item>One-handed</item>
+        <item>Resize keyboard</item>
         <item>Voice</item>
         <item>Settings</item>
     </string-array>
@@ -297,6 +302,7 @@
         <item>undo</item>
         <item>incognito</item>
         <item>onehand</item>
+        <item>resize</item>
         <item>voice</item>
         <item>settings</item>
     </string-array>

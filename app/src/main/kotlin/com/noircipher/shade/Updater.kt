@@ -7,6 +7,8 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import androidx.core.content.FileProvider
+import androidx.preference.PreferenceManager
+import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -18,7 +20,7 @@ object Updater {
 
     private const val TAG = "Updater"
     // Change this to your GitHub repo: "username/Shade-TheKeyboard"
-    private const val REPO = "MrhackerSP/Shade-TheKeyboard"
+    private const val REPO = "noircipher/shade"
     private const val PREF_AUTO = "auto_update_check"
 
     data class UpdateInfo(
@@ -26,7 +28,8 @@ object Updater {
         val notes: String,
         val apkUrl: String,
         val size: Long,
-        val page: String
+        val page: String,
+        val sha256: String = "" // lowercase hex from the release asset digest, "" if GitHub didn't provide one
     )
 
     @Volatile
@@ -51,15 +54,16 @@ object Updater {
 
     private var autoChecked = false
 
-    fun autoEnabled(context: Context): Boolean {
-        val prefs = context.getSharedPreferences("shade_prefs", Context.MODE_PRIVATE)
-        return prefs.getBoolean(PREF_AUTO, true)
-    }
+    // The Settings switch writes to the default preferences file; this used to read a different
+    // file ("shade_prefs"), so the toggle did nothing. Off by default: no network unless opted in.
+    fun autoEnabled(context: Context): Boolean =
+        PreferenceManager.getDefaultSharedPreferences(context).getBoolean(PREF_AUTO, false)
 
     fun setAuto(context: Context, on: Boolean) {
-        val prefs = context.getSharedPreferences("shade_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putBoolean(PREF_AUTO, on).apply()
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean(PREF_AUTO, on).apply()
     }
+
+    private class NoReleaseException : java.io.IOException("No release published")
 
     fun currentVersion(context: Context): String {
         return runCatching {
@@ -103,7 +107,7 @@ object Updater {
                 Log.i(TAG, "Update available: ${available!!.version}")
             }
         } catch (e: Exception) {
-            if (!quiet) error = "Could not check for updates"
+            if (!quiet) error = if (e is NoReleaseException) "No update has been published yet" else "Could not check for updates"
             Log.w(TAG, "Update check failed", e)
         } finally {
             checking = false
@@ -119,15 +123,15 @@ object Updater {
             setRequestProperty("User-Agent", "ShadeKeyboard")
         }
         val body = try {
-            if (conn.responseCode == 404) return null
+            if (conn.responseCode == 404) throw NoReleaseException()
             if (conn.responseCode !in 200..299) throw java.io.IOException("HTTP ${conn.responseCode}")
             conn.inputStream.bufferedReader().use { it.readText() }
         } finally {
             conn.disconnect()
         }
         val o = JSONObject(body)
-        val tag = o.optString("tag_name").ifEmpty { return null }
-        val assets = o.optJSONArray("assets") ?: return null
+        val tag = o.optString("tag_name").ifEmpty { throw NoReleaseException() }
+        val assets = o.optJSONArray("assets") ?: throw NoReleaseException()
         var best: JSONObject? = null
         for (i in 0 until assets.length()) {
             val a = assets.optJSONObject(i) ?: continue
@@ -136,13 +140,17 @@ object Updater {
             if (name.contains("debug", ignoreCase = true)) continue
             if (best == null || name.startsWith("Shade", ignoreCase = true)) best = a
         }
-        val apk = best ?: return null
+        val apk = best ?: throw NoReleaseException()
+        val apkUrl = apk.optString("browser_download_url")
+        // Only ever download over HTTPS from GitHub.
+        if (!apkUrl.startsWith("https://github.com/")) throw java.io.IOException("Unexpected download URL")
         return UpdateInfo(
             version = tag.removePrefix("v"),
             notes = o.optString("body").trim(),
-            apkUrl = apk.optString("browser_download_url"),
+            apkUrl = apkUrl,
             size = apk.optLong("size"),
-            page = o.optString("html_url")
+            page = o.optString("html_url"),
+            sha256 = apk.optString("digest").removePrefix("sha256:").lowercase().takeIf { it.length == 64 } ?: ""
         )
     }
 
@@ -166,7 +174,9 @@ object Updater {
         error = null
         progress = 0f
         try {
-            val file = withContext(Dispatchers.IO) { download(context, info) }
+            val file = withContext(Dispatchers.IO) {
+                download(context, info).also { verifyApk(context, it) }
+            }
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
             context.startActivity(
                 Intent(Intent.ACTION_VIEW)
@@ -186,6 +196,7 @@ object Updater {
         dir.listFiles()?.forEach { it.delete() }
         val out = File(dir, "Shade-${info.version}.apk")
         var url = URL(info.apkUrl)
+        val sha = MessageDigest.getInstance("SHA-256")
         var conn: HttpURLConnection
         var hops = 0
         // Follow GitHub redirects manually
@@ -201,6 +212,7 @@ object Updater {
                 val next = conn.getHeaderField("Location") ?: break
                 conn.disconnect()
                 url = URL(url, next)
+                if (url.protocol != "https") throw java.io.IOException("Refusing non-HTTPS redirect")
                 continue
             }
             break
@@ -216,6 +228,7 @@ object Updater {
                         val n = input.read(buf)
                         if (n < 0) break
                         output.write(buf, 0, n)
+                        sha.update(buf, 0, n)
                         done += n
                         if (total > 0) progress = (done.toFloat() / total).coerceIn(0f, 1f)
                     }
@@ -224,7 +237,41 @@ object Updater {
         } finally {
             conn.disconnect()
         }
-        if (info.size > 0 && out.length() != info.size) throw java.io.IOException("incomplete download")
+        if (info.size > 0 && out.length() != info.size) {
+            out.delete()
+            throw java.io.IOException("incomplete download")
+        }
+        if (info.sha256.isNotEmpty()) {
+            val actual = sha.digest().joinToString("") { "%02x".format(it) }
+            if (actual != info.sha256) {
+                out.delete()
+                throw java.io.IOException("checksum mismatch")
+            }
+        }
         return out
+    }
+
+    /**
+     * The downloaded file must be this very app (same package), newer, and signed with the same
+     * certificate as the installed copy. Android's installer enforces the signature too, but
+     * failing here avoids offering a file that can never install.
+     */
+    @Suppress("DEPRECATION")
+    private fun verifyApk(context: Context, file: File) {
+        val pm = context.packageManager
+        val flags = if (Build.VERSION.SDK_INT >= 28) android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+        else android.content.pm.PackageManager.GET_SIGNATURES
+        val archive = pm.getPackageArchiveInfo(file.path, flags)
+        if (archive == null || archive.packageName != context.packageName) {
+            file.delete(); throw java.io.IOException("not a Shade APK")
+        }
+        val installed = pm.getPackageInfo(context.packageName, flags)
+        fun sigs(p: android.content.pm.PackageInfo): Set<android.content.pm.Signature> =
+            if (Build.VERSION.SDK_INT >= 28) p.signingInfo?.apkContentsSigners?.toSet().orEmpty()
+            else p.signatures?.toSet().orEmpty()
+        val a = sigs(archive)
+        if (a.isEmpty() || a != sigs(installed)) {
+            file.delete(); throw java.io.IOException("signature mismatch")
+        }
     }
 }

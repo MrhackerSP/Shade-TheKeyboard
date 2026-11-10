@@ -1,86 +1,83 @@
 package com.noircipher.shade.engine
 
 /**
- * #22 — Confusable pairs.
+ * #22 — Confusable pairs: there/their/they're, your/you're, its/it's, to/too, then/than, ...
  *
- * Catches classic English homophone confusions: there/their/they're,
- * your/you're, its/it's, to/too/two, then/than, affect/effect, etc.
+ * Two kinds of rule, because a homophone is decided by different neighbours:
  *
- * The decision to "correct" depends on the preceding word (context-sensitive).
- * Returns the corrected word, or null when no correction applies.
+ *  - [prevRules]  look at the word BEFORE the typed one ("more then" -> "more than"). The typed
+ *    word is the one being corrected, so these can surface as a suggestion while typing it.
+ *  - [nextRules]  look at the word AFTER ("your welcome" -> "you're welcome", "to late" ->
+ *    "too late"). The following word doesn't exist yet when the confusable word is typed, so these
+ *    are applied one word later through [correctPrevious], which rewrites the previous word.
+ *
+ * Earlier all rules were treated as previous-word rules, which meant "your/its/to/whose/..." rules
+ * never fired where intended and some surfaced wrong suggestions ("want to" -> "too"). Rules that
+ * are ambiguous in common legitimate sentences (were/we're, are/our + nouns, "they're friends")
+ * were dropped rather than guessed.
  */
 object ConfusablePairs {
 
-    private data class Rule(
+    private data class PrevRule(
         val typed: String,
         val correction: String,
-        /** Optional context-gate: only correct when previous word matches one of these. */
-        val contextTrigger: Set<String> = emptySet(),
-        /** Avoid correcting when previous word is one of these. */
-        val contextBlock: Set<String> = emptySet()
+        /** Correct only when the previous word is one of these. */
+        val after: Set<String>
     )
 
-    private val rules: List<Rule> = listOf(
-        // there / their / they're
-        Rule("their", "there", contextTrigger = setOf("over", "is", "are", "be", "been", "go", "went", "here", "right", "anywhere", "nowhere", "somewhere", "everywhere")),
-        Rule("there", "their", contextTrigger = setOf("with", "and", "to", "for", "from", "by", "of", "about", "family", "house", "car", "dog", "cat", "names", "kids", "children", "parents", "friends")),
-        Rule("they're", "their", contextTrigger = setOf("with", "and", "to", "for", "from", "by", "of", "about")),
-        Rule("they're", "there", contextTrigger = setOf("over", "is", "are", "go", "be", "here", "right", "anywhere")),
-
-        // your / you're
-        Rule("your", "you're", contextTrigger = setOf("going", "welcome", "right", "the", "best", "here", "there", "invited", "awesome", "amazing", "great", "ready", "doing", "so")),
-        Rule("youre", "you're"),
-
-        // its / it's
-        Rule("its", "it's", contextTrigger = setOf("going", "been", "not", "so", "a", "the", "going", "ok", "okay", "true", "been", "getting", "looking", "nice", "fine", "great", "awesome", "ready")),
-
-        // to / too / two
-        Rule("to", "too", contextTrigger = setOf("want", "wanted", "needs", "need", "got", "have", "had", "late", "early", "good", "bad", "tired", "much", "many", "few", "easy", "hard", "expensive", "cheap")),
-
-        // then / than
-        Rule("then", "than", contextTrigger = setOf("more", "less", "better", "worse", "bigger", "smaller", "older", "younger", "faster", "slower", "rather", "other")),
-
-        // affect / effect
-        Rule("affect", "effect", contextTrigger = setOf("the", "a", "an", "no", "any", "some", "this", "that", "negative", "positive", "side", "good", "bad", "overall", "long-term", "short-term", "lasting")),
-        Rule("effect", "affect", contextTrigger = setOf("will", "would", "can", "could", "may", "might", "to", "going", "going to", "did", "didn't", "doesn't", "don't")),
-
-        // accept / except
-        Rule("accept", "except", contextTrigger = setOf("all", "everyone", "everybody", "nobody", "no-one", "the", "that", "this")),
-        Rule("except", "accept", contextTrigger = setOf("to", "won't", "won't", "didn't", "couldn't", "can't", "refused", "declined")),
-
-        // principle / principal
-        Rule("principle", "principal", contextTrigger = setOf("the", "school", "company", "investor", "investors", "loan")),
-
-        // whose / who's
-        Rule("whose", "who's", contextTrigger = setOf("going", "coming", "here", "there", "calling", "talking", "speaking")),
-        Rule("who's", "whose", contextTrigger = setOf("car", "house", "dog", "cat", "phone", "idea", "turn", "responsibility", "fault", "decision")),
-
-        // were / where / we're
-        Rule("were", "we're", contextTrigger = setOf("going", "coming", "here", "there", "going to", "about to", "trying")),
-        Rule("were", "where", contextTrigger = setOf("the", "a", "place", "location", "house", "school", "work", "home", "exactly")),
-        Rule("where", "were", contextTrigger = setOf("we", "they", "you", "kids", "children", "parents", "guys")),
-
-        // through / threw / thorough
-        Rule("threw", "through", contextTrigger = setOf("go", "going", "went", "come", "pass", "walk", "run", "look")),
-
-        // are / our
-        Rule("are", "our", contextTrigger = setOf("friends", "kids", "parents", "family", "team", "house", "car", "meeting", "schedule", "plans", "trip", "vacation")),
-        Rule("our", "are", contextTrigger = setOf("going", "coming", "here", "there", "ready", "ok", "okay", "fine", "good")),
-
-        // weather / whether
-        Rule("weather", "whether", contextTrigger = setOf("to", "or", "not", "depends", "decide", "decided", "know", "wonder", "depends", "on")),
-
-        // lose / loose
-        Rule("loose", "lose", contextTrigger = setOf("will", "won't", "didn't", "don't", "can't", "couldn't", "might", "may", "going", "to")),
-
-        // advice / advise
-        Rule("advice", "advise", contextTrigger = setOf("to", "i", "we", "they", "you", "should", "would", "can", "could")),
-
-        // then / than reverse
-        Rule("than", "then", contextTrigger = setOf("and", "so", "but", "we", "i", "you", "they", "first", "next", "after", "before", "now", "later"))
+    private data class NextRule(
+        val typed: String,
+        val correction: String,
+        /** Correct only when the word that follows is one of these. */
+        val before: Set<String>,
+        /** Skip when the word before the typed one is one of these (legitimate phrasings). */
+        val unlessPrev: Set<String> = emptySet(),
+        /** If non-empty, correct only when the word before the typed one is one of these. */
+        val requirePrev: Set<String> = emptySet()
     )
 
-    private val confusableWords: Set<String> = rules.map { it.typed }.toSet()
+    private fun s(vararg w: String) = w.toSet()
+
+    private val thereNegations = s(
+        "is", "are", "was", "were", "be", "been", "any", "no", "if", "whether", "there", "when",
+        "where", "why", "how", "what", "isn't", "aren't", "wasn't", "weren't", "to", "will",
+        "would", "can", "could", "might", "may", "should", "has", "have", "had", "do", "does", "did"
+    )
+
+    private val prevRules: List<PrevRule> = listOf(
+        PrevRule("their", "there", s("over", "go", "went", "going", "anywhere", "nowhere", "somewhere", "everywhere", "right")),
+        PrevRule("they're", "their", s("with", "from", "by", "of", "about", "for", "to")),
+        PrevRule("they're", "there", s("over", "go", "went", "going", "anywhere", "nowhere", "somewhere", "everywhere")),
+        PrevRule("then", "than", s("more", "less", "better", "worse", "bigger", "smaller", "older", "younger", "faster", "slower", "greater", "higher", "lower", "larger", "rather", "other")),
+        PrevRule("than", "then", s("and", "so", "but", "we", "i", "you", "they", "first")),
+        PrevRule("affect", "effect", s("the", "a", "an", "no", "any", "some", "this", "that", "negative", "positive", "side", "good", "bad", "overall", "lasting")),
+        PrevRule("effect", "affect", s("will", "would", "can", "could", "may", "might", "did", "didn't", "doesn't", "don't")),
+        PrevRule("accept", "except", s("all", "everyone", "everybody", "nobody")),
+        PrevRule("except", "accept", s("to", "won't", "didn't", "couldn't", "can't", "refused", "declined")),
+        PrevRule("principle", "principal", s("school", "vice", "deputy", "assistant", "loan")),
+        PrevRule("where", "were", s("we", "they", "you")),
+        PrevRule("threw", "through", s("go", "going", "went", "come", "pass", "walk", "run", "look")),
+        PrevRule("weather", "whether", s("decide", "decided", "deciding", "wonder", "wondering", "unsure", "know")),
+        PrevRule("loose", "lose", s("will", "won't", "didn't", "don't", "can't", "couldn't", "might", "may", "going", "to")),
+        PrevRule("advice", "advise", s("to", "i", "we", "they", "you", "should", "would", "can", "could"))
+    )
+
+    private val nextRules: List<NextRule> = listOf(
+        NextRule("your", "you're", s("welcome", "going", "gonna", "doing", "being", "coming", "not", "very", "really", "so", "a", "an", "the")),
+        NextRule("its", "it's", s("a", "the", "not", "been", "going", "getting", "looking", "ok", "okay", "true", "nice", "fine", "great", "awesome", "ready", "so", "very", "really", "just")),
+        NextRule("their", "there", s("is", "are", "was", "were", "isn't", "aren't", "nothing", "something", "no", "anything")),
+        NextRule("their", "they're", s("going", "gonna", "not", "always", "being", "coming", "doing")),
+        NextRule("there", "their", s("own", "car", "house", "kids", "children", "names", "name", "phone", "dog", "cat", "friends", "parents", "family", "mom", "dad"), unlessPrev = thereNegations),
+        NextRule("they're", "their", s("own", "car", "house", "dog", "cat", "phone", "names", "name")),
+        NextRule("to", "too", s("late", "early", "much", "many", "few", "soon", "expensive", "cheap", "tired"), unlessPrev = s("up", "back")),
+        NextRule("whose", "who's", s("going", "coming", "calling", "talking", "speaking", "there", "here", "next", "that", "ready", "been", "gonna")),
+        NextRule("who's", "whose", s("car", "house", "dog", "cat", "phone", "idea", "turn", "fault", "responsibility", "decision", "book", "bag", "name", "side")),
+        NextRule("our", "are", s("going", "coming", "ready", "ok", "okay", "gonna", "not"), requirePrev = s("we", "you", "they", "who", "what", "where", "how", "why")),
+        NextRule("weather", "whether", s("or"))
+    )
+
+    private val confusableWords: Set<String> =
+        (prevRules.map { it.typed } + nextRules.map { it.typed }).toSet()
 
     fun isConfusable(typed: String): Boolean {
         if (typed.isEmpty()) return false
@@ -88,29 +85,39 @@ object ConfusablePairs {
     }
 
     /**
-     * @param typed the user's word
-     * @param prevWord the previous word in the sentence (or null at start)
-     * @return corrected word, or null when no rule applies.
+     * Previous-word rules: [typed] is the word being typed, [prevWord] the one before it.
+     * Returns the corrected word, or null when no rule applies.
      */
     fun correct(typed: String, prevWord: String?): String? {
         if (typed.isEmpty()) return null
+        val prev = prevWord?.trim()?.lowercase() ?: return null
         val lower = typed.lowercase()
-        val prev = prevWord?.trim()?.lowercase()
-        for (rule in rules) {
-            if (rule.typed != lower) continue
-            if (prev != null) {
-                if (rule.contextBlock.contains(prev)) continue
-                if (rule.contextTrigger.isNotEmpty() && !rule.contextTrigger.contains(prev)) continue
-            } else {
-                // No context — only apply rules that don't require context.
-                if (rule.contextTrigger.isNotEmpty()) continue
-            }
-            return preserveCase(typed, rule.correction)
+        for (rule in prevRules) {
+            if (rule.typed == lower && prev in rule.after) return matchCase(typed, rule.correction)
         }
         return null
     }
 
-    private fun preserveCase(typed: String, replacement: String): String {
+    /**
+     * Next-word rules: [prev] (lower-case) is the word that was just left behind, [next] the word
+     * that has just been completed after it, [beforePrev] the word before [prev] (or null).
+     * Returns the replacement for [prev] in lower case, or null when no rule applies.
+     */
+    fun correctPrevious(prev: String, next: String, beforePrev: String?): String? {
+        val p = prev.lowercase()
+        val n = next.lowercase()
+        val bp = beforePrev?.lowercase()
+        for (rule in nextRules) {
+            if (rule.typed != p || n !in rule.before) continue
+            if (bp != null && bp in rule.unlessPrev) continue
+            if (rule.requirePrev.isNotEmpty() && (bp == null || bp !in rule.requirePrev)) continue
+            return rule.correction
+        }
+        return null
+    }
+
+    fun matchCase(typed: String, replacement: String): String {
+        if (typed.isEmpty()) return replacement
         return when {
             typed.length > 1 && typed.all { it.isUpperCase() } -> replacement.uppercase()
             typed[0].isUpperCase() -> replacement.replaceFirstChar { it.uppercase() }

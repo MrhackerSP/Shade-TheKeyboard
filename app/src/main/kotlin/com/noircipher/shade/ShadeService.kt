@@ -16,6 +16,7 @@ import android.graphics.drawable.GradientDrawable
 import android.widget.ImageView
 import android.inputmethodservice.InputMethodService
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -113,7 +114,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         "clip" to "📋", "emoji" to "😀", "numpad" to "123", "left" to "◀", "right" to "▶",
         "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste",
         "undo" to "Undo", "incognito" to "🕶", "onehand" to "1-hand",
-        "voice" to "🎤", "settings" to "⚙"
+        "resize" to "Resize", "voice" to "🎤", "settings" to "⚙"
     )
     private val toolIcons = mapOf(
         "clip" to R.drawable.ic_tb_clip, "emoji" to R.drawable.ic_tb_emoji,
@@ -122,7 +123,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         "copy" to R.drawable.ic_tb_copy, "cut" to R.drawable.ic_tb_cut,
         "paste" to R.drawable.ic_tb_paste, "undo" to R.drawable.ic_tb_undo,
         "incognito" to R.drawable.ic_tb_incognito, "onehand" to R.drawable.ic_tb_onehand,
-        "voice" to R.drawable.ic_tb_mic, "settings" to R.drawable.ic_tb_settings
+        "resize" to R.drawable.ic_tb_resize, "voice" to R.drawable.ic_tb_mic, "settings" to R.drawable.ic_tb_settings
     )
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -138,6 +139,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // resizes the keyboard (adjusts key_height live). Long-pressing then
     // dragging moves the keyboard up from the bottom (floating offset).
     private lateinit var resizeHandle: View
+    private lateinit var resizeOverlay: FrameLayout
+    private lateinit var autofillScroll: HorizontalScrollView
+    private lateinit var autofillRow: LinearLayout
+    private var autofillCount = 0
+    private var autofillGen = 0
+    private var autofillHiddenByTyping = false
     private lateinit var slotFrame: FrameLayout
     private lateinit var slotRow: LinearLayout
     private lateinit var slotOldRow: LinearLayout
@@ -417,9 +424,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             isHorizontalScrollBarEnabled = false
             addView(toolRow, FrameLayout.LayoutParams(WRAP, MATCH))
         }
+        // Autofill chips (saved passwords, addresses, cards) sit on top of the suggestion strip,
+        // until the user starts typing.
+        autofillRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(6f).toInt(), 0, dp(6f).toInt(), 0)
+        }
+        autofillScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            visibility = View.GONE
+            addView(autofillRow, FrameLayout.LayoutParams(WRAP, MATCH))
+        }
         val frame = FrameLayout(this).apply {
             addView(slotFrame, FrameLayout.LayoutParams(MATCH, MATCH))
             addView(toolScroll, FrameLayout.LayoutParams(MATCH, MATCH))
+            addView(autofillScroll, FrameLayout.LayoutParams(MATCH, MATCH))
         }
         strip = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -448,10 +468,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         emoji.visibility = View.GONE
         clipPanel.visibility = View.GONE
 
+        resizeOverlay = buildResizeOverlay()
         val content = FrameLayout(this).apply {
             addView(kb, FrameLayout.LayoutParams(MATCH, MATCH))
             addView(emoji, FrameLayout.LayoutParams(MATCH, MATCH))
             addView(clipPanel, FrameLayout.LayoutParams(MATCH, MATCH))
+            addView(resizeOverlay, FrameLayout.LayoutParams(MATCH, MATCH))
         }
 
         // Resize/float handle — hidden by default (standard behavior).
@@ -485,13 +507,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(strip, LinearLayout.LayoutParams(MATCH, dp(52f).toInt()))
-            addView(resizeHandle, LinearLayout.LayoutParams(MATCH, dp(14f).toInt()))
+            addView(resizeHandle, LinearLayout.LayoutParams(MATCH, dp(22f).toInt()))
             addView(content, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
         }
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val b = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
-            v.setPadding(0, 0, 0, b)
+            navBarBottomPx = b
+            v.setPadding(kbInsetLeftPx, 0, kbInsetRightPx, b)
             insets
         }
         registerInsetAnimationCallback()
@@ -655,6 +678,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
+        clearAutofillChips()
         try { voice?.cancel() } catch (_: Exception) {} // a late result must not land in the next field
         suggestJob?.cancel()
         suggestDebounceJob?.cancel()
@@ -834,6 +858,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // the keyboard). Called after layout so translationY is applied to
         // the final measured view.
         keyboardOffsetY = PrefsMigration.readOffsetY(prefs)
+        loadSideInsets()
         root.post { applyKeyboardOffset() }
 
         applyMode(mode, force = true)
@@ -1113,6 +1138,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 rebuildToolbar()
             }
             "onehand" -> cycleOneHanded()
+            "resize" -> setResizeMode(true)
             "settings" -> startActivity(
                 Intent(this, SettingsActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -1120,6 +1146,72 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
         updateShiftFromCaps()
         updateSuggestions()
+    }
+
+    // ------------------------------------------------------------------ autofill chips
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
+    override fun onCreateInlineSuggestionsRequest(uiExtras: Bundle): android.view.inputmethod.InlineSuggestionsRequest? {
+        if (!prefs.getBoolean("autofill_chips", true)) return null
+        val style = androidx.autofill.inline.v1.InlineSuggestionUi.newStyleBuilder().build()
+        val styles = androidx.autofill.inline.UiVersions.newStylesBuilder().addStyle(style).build()
+        val spec = android.widget.inline.InlinePresentationSpec.Builder(
+            android.util.Size(dp(100f).toInt(), dp(40f).toInt()),
+            android.util.Size(dp(320f).toInt(), dp(48f).toInt())
+        ).setStyle(styles).build()
+        return android.view.inputmethod.InlineSuggestionsRequest.Builder(listOf(spec))
+            .setMaxSuggestionCount(6)
+            .build()
+    }
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
+    override fun onInlineSuggestionsResponse(response: android.view.inputmethod.InlineSuggestionsResponse): Boolean {
+        if (this::autofillRow.isInitialized == false) return false
+        val suggestions = response.inlineSuggestions
+        val gen = ++autofillGen
+        autofillRow.removeAllViews()
+        autofillCount = 0
+        if (suggestions.isEmpty()) {
+            updateAutofillStrip()
+            return false
+        }
+        autofillHiddenByTyping = false
+        val executor = androidx.core.content.ContextCompat.getMainExecutor(this)
+        val views = arrayOfNulls<View>(suggestions.size)
+        var pending = suggestions.size
+        suggestions.forEachIndexed { i, suggestion ->
+            suggestion.inflate(this, android.util.Size(WRAP, WRAP), executor) { v ->
+                if (gen != autofillGen) return@inflate // a newer response replaced this one
+                views[i] = v
+                pending--
+                if (pending == 0) {
+                    for (view in views) {
+                        if (view == null) continue
+                        autofillRow.addView(view, LinearLayout.LayoutParams(WRAP, MATCH).apply {
+                            marginEnd = dp(6f).toInt()
+                        })
+                        autofillCount++
+                    }
+                    updateAutofillStrip()
+                }
+            }
+        }
+        return true
+    }
+
+    private fun updateAutofillStrip() {
+        if (this::autofillScroll.isInitialized == false) return
+        val show = autofillCount > 0 && !autofillHiddenByTyping
+        if (show) autofillScroll.setBackgroundColor(kbTheme.bg)
+        autofillScroll.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    private fun clearAutofillChips() {
+        autofillGen++
+        autofillCount = 0
+        autofillHiddenByTyping = false
+        if (this::autofillRow.isInitialized) autofillRow.removeAllViews()
+        updateAutofillStrip()
     }
 
     private fun cycleOneHanded() {
@@ -1220,11 +1312,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     // resize handle auto-hides. The keyboard stays at the new
                     // size; the handle only reappears if the user re-enters
                     // resize mode from settings.
-                    if (resizeModeActive) {
-                        resizeModeActive = false
-                        resizeHandle.visibility = View.GONE
-                        Toast.makeText(this@ShadeService, R.string.keyboard_resized, Toast.LENGTH_SHORT).show()
-                    }
+                    // The handles stay up until the user taps Done, so the size can be fine-tuned
+                    // in several drags (width handles on the sides, height handle on top).
                     return true
                 }
             }
@@ -1275,6 +1364,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (this::resizeHandle.isInitialized == false) return
         resizeModeActive = active
         resizeHandle.visibility = if (active) View.VISIBLE else View.GONE
+        if (this::resizeOverlay.isInitialized) resizeOverlay.visibility = if (active) View.VISIBLE else View.GONE
         if (active) {
             // Show a toast hint so the user knows what to do
             Toast.makeText(this, R.string.resize_handle_hint, Toast.LENGTH_SHORT).show()
@@ -1293,6 +1383,121 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
     private var resizeModeActive = false
+
+    // Side margins set with the left/right resize handles (they narrow the whole keyboard).
+    private var kbInsetLeftPx = 0
+    private var kbInsetRightPx = 0
+    private var navBarBottomPx = 0
+
+    private fun applySideInsets() {
+        if (this::root.isInitialized == false) return
+        root.setPadding(kbInsetLeftPx, 0, kbInsetRightPx, navBarBottomPx)
+    }
+
+    private fun loadSideInsets() {
+        kbInsetLeftPx = dp(prefs.getInt("kb_inset_left", 0).toFloat()).toInt()
+        kbInsetRightPx = dp(prefs.getInt("kb_inset_right", 0).toFloat()).toInt()
+        applySideInsets()
+    }
+
+    /** Left/right edge handle: drag towards the middle to narrow the keyboard from that side. */
+    private inner class SideHandleTouchListener(private val left: Boolean) : View.OnTouchListener {
+        private var downX = 0f
+        private var startInset = 0
+        override fun onTouch(v: View, event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    startInset = if (left) kbInsetLeftPx else kbInsetRightPx
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downX
+                    // Keep at least 60% of the screen width for the keys.
+                    val maxTotal = (resources.displayMetrics.widthPixels * 0.4f).toInt()
+                    val other = if (left) kbInsetRightPx else kbInsetLeftPx
+                    val wanted = (startInset + (if (left) dx else -dx)).toInt()
+                    val clamped = wanted.coerceIn(0, (maxTotal - other).coerceAtLeast(0))
+                    if (left) kbInsetLeftPx = clamped else kbInsetRightPx = clamped
+                    applySideInsets()
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    prefs.edit()
+                        .putInt("kb_inset_left", (kbInsetLeftPx / dp(1f)).toInt())
+                        .putInt("kb_inset_right", (kbInsetRightPx / dp(1f)).toInt())
+                        .apply()
+                    v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    private fun resetKeyboardSize() {
+        prefs.edit()
+            .putInt("key_height", 50)
+            .putInt("kb_inset_left", 0)
+            .putInt("kb_inset_right", 0)
+            .apply()
+        kbInsetLeftPx = 0
+        kbInsetRightPx = 0
+        applySideInsets()
+        applyKeyHeight()
+        keyboardOffsetY = 0f
+        PrefsMigration.writeOffsetY(prefs, 0f)
+        applyKeyboardOffset()
+    }
+
+    private fun buildResizeOverlay(): FrameLayout {
+        fun pill(w: Float, h: Float) = View(this).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(8f)
+                setColor(kbTheme.accent)
+            }
+            layoutParams = FrameLayout.LayoutParams(dp(w).toInt(), dp(h).toInt())
+        }
+        fun button(textRes: Int, primary: Boolean, onClick: () -> Unit) = TextView(this).apply {
+            setText(textRes)
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(if (primary) kbTheme.accentText else kbTheme.text)
+            background = GradientDrawable().apply {
+                cornerRadius = dp(20f)
+                setColor(if (primary) kbTheme.accent else kbTheme.keyFn)
+            }
+            setPadding(dp(22f).toInt(), dp(10f).toInt(), dp(22f).toInt(), dp(10f).toInt())
+            setOnClickListener { onClick() }
+        }
+        return FrameLayout(this).apply {
+            setBackgroundColor(0x33000000)
+            isClickable = true // swallow touches: no typing while resizing
+            visibility = View.GONE
+            // Edge handles: a wide invisible touch area around a visible pill.
+            for (isLeft in listOf(true, false)) {
+                val touch = FrameLayout(context).apply {
+                    setOnTouchListener(SideHandleTouchListener(isLeft))
+                    addView(pill(6f, 72f).also {
+                        (it.layoutParams as FrameLayout.LayoutParams).gravity = Gravity.CENTER
+                    })
+                }
+                addView(touch, FrameLayout.LayoutParams(dp(36f).toInt(), MATCH).apply {
+                    gravity = if (isLeft) Gravity.START else Gravity.END
+                })
+            }
+            val buttons = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(button(R.string.resize_reset, false) { resetKeyboardSize() })
+                addView(
+                    button(R.string.resize_done, true) { setResizeMode(false) },
+                    LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = dp(12f).toInt() }
+                )
+            }
+            addView(buttons, FrameLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.CENTER })
+        }
+    }
 
     private fun showOneHandedMenu() {
         val popup = PopupMenu(this, toggle)
@@ -1696,52 +1901,60 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return before.length - i
     }
 
-    override fun onDeletePreview(travelPx: Float): Int {
-        val ic = currentInputConnection ?: return 0
-        if (cursorPos < 0) return 0
+    // --- Slide-on-delete selection -------------------------------------------------------------
+    // Text before the caret when the slide started, and how many of its trailing characters are
+    // currently selected. The caret itself (cursorPos) is not updated while a slide is active.
+    private var delSlideText = ""
+    private var delSlideChars = 0
 
-        val before = ic.getTextBeforeCursor(500, 0)?.toString() ?: return 0
-        if (before.isEmpty()) {
-            deletePreviewActive = true
-            pendingDeleteWords = 0
-            ic.setSelection(cursorPos, cursorPos)
-            return 0
-        }
-
-        val pxPerChar = approximateKeyWidth()
-        val targetChars = (travelPx / pxPerChar).toInt().coerceAtLeast(0)
-
-        var i = before.length
-        var wordCount = 0
-        var consumed = 0
-        while (i > 0) {
-            while (i > 0 && before[i - 1].isWhitespace()) i -= 1
-            if (i == 0) break
-            while (i > 0 && !before[i - 1].isWhitespace()) i -= 1
-            wordCount += 1
-            consumed = before.length - i
-            if (consumed >= targetChars) break
-        }
-
+    override fun onDeleteSlideStart() {
+        val ic = currentInputConnection ?: return
+        ic.finishComposingText()
+        composing.clear()
+        delSlideText = ic.getTextBeforeCursor(500, 0)?.toString().orEmpty()
+        delSlideChars = 0
         deletePreviewActive = true
-        pendingDeleteWords = wordCount
+        pendingDeleteWords = 0
+    }
 
-        if (consumed <= 0) {
-            ic.setSelection(cursorPos, cursorPos)
-            return 0
+    override fun onDeleteSlideStep(units: Int, byWord: Boolean): Int {
+        val ic = currentInputConnection ?: return 0
+        if (cursorPos < 0 || !deletePreviewActive) return 0
+        val text = delSlideText
+        val len = text.length
+        var start = len - delSlideChars // start of the current selection inside [text]
+        var n = units
+        while (n > 0 && start > 0) { // extend to the left
+            if (byWord) {
+                while (start > 0 && text[start - 1].isWhitespace()) start--
+                while (start > 0 && !text[start - 1].isWhitespace()) start--
+            } else {
+                start--
+            }
+            n--
         }
-        ic.setSelection(cursorPos - consumed, cursorPos)
-        return wordCount
+        while (n < 0 && start < len) { // shrink back towards the caret
+            if (byWord) {
+                while (start < len && !text[start].isWhitespace()) start++
+                while (start < len && text[start].isWhitespace()) start++
+            } else {
+                start++
+            }
+            n++
+        }
+        delSlideChars = len - start
+        pendingDeleteWords = if (delSlideChars > 0) 1 else 0
+        ic.setSelection(cursorPos - delSlideChars, cursorPos)
+        return delSlideChars
     }
 
     override fun onDeleteCommit() {
         val ic = currentInputConnection ?: return
-        val words = pendingDeleteWords
+        val chars = delSlideChars
         deletePreviewActive = false
         pendingDeleteWords = 0
-        if (cursorPos < 0 || words <= 0) return
-        val chars = wordDeleteRange(words)
-        if (chars <= 0) return
+        delSlideChars = 0
+        if (cursorPos < 0 || chars <= 0) return
 
         ic.beginBatchEdit()
         try {
@@ -1761,6 +1974,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection
         deletePreviewActive = false
         pendingDeleteWords = 0
+        delSlideChars = 0
         if (cursorPos < 0) return
         ic?.setSelection(cursorPos, cursorPos)
     }
@@ -1794,6 +2008,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         com.noircipher.shade.engine.TypingSpeedAdapter.onKeystroke()
 
         if (text != " ") clearUndo()
+        if (autofillCount > 0 && !autofillHiddenByTyping) {
+            autofillHiddenByTyping = true // typing dismisses the autofill chips
+            updateAutofillStrip()
+        }
 
         val isWordChar = canCompose && mode == Mode.LETTERS && text.length == 1 &&
             ((text[0] != '\'' && WordDictionary.isWordChar(text[0])) || (text[0] == '\'' && composing.isNotEmpty()))
@@ -1808,6 +2026,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             val sentenceEnd = smartCorrectionOn && canCompose &&
                 text.length == 1 && text[0].isLowerCase() &&
                 composing.isEmpty() && atSentenceEndBeforeCursor() &&
+                fieldWantsAutoCaps() &&
                 !userShiftOverride
             if (sentenceEnd) {
                 val upper = text.uppercase()
@@ -2203,6 +2422,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             ic?.commitText(finalWord, 1)
             composing.clear()
 
+            // Confusable pairs that depend on the FOLLOWING word ("your welcome", "to late"):
+            // now that this word is complete, fix the word before it. Skipped when this word was
+            // itself autocorrected so there is only ever one correction to undo.
+            if (corrected == null && smartCorrectionOn && canCompose && prev1 != null && isEnglishLocale()) {
+                fixPreviousConfusable(prev1, prev2, finalWord, sep)
+            }
+
             // 4g — Session bigram observation + rejection tracking.
             sessionBigramBoost.observeBigram(prev1, finalWord)
             if (lastShownCandidates.isNotEmpty() && finalWord !in lastShownCandidates) {
@@ -2231,6 +2457,31 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             ic?.finishComposingText()
         }
         return null
+    }
+
+    private fun fixPreviousConfusable(prevLower: String, beforePrev: String?, word: String, sep: String?) {
+        val ic = currentInputConnection ?: return
+        val replacement = com.noircipher.shade.engine.ConfusablePairs
+            .correctPrevious(prevLower, word, beforePrev) ?: return
+        // Only rewrite when the text really is "<prev> <word>" with a single space between.
+        val span = prevLower.length + 1 + word.length
+        val before = ic.getTextBeforeCursor(span, 0)?.toString() ?: return
+        if (before.length != span || before[prevLower.length] != ' ') return
+        if (!before.regionMatches(0, prevLower, 0, prevLower.length, ignoreCase = true)) return
+        if (!before.regionMatches(prevLower.length + 1, word, 0, word.length, ignoreCase = true)) return
+        val fixed = com.noircipher.shade.engine.ConfusablePairs.matchCase(before.substring(0, prevLower.length), replacement)
+        val newText = fixed + before.substring(prevLower.length)
+        ic.beginBatchEdit()
+        try {
+            ic.deleteSurroundingText(span, 0)
+            ic.commitText(newText, 1)
+        } finally {
+            ic.endBatchEdit()
+        }
+        popTail(span)
+        appendTail(newText)
+        // Same revert path as an autocorrect: backspace right after restores what the user typed.
+        recordCorrectionEvent(before, newText, sep)
     }
 
     private fun resetBigramContext() {
@@ -2264,6 +2515,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             return false
         }
         return true
+    }
+
+    /**
+     * True when the focused field asks for automatic capitalisation (sentence/word/character
+     * flags in its inputType) and the user has auto-caps on. A search box such as YouTube's sets
+     * none of those flags, so typing there stays lowercase - the sentence-start capitalisation in
+     * [onText] used to ignore this and capitalised every first letter anyway.
+     */
+    private fun fieldWantsAutoCaps(): Boolean {
+        val ei = info ?: return false
+        val ic = currentInputConnection ?: return false
+        if (!autoCaps) return false
+        if ((ei.inputType and InputType.TYPE_MASK_CLASS) != InputType.TYPE_CLASS_TEXT) return false
+        return ic.getCursorCapsMode(ei.inputType) != 0
     }
 
     private fun updateShiftFromCaps() {
