@@ -449,42 +449,26 @@
 
     <!-- Toggle / slider / action labels used by the M3 settings tree.
          Some reuse existing strings (pref_theme, pref_key_borders, etc.);
-         the ones below are new. -->
+         the ones below are new — duplicates of existing strings were removed. -->
     <string name="pref_show_hints">Long-press hints</string>
     <string name="pref_popup_preview">Key preview popup</string>
-    <string name="pref_key_height">Key height</string>
-    <string name="pref_one_handed">One-handed mode</string>
     <string name="pref_one_handed_width">One-handed width</string>
     <string name="pref_split_keyboard">Split keyboard</string>
     <string name="pref_split_gap">Split gap width</string>
     <string name="pref_split_gap_sum">0 = auto (default). Higher = wider split for tablets.</string>
-    <string name="pref_number_row">Number row</string>
 
     <string name="pref_neural">Neural predictions</string>
-    <string name="pref_smart_correction">Smart correction</string>
-    <string name="pref_auto_caps">Auto-capitalize</string>
-    <string name="pref_double_space">Double-space period</string>
     <string name="pref_learn_words">Learn new words</string>
 
     <string name="pref_glide_typing">Glide typing</string>
     <string name="pref_glide_typing_sub">Swipe across letters to type without lifting your finger</string>
-    <string name="pref_trackpad">Trackpad mode</string>
     <string name="pref_haptic_strength">Haptic strength</string>
-    <string name="pref_typing_burst">Typing burst animation</string>
     <string name="pref_longpress_delay">Long-press delay</string>
 
     <string name="pref_emoji_suggestions">Emoji suggestions</string>
-    <string name="pref_translator">Translator</string>
-    <string name="pref_voice_input">Voice typing</string>
-    <string name="pref_learning_adaptive">Adaptive learning</string>
-    <string name="pref_learning_appctx">Per-app vocabulary</string>
-    <string name="pref_learning_ranker">Ranker training</string>
-    <string name="pref_incognito">Incognito mode</string>
-
     <string name="pref_clipboard_history">Clipboard history</string>
     <string name="pref_contribute_data">Keep learning snapshots</string>
 
-    <string name="pref_auto_update">Auto-check for updates</string>
     <string name="action_check_update">Check for updates now</string>
     <string name="action_typing_stats">Typing insights</string>
 
