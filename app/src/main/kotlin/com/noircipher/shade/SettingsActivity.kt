@@ -80,6 +80,18 @@ class SettingsActivity : AppCompatActivity() {
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
 
+        // Register predictive-back-compatible callback (replaces deprecated onBackPressed).
+        // Always enabled — handleBack() returns false to let the system handle the final exit.
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (!handleBack()) {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                    isEnabled = true
+                }
+            }
+        })
+
         refreshPage()
     }
 
@@ -89,17 +101,18 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     @Suppress("DEPRECATION")
-    override fun onBackPressed() {
+    private fun handleBack(): Boolean {
         if (searchContainer.visibility == View.VISIBLE) {
             searchContainer.visibility = View.GONE
             searchInput.text.clear()
             searchQuery = ""
             adapter.applySearch("", currentPage)
+            return true
         } else if (currentPage != SettingsPage.HOME) {
             navigateTo(SettingsPage.HOME)
-        } else {
-            super.onBackPressed()
+            return true
         }
+        return false
     }
 
     // ── View binding ───────────────────────────────────────────────────────
