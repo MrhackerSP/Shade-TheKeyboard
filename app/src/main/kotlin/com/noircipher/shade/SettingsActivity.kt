@@ -80,6 +80,11 @@ class SettingsActivity : AppCompatActivity() {
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
 
+        // Register the predictive-back-compatible callback (replaces deprecated onBackPressed).
+        // Enabled by default so it intercepts back; re-enabled in refreshPage() based on state.
+        backCallback.isEnabled = true
+        onBackPressedDispatcher.addCallback(this, backCallback)
+
         refreshPage()
     }
 
@@ -88,16 +93,22 @@ class SettingsActivity : AppCompatActivity() {
         adapter.notifyDataSetChanged()
     }
 
-    override fun onBackPressed() {
-        if (searchContainer.visibility == View.VISIBLE) {
-            searchContainer.visibility = View.GONE
-            searchInput.text.clear()
-            searchQuery = ""
-            adapter.applySearch("", currentPage)
-        } else if (currentPage != SettingsPage.HOME) {
-            navigateTo(SettingsPage.HOME)
-        } else {
-            super.onBackPressed()
+    // Migrated from deprecated onBackPressed() to OnBackPressedDispatcher
+    // for Android 16+ predictive back gesture support.
+    private val backCallback = object : androidx.activity.OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            if (searchContainer.visibility == View.VISIBLE) {
+                searchContainer.visibility = View.GONE
+                searchInput.text.clear()
+                searchQuery = ""
+                adapter.applySearch("", currentPage)
+            } else if (currentPage != SettingsPage.HOME) {
+                navigateTo(SettingsPage.HOME)
+            } else {
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+                isEnabled = true
+            }
         }
     }
 
