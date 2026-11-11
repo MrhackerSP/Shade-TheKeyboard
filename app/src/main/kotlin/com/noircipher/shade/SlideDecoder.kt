@@ -62,7 +62,26 @@ class SlideDecoder(
         var length = 1.6f
         /** Max distance (in key widths) from start/end of path to first/last letter. */
         var endRadius = 1.35f
+        /**
+         * Weight of the context bonus — how strongly the previous word in the editor
+         * biases the glide decoder toward words that commonly follow it. Mirrors
+         * Expressive's `context` parameter in GlideDecoder.decode().
+         */
+        var context = 1.2f
     }
+
+    /**
+     * Near-identical key aliases. When a letter isn't on the layout, the decoder
+     * tries its alias instead. Mirrors Expressive's ALIASES map (Cyrillic examples
+     * left as comments; extend per-language as layouts are added).
+     *
+     * Format: target → the key actually on the layout that the finger swiped over.
+     * E.g. for Russian: 'ё' to 'е', 'ъ' to 'ь', 'й' to 'и'.
+     */
+    private val ALIASES = mapOf<Char, Char>(
+        // Cyrillic (not yet in Shade, but ready for when ru is added):
+        // 'ё' to 'е', 'ъ' to 'ь', 'й' to 'и'
+    )
 
     private companion object {
         const val SHAPE_N = 24
@@ -73,14 +92,100 @@ class SlideDecoder(
         const val MAX_SUBSEQ_CANDIDATES = 64
     }
 
-    suspend fun decode(path: List<FloatArray>, layout: Map<Char, Key>): String? {
+    companion object {
+        /**
+         * Minimum duration (ms) for a stroke to be considered a glide rather than a
+         * tap-with-jitter. Mirrors Expressive's `looksLikeGlide` 140ms threshold.
+         */
+        const val MIN_GLIDE_DURATION_MS = 140L
+
+        /**
+         * Minimum number of distinct keys the path must pass near (within 0.5 key
+         * widths) for the stroke to be a glide. Mirrors Expressive's `looksLikeGlide`
+         * 3-key threshold.
+         */
+        const val MIN_GLIDE_KEYS = 3
+
+        /**
+         * Quick filter: is this stroke actually a glide (not a tap)?
+         *
+         * A real glide lasts at least [MIN_GLIDE_DURATION_MS] and passes near at
+         * least [MIN_GLIDE_KEYS] letter keys. Short, fast strokes that jitter across
+         * one or two keys are treated as taps — this prevents "п→а jitter" from being
+         * decoded as a glide word.
+         *
+         * @param path the touch points (x, y in keyboard pixel coords)
+         * @param layout map of char → Key
+         * @param keyWidth typical key width in pixels (used for the proximity threshold)
+         * @param durationMs elapsed time from first to last touch point
+         * @return true if the stroke looks like a glide, false if it's a tap
+         */
+        fun looksLikeGlide(
+            path: List<FloatArray>,
+            layout: Map<Char, Key>,
+            keyWidth: Float,
+            durationMs: Long
+        ): Boolean {
+            if (durationMs < MIN_GLIDE_DURATION_MS) return false
+            if (path.size < 4) return false
+            val near = keyWidth * 0.5f
+            val near2 = near * near
+            // Collect centers of all single-letter keys
+            val centers = layout.values
+                .filter { it.label.length == 1 && it.label[0].isLetter() }
+                .map { floatArrayOf((it.left + it.right) / 2f, (it.top + it.bottom) / 2f) }
+            if (centers.isEmpty()) return false
+            // Count how many distinct keys the path passes within `near` of.
+            var hit = 0
+            for (c in centers) {
+                var close = false
+                for (i in 1 until path.size) {
+                    val a = path[i - 1]
+                    val b = path[i]
+                    val abx = b[0] - a[0]
+                    val aby = b[1] - a[1]
+                    val len2 = abx * abx + aby * aby
+                    val t = if (len2 <= 0f) 0f else (((c[0] - a[0]) * abx + (c[1] - a[1]) * aby) / len2).coerceIn(0f, 1f)
+                    val px = a[0] + abx * t
+                    val py = a[1] + aby * t
+                    val dx = px - c[0]
+                    val dy = py - c[1]
+                    if (dx * dx + dy * dy <= near2) {
+                        close = true
+                        break
+                    }
+                }
+                if (close && ++hit >= MIN_GLIDE_KEYS) return true
+            }
+            return false
+        }
+    }
+
+    /**
+     * Decode a glide path into the best-matching dictionary word.
+     *
+     * @param path the sampled touch points (x, y in keyboard pixel coords)
+     * @param layout map of char → Key (from [kbKeyLayout])
+     * @param prevWord the word immediately before the cursor (for context-aware scoring),
+     *   or null/empty if none. When provided, words that commonly follow it get a
+     *   score bonus. Mirrors Expressive's `context` parameter.
+     * @param contextBoost optional lookup: given a candidate word, return a bonus
+     *   (0 = no boost). If null, a simple heuristic is used: if the candidate's
+     *   first letter matches the last letter of [prevWord], a small bonus is applied.
+     */
+    suspend fun decode(
+        path: List<FloatArray>,
+        layout: Map<Char, Key>,
+        prevWord: String? = null,
+        contextBoost: ((String) -> Float)? = null
+    ): String? {
         if (path.size < 4 || layout.isEmpty()) return null
 
         // Step 1: Find key crossings via inflection points + proximity
         val hits = findKeyCrossings(path, layout)
         if (hits.size < 2) {
             val raw = rawSequence(path, layout)
-            return raw.ifEmpty { null }?.let { refineWithDictionary(it, path, layout) }
+            return raw.ifEmpty { null }?.let { refineWithDictionary(it, path, layout, prevWord, contextBoost) }
         }
 
         // Step 2: Build raw letter sequence from crossings
@@ -93,7 +198,7 @@ class SlideDecoder(
         val rawWord = raw.toString()
         if (rawWord.length < 2) return null
 
-        return refineWithDictionary(rawWord, path, layout)
+        return refineWithDictionary(rawWord, path, layout, prevWord, contextBoost)
     }
 
     /**
@@ -194,12 +299,15 @@ class SlideDecoder(
 
     /**
      * Refine the raw sequence using the dictionary: find the best-matching word.
-     * Uses DP alignment + shape matching + corner detection + length ratio + word frequency.
+     * Uses DP alignment + shape matching + corner detection + length ratio + word frequency
+     * + optional context bonus.
      */
     private suspend fun refineWithDictionary(
         raw: String,
         path: List<FloatArray>,
-        layout: Map<Char, Key>
+        layout: Map<Char, Key>,
+        prevWord: String? = null,
+        contextBoost: ((String) -> Float)? = null
     ): String? {
         val lower = raw.lowercase()
 
@@ -226,17 +334,20 @@ class SlideDecoder(
         val merged = candidates.distinctBy { it.lowercase() }
 
         // Use the full scoring algorithm
-        return scoreCandidates(merged, path, layout, lower)
+        return scoreCandidates(merged, path, layout, lower, prevWord, contextBoost)
     }
 
     /**
-     * Full scoring: DP alignment + shape match + corner match + length ratio + word frequency.
+     * Full scoring: DP alignment + shape match + corner match + length ratio + word frequency
+     * + optional context bonus.
      */
     private fun scoreCandidates(
         candidates: List<String>,
         path: List<FloatArray>,
         layout: Map<Char, Key>,
-        raw: String
+        raw: String,
+        prevWord: String? = null,
+        contextBoost: ((String) -> Float)? = null
     ): String? {
         if (candidates.isEmpty()) return raw
 
@@ -270,6 +381,13 @@ class SlideDecoder(
         val lexicon = dictionary.glideLexicon()
         val freqMap = lexicon.toMap()
 
+        // Pre-compute the context bonus lookup. If no external callback is provided,
+        // use a simple heuristic: words whose first letter matches the last letter of
+        // the previous word get a small bonus (this mimics bigram proximity without
+        // requiring a bigram model).
+        val prevLower = prevWord?.lowercase()?.trim().orEmpty()
+        val prevLastChar = if (prevLower.isNotEmpty()) prevLower.last() else null
+
         var bestWord: String? = null
         var bestScore = Float.MAX_VALUE
 
@@ -279,18 +397,25 @@ class SlideDecoder(
 
         for (word in candidates) {
             if (word.length < 2) continue
-            val f0 = norm[word[0]] ?: continue
+            // ALIASES: if the word's first letter isn't on the layout, try its alias
+            val f0 = norm[word[0]] ?: ALIASES[word[0]]?.let { norm[it] } ?: continue
             if (dist2(f0, start) > r2) continue
             val lc = word[word.length - 1]
-            val l = norm[lc] ?: continue
+            val l = norm[lc] ?: ALIASES[lc]?.let { norm[it] } ?: continue
             if (dist2(l, end) > r2) continue
 
             // Build ideal path through the word's letters
             ideal.clear()
             var ok = true
             for (ch in word) {
+                // apostrophe and hyphen are transparent for gesture matching ("don't" = d-o-n-t)
                 if (ch == '\'' || ch == '-') continue
-                val k = norm[ch] ?: run { ok = false; break }
+                // ALIASES: try the char itself first, then its alias
+                val k = norm[ch] ?: ALIASES[ch]?.let { norm[it] }
+                if (k == null) {
+                    ok = false
+                    break
+                }
                 if (ideal.isEmpty() || ideal.last() != k) ideal.add(k)
             }
             if (!ok || ideal.size < 2) continue
@@ -340,7 +465,21 @@ class SlideDecoder(
             // Word frequency prior (more common = lower ln(freq) = lower score)
             val prior = freqMap[word] ?: 10f
 
-            val score = align + P.shape * shapeScore + P.corner * turn + P.length * ratio * ratio + P.lm * prior
+            // Context bonus: how well does this word follow [prevWord]?
+            val ctxBonus = if (contextBoost != null) {
+                contextBoost(word)
+            } else if (prevLastChar != null && word.isNotEmpty() && word[0] == prevLastChar) {
+                // Simple heuristic: bigram proximity — if the previous word ends
+                // with the same letter this word starts with, give a small bonus.
+                // This is a crude approximation of a bigram model; a real bigram
+                // table (en_bi.txt is already shipped!) would be better, but that
+                // requires a lookup API on the dictionary. For now this helps with
+                // common patterns like "you→are", "the→end", "good→day".
+                0.5f
+            } else 0f
+
+            val score = align + P.shape * shapeScore + P.corner * turn +
+                P.length * ratio * ratio + P.lm * prior - P.context * ctxBonus
 
             if (score < bestScore) {
                 bestScore = score

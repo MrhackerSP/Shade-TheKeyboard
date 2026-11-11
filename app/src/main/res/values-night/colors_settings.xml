@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Material 3 dark color tokens for the Shade settings UI.
+  Dark palette — derived from the same #3B6FD4 seed, dark mode variant.
+-->
+<resources>
+    <!-- Primary -->
+    <color name="m3_primary">#AAC7FF</color>
+    <color name="m3_on_primary">#002E69</color>
+    <color name="m3_primary_container">#00419E</color>
+    <color name="m3_on_primary_container">#D7E3FF</color>
+
+    <!-- Secondary -->
+    <color name="m3_secondary">#FFB870</color>
+    <color name="m3_on_secondary">#3F2100</color>
+    <color name="m3_secondary_container">#5B3C00</color>
+    <color name="m3_on_secondary_container">#FFDDB3</color>
+
+    <!-- Tertiary -->
+    <color name="m3_tertiary">#F8B868</color>
+    <color name="m3_on_tertiary">#442B00</color>
+    <color name="m3_tertiary_container">#62402B</color>
+    <color name="m3_on_tertiary_container">#FFDEA0</color>
+
+    <!-- Error -->
+    <color name="m3_error">#FFB4AB</color>
+    <color name="m3_on_error">#690005</color>
+    <color name="m3_error_container">#93000A</color>
+    <color name="m3_on_error_container">#FFDAD6</color>
+
+    <!-- Surfaces -->
+    <color name="m3_background">#111418</color>
+    <color name="m3_on_background">#E2E2E9</color>
+    <color name="m3_surface">#111418</color>
+    <color name="m3_on_surface">#E2E2E9</color>
+    <color name="m3_surface_variant">#44474F</color>
+    <color name="m3_on_surface_variant">#C4C6D0</color>
+    <color name="m3_surface_container">#1B1E22</color>
+    <color name="m3_surface_container_high">#26292D</color>
+    <color name="m3_surface_container_highest">#313337</color>
+    <color name="m3_surface_bright">#313337</color>
+    <color name="m3_surface_dim">#111418</color>
+
+    <!-- Outline -->
+    <color name="m3_outline">#8E9099</color>
+    <color name="m3_outline_variant">#44474F</color>
+
+    <!-- Inverse -->
+    <color name="m3_inverse_surface">#E2E2E9</color>
+    <color name="m3_inverse_on_surface">#2F3036</color>
+    <color name="m3_inverse_primary">#3B6FD4</color>
+
+    <!-- Category icon badge colors -->
+    <color name="settings_badge_0_bg">@color/m3_primary_container</color>
+    <color name="settings_badge_0_fg">@color/m3_on_primary_container</color>
+    <color name="settings_badge_1_bg">@color/m3_secondary_container</color>
+    <color name="settings_badge_1_fg">@color/m3_on_secondary_container</color>
+    <color name="settings_badge_2_bg">@color/m3_tertiary_container</color>
+    <color name="settings_badge_2_fg">@color/m3_on_tertiary_container</color>
+
+    <!-- Search pill -->
+    <color name="search_pill_bg">@color/m3_surface_container_high</color>
+    <color name="search_pill_bg_focused">@color/m3_primary_container</color>
+    <color name="search_pill_text">@color/m3_on_surface</color>
+    <color name="search_pill_hint">@color/m3_on_surface_variant</color>
+
+    <!-- Section card -->
+    <color name="settings_card_bg">@color/m3_surface_container</color>
+    <color name="settings_card_stroke">@android:color/transparent</color>
+    <color name="settings_row_bg">@color/m3_surface_bright</color>
+    <color name="settings_divider">@color/m3_outline_variant</color>
+    <color name="settings_section_title">@color/m3_primary</color>
+    <color name="settings_row_title">@color/m3_on_surface</color>
+    <color name="settings_row_subtitle">@color/m3_on_surface_variant</color>
+</resources>

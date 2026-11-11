@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  New M3 settings layout.
+  A single FrameLayout containing a top app bar (search) + a RecyclerView
+  that shows category cards on the home page, or setting rows on a detail page.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/m3_background"
+    android:fitsSystemWindows="true">
+
+    <!-- Top bar with back button + title + search -->
+    <LinearLayout
+        android:id="@+id/settings_top_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@color/m3_surface"
+        android:elevation="0dp"
+        android:paddingTop="8dp">
+
+        <!-- Row: back button + title -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:minHeight="56dp"
+            android:paddingHorizontal="4dp">
+
+            <ImageButton
+                android:id="@+id/btn_back"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_settings_arrow"
+                android:scaleX="-1"
+                android:contentDescription="@string/settings_back"
+                app:tint="@color/m3_on_surface"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/settings_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/settings_title"
+                android:textColor="@color/m3_on_surface"
+                android:textSize="28sp"
+                android:textStyle="bold"
+                android:paddingHorizontal="12dp"
+                android:maxLines="1"
+                android:ellipsize="end" />
+
+            <ImageButton
+                android:id="@+id/btn_search_toggle"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_search"
+                android:contentDescription="@string/settings_search_hint"
+                app:tint="@color/m3_on_surface" />
+        </LinearLayout>
+
+        <!-- Search bar (animated in/out) -->
+        <FrameLayout
+            android:id="@+id/search_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone"
+            android:paddingHorizontal="16dp"
+            android:paddingBottom="12dp">
+
+            <EditText
+                android:id="@+id/settings_search_input"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:background="@drawable/bg_search_pill_m3"
+                android:hint="@string/settings_search_hint"
+                android:textColorHint="@color/search_pill_hint"
+                android:textColor="@color/search_pill_text"
+                android:textSize="15sp"
+                android:paddingHorizontal="20dp"
+                android:drawableStart="@drawable/ic_search"
+                android:drawablePadding="12dp"
+                android:inputType="text"
+                android:imeOptions="actionSearch"
+                android:singleLine="true" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- Settings list -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/settings_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingTop="4dp"
+        android:paddingBottom="24dp"
+        android:scrollbars="vertical"
+        android:overScrollMode="ifContentScrolls" />
+
+</LinearLayout>

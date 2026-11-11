@@ -125,12 +125,17 @@ dependencies {
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.appcompat:appcompat:1.8.0")
+    // Material Components for Android — needed for Material 3 settings UI
+    // (MaterialSwitch, Slider, MaterialButtonToggleGroup, Theme.Material3.*).
+    implementation("com.google.android.material:material:1.12.0")
     // Styling helpers for inline autofill chips (password / address suggestions in the strip).
     implementation("androidx.autofill:autofill:1.1.0")
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.asynclayoutinflater:asynclayoutinflater:1.1.0")
     implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    // RecyclerView for the card-based settings list.
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.23.2")
     implementation("com.google.ai.edge.litert:litert:1.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

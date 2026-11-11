@@ -147,7 +147,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // search query instead of the text field.
     private lateinit var gifController: GifController
     private var gifActive = false
-    // Translator
+    // Translator — inline translation panel shown above the keyboard.
+    private lateinit var translatorPanel: TranslatorPanel
     private var translatorActive = false
     private var translatorInput = StringBuilder()
     private var translatorTarget = "en"
@@ -288,6 +289,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var suggestJob: Job? = null
     private var suggestDebounceJob: Job? = null
     private var correctionJob: Job? = null
+    /** Live preview decoding for glide typing (debounced; cancelled on commit/clear). */
+    private var glidePreviewJob: Job? = null
     private var slotAnimator: ValueAnimator? = null
     private var panelSpring: SpringAnimation? = null
 
@@ -382,6 +385,19 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onCreateInputView(): View = buildInputView()
 
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        // Handle the back button when in emoji search mode — exit search
+        // instead of closing the keyboard. The emoji panel's recents are
+        // already updated if the user tapped a search result; pressing back
+        // just returns to the browse view.
+        if (keyCode == android.view.KeyEvent.KEYCODE_BACK && event?.repeatCount == 0) {
+            if (this::emoji.isInitialized && emoji.onBackPressed()) {
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
     private fun buildInputView(): View {
         kb = KeyboardView(this).also { it.listener = this }
         kb.setLayerType(View.LAYER_TYPE_HARDWARE, null)
@@ -473,7 +489,27 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 commitSmart(text, text.length)
             },
             onBack = { transitionToPanel(Panel.NONE) },
-            onDelete = { backspace() }
+            onDelete = { backspace() },
+            onSearchFocus = {
+                // User tapped the search box — show the letter keyboard so
+                // they can type a search query. The emoji panel's search box
+                // receives the typed text via its TextWatcher.
+                // We temporarily switch to Panel.NONE (keyboard visible) but
+                // keep the emoji panel's search box focused so typed text
+                // goes into it, not the editor.
+                if (panel == Panel.EMOJI) {
+                    // Don't transition away — instead, show the keyboard
+                    // underneath the emoji panel. The emoji panel is the IME's
+                    // input view; the keyboard (kb) is a child of the same
+                    // container. We make kb visible alongside the emoji panel.
+                    kb.visibility = View.VISIBLE
+                    emoji.bringToFront()
+                }
+            },
+            onSearchExit = {
+                // Search exited — hide the letter keyboard, return to emoji browse.
+                kb.visibility = View.GONE
+            }
         )
         clipPanel = ClipboardPanel(
             this, clips,
@@ -536,6 +572,21 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         )
         gifController.bar.visibility = View.GONE
         root.addView(gifController.bar, 2, LinearLayout.LayoutParams(MATCH, WRAP))
+
+        // Translator panel — shown above the keyboard when the user taps the
+        // Translate toolbar button. Mirrors the GIF bar placement.
+        translatorPanel = TranslatorPanel(
+            context = this, scope = scope,
+            onCommit = { translatedText ->
+                // Commit the translated text to the editor
+                currentInputConnection?.commitText(translatedText + " ", 1)
+                closeTranslator()
+            },
+            onClose = { closeTranslator() }
+        )
+        translatorPanel.visibility = View.GONE
+        translatorPanel.setBackgroundColor(kbTheme.bg)
+        root.addView(translatorPanel, 3, LinearLayout.LayoutParams(MATCH, WRAP))
 
         // [root] (opaque keyboard background, side/nav-bar padding, float offset) is wrapped so a
         // transparent headroom band can sit above it for the accent panel.
@@ -872,6 +923,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         kb.kbTheme = kbTheme
         kb.contentHeightPx = contentH
         kb.setSplitAnimated(split)
+        kb.splitGapDp = prefs.getInt("split_gap", 0).toFloat()
+        kb.oneHandedWidth = prefs.getInt("one_handed_width", 75).toFloat() / 100f
         kb.keyBorders = prefs.getBoolean("key_borders", true)
         kb.showHints = prefs.getBoolean("show_hints", true)
         kb.haptic = prefs.getBoolean("haptic", true)
@@ -896,6 +949,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         emoji.setTheme(kbTheme)
         clipPanel.setTheme(kbTheme)
         if (this::gifController.isInitialized) gifController.bar.setTheme(kbTheme)
+        if (this::translatorPanel.isInitialized) {
+            translatorPanel.setTheme(kbTheme)
+            translatorPanel.setBackgroundColor(kbTheme.bg)
+        }
 
         root.setBackgroundColor(kbTheme.bg)
         toggle.setTextColor(kbTheme.hint)
@@ -1083,6 +1140,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val emojiContext = if (currentComposing.isNotEmpty()) currentComposing else lastWord().orEmpty()
         if (p != Panel.NONE) endWord()
         if (p != Panel.NONE) closeGif()
+        if (p != Panel.NONE) closeTranslator()
         if (panel == p) return
 
         val outgoing = when (panel) {
@@ -1099,6 +1157,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         panel = p
 
         if (p == Panel.EMOJI) {
+            // Reset the emoji panel's category bar to visible (in case the user
+            // hid it with an up-swipe last time — always start with it shown).
+            emoji.onShow()
             scope.launch(Dispatchers.Default) {
                 val suggestions = safeSuggestion(emptyList()) {
                     if (emojiSuggest) emojiPredictor.predictEmoji(emojiContext, 10) else emptyList()
@@ -1239,37 +1300,44 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (gifActive) closeGif()
         translatorActive = true
         translatorInput.clear()
+        translatorPanel.reset()
+        translatorPanel.setTheme(kbTheme)
+        translatorPanel.visibility = View.VISIBLE
         strip.visibility = View.GONE
-        Toast.makeText(this, R.string.translator_hint, Toast.LENGTH_SHORT).show()
     }
 
     private fun closeTranslator() {
         if (!translatorActive) return
         translatorActive = false
         translatorInput.clear()
+        translatorPanel.visibility = View.GONE
+        translatorPanel.reset()
         if (panel == Panel.NONE) strip.visibility = View.VISIBLE
     }
 
     private fun onTranslatorKey(code: Int, text: String?) {
         when (code) {
-            Codes.DELETE -> { if (translatorInput.isNotEmpty()) translatorInput.deleteCharAt(translatorInput.length - 1) }
-            Codes.SPACE -> translatorInput.append(' ')
-            Codes.ENTER -> {
-                val query = translatorInput.toString().trim()
-                if (query.isNotEmpty()) {
-                    scope.launch {
-                        val result = TranslationService.translate(query, "auto", translatorTarget)
-                        if (result != null) {
-                            currentInputConnection?.commitText(result + " ", 1)
-                        } else {
-                            Toast.makeText(this@ShadeService, R.string.translator_error, Toast.LENGTH_SHORT).show()
-                        }
-                        closeTranslator()
-                    }
-                } else closeTranslator()
+            Codes.DELETE -> {
+                translatorInput.deleteCharAt(maxOf(0, translatorInput.length - 1))
+                translatorPanel.backspace()
             }
-            Codes.SHIFT, Codes.SYMBOLS, Codes.SYMBOLS2, Codes.LETTERS -> { /* mode keys work normally */ }
-            else -> { text?.let { translatorInput.append(it) } }
+            Codes.SPACE -> {
+                translatorInput.append(' ')
+                translatorPanel.appendSpace()
+            }
+            Codes.ENTER -> {
+                // Commit the cached translation (or the source text as fallback)
+                translatorPanel.commit()
+                translatorInput.clear()
+            }
+            Codes.SHIFT -> { /* shift works normally — let the keyboard handle it */ }
+            Codes.SYMBOLS, Codes.SYMBOLS2, Codes.LETTERS -> { /* mode keys work normally */ }
+            else -> {
+                text?.let {
+                    translatorInput.append(it)
+                    translatorPanel.append(it)
+                }
+            }
         }
     }
 
@@ -1523,6 +1591,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (this::clipPanel.isInitialized) {
             (clipPanel.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
         }
+        if (this::translatorPanel.isInitialized) {
+            // The translator panel wraps its content, but we want it to match
+            // the keyboard height so it doesn't overflow when keys are tall.
+            (translatorPanel.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = LinearLayout.LayoutParams.WRAP_CONTENT }
+        }
         kb.requestLayout()
     }
 
@@ -1744,8 +1817,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     /**
      * Refreshes [lastClipText] from the clipboard store. Called from [captureClip]
      * after a new clip is added, and from [onStartInputView] so the chip is
-     * available when the keyboard appears. Only short text clips (< 30 chars)
-     * qualify; image clips and longer text are ignored for the chip.
+     * available when the keyboard appears.
+     *
+     * Contextual: uses [ClipboardSuggestions] to find clips that match the current
+     * field type / app context (URL in a browser, phone in a dialer, etc.). Falls
+     * back to the most recent short text clip if no contextually relevant clip is
+     * found. Mirrors Gboard's behavior of surfencing the right clip for the right app.
      */
     private fun maybeShowClipboardChip() {
         if (!prefs.getBoolean("clipboard_history", true) || incognito ||
@@ -1755,9 +1832,36 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             return
         }
         try {
-            val clip = clips.load().firstOrNull()
-            if (clip != null && clip.text.isNotEmpty() && clip.text.length < 30) {
-                lastClipText = clip.text
+            val allClips = clips.load()
+            if (allClips.isEmpty()) {
+                lastClipText = null
+                return
+            }
+
+            // 1) Try contextual suggestions first: find clips relevant to the current
+            //    field type and foreground app.
+            val pkg = if (this::info.isInitialized) info?.packageName else null
+            val contextual = ClipboardSuggestions.suggest(
+                clips = allClips,
+                fieldType = currentFieldType,
+                appPackage = pkg,
+                maxResults = 1
+            )
+            if (contextual.isNotEmpty()) {
+                val clip = contextual.first()
+                if (!clip.isImage && clip.text.isNotEmpty()) {
+                    // For contextually relevant clips, allow longer text (URLs, addresses)
+                    lastClipText = clip.text
+                    return
+                }
+            }
+
+            // 2) Fallback: most recent short text clip (< 30 chars).
+            //    This is the original behavior — good for messaging apps where any
+            //    recent text is worth surfacing.
+            val first = allClips.first()
+            if (!first.isImage && first.text.isNotEmpty() && first.text.length < 30) {
+                lastClipText = first.text
             } else {
                 lastClipText = null
             }
@@ -1990,10 +2094,61 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         currentTouchOffsets = offsets
     }
 
+    /**
+     * Glide typing live preview: the view sends the gesture engine's sampled path
+     * while the finger is still moving. We decode it through the real [slideDecoder]
+     * (async, off the main thread) and surface the result as composing text.
+     *
+     * This replaces the previous raw-crossing preview, which surfaced "qwertyui" —
+     * i.e. every key the finger happened to cross — and made the slide feel like it
+     * was triggering every character along the path. With the real decoder the
+     * preview shows the actual intended word (e.g. "hello") whenever the dictionary
+     * recognises the gesture, falling back to nothing instead of a raw letter soup.
+     *
+     * Debounced: a new path cancels the previous in-flight decode. Cancelled
+     * outright by [onSwipePath] (commit) and by [onGlidePreview] with null (clear).
+     */
+    override fun onGlidePreviewPath(path: List<FloatArray>) {
+        if (gifActive || translatorActive) return
+        if (path.size < 4) return
+        val layout = kbKeyLayout() ?: return
+        // Capture the previous word for context-aware decoding. The text before the
+        // cursor doesn't change during a glide, so we read it once here (on the main
+        // thread — InputConnection.getTextBeforeCursor is synchronous).
+        val prev = previousWord()
+        glidePreviewJob?.cancel()
+        glidePreviewJob = scope.launch {
+            // Debounce: collapse rapid move events into one decode per ~32ms.
+            delay(32)
+            if (!isActive) return@launch
+            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout, prev) }
+            if (!isActive) return@launch
+            // A committed glide (onSwipePath) clears composing and writes the word;
+            // a cleared preview (onGlidePreview(null)) already emptied composing. In
+            // either case, don't resurrect it from a stale preview decode.
+            if (composing.isEmpty() && decoded.isNullOrEmpty()) return@launch
+            if (decoded.isNullOrEmpty()) {
+                // No dictionary match yet — show nothing rather than the raw letters.
+                if (composing.isNotEmpty()) {
+                    composing.clear()
+                    currentInputConnection?.setComposingText("", 1)
+                }
+            } else if (decoded != composing.toString()) {
+                composing.clear()
+                composing.append(decoded)
+                currentInputConnection?.setComposingText(decoded, 1)
+            }
+        }
+    }
+
     /** Glide typing: live preview while the finger is still moving. */
     override fun onGlidePreview(word: String?) {
         if (gifActive || translatorActive) return
         if (word.isNullOrEmpty()) {
+            // Cancel any in-flight preview decode so it can't revive the composing
+            // text after the up handler has cleared it.
+            glidePreviewJob?.cancel()
+            glidePreviewJob = null
             // Clear the composing text
             if (composing.isNotEmpty()) {
                 composing.clear()
@@ -2011,12 +2166,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (gifActive || translatorActive) return false
         if (path.size < 4) return false
         val layout = kbKeyLayout() ?: return false
+        // Capture the previous word for context-aware glide decoding.
+        val prev = previousWord()
+        // The final commit takes over: cancel any in-flight preview decode so it
+        // can't race the commit and overwrite the just-finished composing region.
+        glidePreviewJob?.cancel()
+        glidePreviewJob = null
         suggestJob?.cancel()
         suggestJob = scope.launch {
             delay(32)
             if (!isActive) return@launch
             // Only the pure decoding runs off the main thread; all editor/UI work stays on Main.
-            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout) }
+            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout, prev) }
             if (!isActive) return@launch
             if (!decoded.isNullOrEmpty()) {
                 // Clear the live preview composing text
@@ -2053,6 +2214,21 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
         if (translatorActive) {
             onTranslatorKey(code, null)
+            return
+        }
+        // Emoji search mode: keystrokes go to the emoji search box, not the editor.
+        if (this::emoji.isInitialized && panel == Panel.EMOJI && emoji.searchMode) {
+            when (code) {
+                Codes.DELETE -> {
+                    val sb = emoji.searchQuery
+                    if (sb.isNotEmpty()) {
+                        emoji.setSearchQuery(sb.dropLast(1))
+                    }
+                }
+                Codes.ENTER -> { /* ignore — user taps results, not enter */ }
+                Codes.SHIFT, Codes.SYMBOLS, Codes.SYMBOLS2, Codes.LETTERS -> { /* mode keys work normally */ }
+                Codes.SPACE -> emoji.setSearchQuery(emoji.searchQuery + " ")
+            }
             return
         }
         when (code) {
@@ -2196,6 +2372,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
         if (translatorActive) {
             onTranslatorKey(0, text)
+            if (shiftState == 1) { shiftState = 0; autoShifted = false; kb.shiftState = 0 }
+            return
+        }
+        // Emoji search mode: typed text goes to the emoji search box.
+        if (this::emoji.isInitialized && panel == Panel.EMOJI && emoji.searchMode) {
+            emoji.setSearchQuery(emoji.searchQuery + text)
             if (shiftState == 1) { shiftState = 0; autoShifted = false; kb.shiftState = 0 }
             return
         }
@@ -2866,6 +3048,24 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
 
+    /**
+     * The word immediately before the cursor (or null/empty if none). Used by the
+     * glide decoder for context-aware scoring — a glide after "you" should prefer
+     * "are" over "ire". Reads at most 60 chars before the cursor and extracts the
+     * last whitespace-delimited token.
+     */
+    private fun previousWord(): String? {
+        val raw = currentInputConnection
+            ?.getTextBeforeCursor(60, 0)
+            ?.toString()
+            ?: return null
+        if (raw.isEmpty()) return null
+        // Find the last run of word characters
+        val m = Regex("[\\p{L}\\p{M}\\p{N}'_-]+$").find(raw)
+        return m?.value?.lowercase()
+    }
+
+
     private fun contextWordsExcluding(typedWord: String): List<String> {
         val raw = currentInputConnection
             ?.getTextBeforeCursor(400, 0)
@@ -3108,10 +3308,24 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         limit = 3
                     )
 
-                    val learned = safeSuggestion(merged) {
+                    // Smart Compose: if phrase suggestions are ON and this is a
+                    // normal text field, generate multi-word phrase completions
+                    // (e.g. after "good " → "morning to see you"). These appear
+                    // as multi-word candidates in the strip alongside single-word
+                    // next-word predictions.
+                    var withPhrases = merged
+                    if (phraseSuggestionsOn && FieldTypeDetector.shouldSmartCompose(currentFieldType)) {
+                        val phrases = com.noircipher.shade.engine.SmartComposeEngine
+                            .suggest(dict, contextWords, "", maxWords = 5, limit = 2)
+                        if (phrases.isNotEmpty()) {
+                            withPhrases = (phrases + merged).distinct().take(5)
+                        }
+                    }
+
+                    val learned = safeSuggestion(withPhrases) {
                         withContext(Dispatchers.Default) {
                             learnedRankCandidates(
-                                candidates = merged,
+                                candidates = withPhrases,
                                 typedPrefix = "",
                                 touches = emptyList(),
                                 layout = null,
@@ -3234,33 +3448,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 }
 
                 // 4j — typed-word pipeline injections.
-                // #1 — Multi-word phrase completion (good→morning, thank→you, ...).
-                // Gated behind phraseSuggestionsOn: the bigram table contains
-                // single-word completions (good→morning) AND multi-word ones
-                // (good→"to see"); in word-by-word mode we still want the
-                // single-word continuations, so we keep the source but filter
-                // out space-containing entries.
-                if (phraseSuggestionsOn) {
-                    val phraseCompletions = com.noircipher.shade.engine.PhraseCompletion
-                        .suggestPhraseCompletions(contextWords, prefix, limit = 3)
-                    if (phraseCompletions.isNotEmpty()) {
-                        ranked = (phraseCompletions + ranked).distinct()
-                    }
-                } else {
-                    val phraseCompletions = com.noircipher.shade.engine.PhraseCompletion
-                        .suggestPhraseCompletions(contextWords, prefix, limit = 3)
-                        .filter { !it.contains(' ') }
-                    if (phraseCompletions.isNotEmpty()) {
-                        ranked = (phraseCompletions + ranked).distinct()
-                    }
-                }
-                // #15 — Smart compose for common responses (ok → ok sounds good, ...).
-                // These templates are inherently multi-word, so the whole source
-                // is skipped in word-by-word mode.
-                if (phraseSuggestionsOn && FieldTypeDetector.shouldSmartCompose(currentFieldType)) {
-                    val smartResponses = com.noircipher.shade.engine.SmartResponseComposer.suggest(prefix, limit = 2)
-                    if (smartResponses.isNotEmpty()) {
-                        ranked = (smartResponses + ranked).distinct()
+                // #1 — Smart Compose: bigram-driven multi-word phrase completion.
+                // Uses the real bundled bigram model (~400k entries) to chain words
+                // forward from the cursor position, producing 2-5 word phrases like
+                // "call you back" after typing "cal". Mirrors Gboard's Smart Compose.
+                //
+                // When phraseSuggestionsOn is OFF, we still want single-word
+                // continuations (good→morning), so we filter to single-word results.
+                // When ON, full multi-word phrases are shown.
+                if (FieldTypeDetector.shouldSmartCompose(currentFieldType)) {
+                    val phrases = com.noircipher.shade.engine.SmartComposeEngine
+                        .suggest(dict, contextWords, prefix, maxWords = 5, limit = 3)
+                    if (phrases.isNotEmpty()) {
+                        val filtered = if (phraseSuggestionsOn) phrases else phrases.filter { !it.contains(' ') }
+                        if (filtered.isNotEmpty()) {
+                            ranked = (filtered + ranked).distinct()
+                        }
                     }
                 }
                 // #6+#7 — Cross-sentence context + sentence starters.
@@ -3587,7 +3790,24 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
         if (w.isNotEmpty() && w[0].isLetter()) {
             if (learnOn && personalLearningAllowed() && canCompose) {
-                dict.learn(w, prev2 = prev2, prev1 = prev1)
+                // For multi-word phrases (Smart Compose results like "call you back"),
+                // learn each constituent bigram so the model improves over time.
+                // Previously only the first bigram (prev1 → firstWord) was learned.
+                val words = w.split(' ')
+                if (words.size >= 2) {
+                    // Learn: prev1 → words[0], words[0] → words[1], words[1] → words[2], ...
+                    var p2 = prev2
+                    var p1 = prev1
+                    for (word in words) {
+                        if (word.isNotEmpty() && word[0].isLetter()) {
+                            dict.learn(word, prev2 = p2, prev1 = p1)
+                        }
+                        p2 = p1
+                        p1 = word.lowercase()
+                    }
+                } else {
+                    dict.learn(w, prev2 = prev2, prev1 = prev1)
+                }
             }
         }
         lastSpaceTime = 0L

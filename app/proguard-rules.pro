@@ -3,8 +3,16 @@
 -keep class com.noircipher.shade.ShadeService { *; }
 -keep class com.noircipher.shade.MainActivity { *; }
 -keep class com.noircipher.shade.SettingsActivity { *; }
--keep class com.noircipher.shade.SettingsActivity$SettingsFragment { *; }
+-keep class com.noircipher.shade.SettingsActivity$* { *; }
+-keep class com.noircipher.shade.SettingsAdapter$* { *; }
+-keep class com.noircipher.shade.SettingsTree { *; }
+-keep class com.noircipher.shade.SettingsItem { *; }
+-keep class com.noircipher.shade.SettingsItem$* { *; }
+-keep class com.noircipher.shade.SettingsPage { *; }
 -keep class com.noircipher.shade.TypingStatsActivity { *; }
+-keep class com.noircipher.shade.engine.SmartComposeEngine { *; }
+-keep class com.noircipher.shade.TranslatorPanel { *; }
+-keep class com.noircipher.shade.ClipboardSuggestions { *; }
 
 # Reflection-free code, so we can afford aggressive optimizations
 -optimizationpasses 5

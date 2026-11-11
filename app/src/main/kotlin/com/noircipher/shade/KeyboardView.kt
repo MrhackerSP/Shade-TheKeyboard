@@ -25,9 +25,19 @@ import com.noircipher.shade.motion.ShadeMotion
 import java.util.ArrayDeque
 import kotlin.math.abs
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /** Finger speed (dp per ms) above which a slide on delete selects word by word instead of character by character. */
 private const val DELETE_FAST_DP_PER_MS = 0.55f
+
+/**
+ * Distance (in key widths) the finger must travel from the down point before we treat
+ * the stroke as a glide rather than a tap. Mirrors Expressive's `glideStart` threshold:
+ * `max(slop * 1.5f, iw * 0.75f)`. Below this the finger is still "on" the original key
+ * (with normal rollover to neighbours); above it the pointer enters glide mode and
+ * key rollover / preview popups are suppressed.
+ */
+private const val GLIDE_START_KEY_WIDTHS = 0.75f
 
 class KeyboardView(context: Context) : View(context) {
 
@@ -65,7 +75,17 @@ class KeyboardView(context: Context) : View(context) {
         fun onDeleteCancel()
         fun onSwipePath(path: List<FloatArray>): Boolean = false
         fun onTouchSample(key: Key, x: Float, y: Float) {}
-        /** Glide typing live preview — called while the finger is still moving. */
+        /**
+         * Glide typing live preview — called while the finger is still moving, with the
+         * gesture engine's sampled path (NOT the raw touch points). The listener should
+         * decode it asynchronously and surface the result as composing text.
+         *
+         * Replaces the old [onGlidePreview] (which took a quick raw-crossing guess). The
+         * service still gets [onGlidePreview] with `null` on finger-up to clear the
+         * composing region.
+         */
+        fun onGlidePreviewPath(path: List<FloatArray>) {}
+        /** Glide typing live preview — used by the view only to clear the composing text on up. */
         fun onGlidePreview(word: String?) {}
         /** Glide typing final commit — called on finger up. */
         fun onGlideCommit(word: String) {}
@@ -81,6 +101,12 @@ class KeyboardView(context: Context) : View(context) {
     var contentHeightPx = 0
     var oneHanded = 0
         private set
+    /**
+     * One-handed keyboard width as a fraction of screen width (0.5–0.95).
+     * Default 0.75. Set by the user via settings or pinch gesture.
+     */
+    var oneHandedWidth = 0.75f
+        set(v) { field = v.coerceIn(0.5f, 0.95f); invalidate() }
     var haptic = true
     /** 0 = light, 1 = medium (default, system keyboard tap), 2 = strong. */
     var hapticStrength = 1
@@ -94,6 +120,13 @@ class KeyboardView(context: Context) : View(context) {
         set(v) { field = v; invalidate() }
     var keyBorders = true
     var splitKeyboard = false
+    /**
+     * Split gap width in dp (0 = use default `min(72dp, 15% screen width)`).
+     * When non-zero, overrides the default gap so the user can adjust how wide
+     * the split is.
+     */
+    var splitGapDp = 0f
+        set(v) { field = v.coerceIn(0f, 120f); invalidate() }
     var showHints = true
 
     var longPressMs = 300L
@@ -246,11 +279,22 @@ class KeyboardView(context: Context) : View(context) {
         var consumed = false
         var swiping = false
         var repeated = false
+        /**
+         * True once the finger has moved far enough from [downX]/[downY] to be a glide
+         * (not a tap). While true, key rollover is suppressed: the pointer stays on
+         * the original key, no preview popups fire for crossed keys, and [fire] is
+         * skipped on up (the glide decoder takes over).
+         *
+         * Mirrors Expressive's KeyGesture.GLIDE state: once a glide is detected, the
+         * only feedback is the trail — individual keys are no longer "pressed".
+         */
+        var gliding = false
 
         fun reset(k: Key?, x: Float, y: Float) {
             key = k; downX = x; downY = y; lastX = x; lastY = y
             longRunnable = null; repeatRunnable = null
             consumed = false; swiping = false; repeated = false
+            gliding = false
         }
     }
 
@@ -331,18 +375,22 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     fun setOneHandedAnimated(side: Int) {
+        val oldSide = oneHanded
         oneHanded = side
-        val target = if (side == 0) 1f else 0.75f
-        if (oneHandedProgress == target) return
+        val target = if (side == 0) 1f else oneHandedWidth
+        // If the progress is already at the target (e.g. switching from left to
+        // right — both use the same width), the animator would be a no-op. But
+        // the side changed, so we still need to relayout (offX depends on oneHanded).
+        if (oneHandedProgress == target) {
+            if (side != oldSide) { layoutKeys(); invalidate() }
+            return
+        }
         oneHandedAnimator?.cancel()
         oneHandedAnimator = ValueAnimator.ofFloat(oneHandedProgress, target).apply {
             duration = ShadeMotion.MODE_CHANGE_MS
             interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener {
                 oneHandedProgress = it.animatedValue as Float
-                // TODO(perf): layoutKeys() runs every frame (~11 passes over ~40 keys).
-                // Acceptable for a one-time user-initiated toggle, but could precompute
-                // start/end layouts and interpolate offsets if this becomes hot.
                 layoutKeys()
                 invalidate()
             }
@@ -388,7 +436,8 @@ class KeyboardView(context: Context) : View(context) {
         val bottomRowPad = dp(2f)
         val defaultPad = dp(3f)
         rowHeight = (h - padTop - padBottom) / rows.size
-        val maxGap = min(dp(72f), w * 0.15f)
+        // Split gap: use the user-set gap width if non-zero, else the default.
+        val maxGap = if (splitGapDp > 0f) dp(splitGapDp) else min(dp(72f), w * 0.15f)
         val gap = maxGap * splitProgress
 
         rows.forEachIndexed { r, row ->
@@ -401,10 +450,16 @@ class KeyboardView(context: Context) : View(context) {
             val unit = (availW - 2 * padX - rowGap - bottomExtraGaps) / total
 
             var x = offX + padX
-            var cum = 0f
             var gapDone = false
+            // Insert the split gap at the key-count midpoint (idx >= row.size / 2),
+            // NOT the weight midpoint. The old weight-midpoint approach misaligned
+            // the gap across rows of differing weights (e.g. the bottom row has
+            // wider shift/space/enter keys, so its weight midpoint landed at a
+            // different visual column than the letter rows). Using key count
+            // ensures the gap is between the same visual columns on every row.
+            val splitIdx = row.size / 2
             for ((idx, k) in row.withIndex()) {
-                if (eligible && !gapDone && cum >= total / 2f - 0.01f) {
+                if (eligible && !gapDone && idx >= splitIdx) {
                     x += rowGap
                     gapDone = true
                 }
@@ -414,7 +469,6 @@ class KeyboardView(context: Context) : View(context) {
                 k.bottom = k.top + rowHeight
                 k.updateInvalidateRect(dp(3f).toInt())
                 x = k.right
-                cum += k.weight
                 if (isBottom && idx < row.size - 1) x += dp(3f)
             }
         }
@@ -575,7 +629,11 @@ class KeyboardView(context: Context) : View(context) {
             }
         }
 
-        if (trailActive && trailAlpha > 0f) drawTrail(c)
+        // Space-swipe trail (cursor move) — only while a space slide is in progress.
+        if (trailActive && trailAlpha > 0f) drawSpaceSwipeTrail(c)
+        // Gesture (glide typing) trail — independent of trailActive; the gesture engine
+        // manages its own life cycle (live draw + post-release fade).
+        drawGestureTrail(c)
         if (burstActive && typingBurstEnabled) drawTypingBurst(c)
         previewKey?.let { if (previewProgress > 0f && !popupActive) drawKeyPreview(c, it) }
     }
@@ -740,7 +798,7 @@ class KeyboardView(context: Context) : View(context) {
 
     // ------------------------------------------------------------------ spacebar trail
 
-    private fun drawTrail(c: Canvas) {
+    private fun drawSpaceSwipeTrail(c: Canvas) {
         // Draw the basic space-swipe trail (cursor movement)
         val a = trailAlpha
         if (a > 0f) {
@@ -760,15 +818,23 @@ class KeyboardView(context: Context) : View(context) {
             fill.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xCC).toInt())
             c.drawCircle(x1, y1, dp(5f), fill)
         }
+    }
 
-        // Draw the gesture engine trail (glide typing) — smooth bezier with width taper + alpha fade
-        val ge = gestureEngine
-        if (ge != null) {
-            ge.setTrailColor(kbTheme.accent)
-            ge.drawTrail(c, trailPaint)
-            // Schedule redraw for trail animation
-            if (ge.hasTrail()) invalidate()
-        }
+    /**
+     * Draw the glide-typing trail via the gesture engine. Independent of [trailActive]
+     * (which tracks only the space-swipe trail) — the gesture engine manages its own
+     * lifecycle (live draw while the finger is down + whole-trail fade after release).
+     *
+     * Calling [invalidate] here keeps the redraw loop alive while the trail is still
+     * visible, so the post-release fade animates without needing the finger to move.
+     */
+    private fun drawGestureTrail(c: Canvas) {
+        val ge = gestureEngine ?: return
+        if (!ge.hasTrail()) return
+        ge.setTrailColor(kbTheme.accent)
+        ge.drawTrail(c, trailPaint)
+        // Keep animating until the trail is fully gone.
+        if (ge.hasTrail()) invalidate()
     }
 
     private fun startTrail(x: Float, y: Float) {
@@ -1007,7 +1073,20 @@ class KeyboardView(context: Context) : View(context) {
             }
             MotionEvent.ACTION_MOVE -> {
                 val n = e.pointerCount
-                for (i in 0 until n) move(e.getPointerId(i), e.getX(i), e.getY(i))
+                for (i in 0 until n) {
+                    val pid = e.getPointerId(i)
+                    // Feed historical points for the glide pointer so fast swipes don't
+                    // cut corners — Android batches intermediate positions between frames
+                    // into a single MOVE event; without these the trail and the gesture
+                    // engine both see only the final position of each batch.
+                    val histCount = e.historySize
+                    if (histCount > 0 && pid == slidePointerId) {
+                        for (h in 0 until histCount) {
+                            move(pid, e.getHistoricalX(i, h), e.getHistoricalY(i, h))
+                        }
+                    }
+                    move(pid, e.getX(i), e.getY(i))
+                }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 up(e.getPointerId(e.actionIndex), false)
@@ -1261,6 +1340,33 @@ class KeyboardView(context: Context) : View(context) {
             return
         }
         if (id == slidePointerId && k.kind == KeyKind.CHAR) {
+            // Detect the glide threshold: once the finger has moved far enough from
+            // the down point, this is a glide (not a tap). This mirrors Expressive's
+            // KeyGesture.GLIDE detection — `glideStart = max(slop*1.5, iw*0.75)`.
+            // Before the threshold: normal rollover to neighbouring keys (so a thumb
+            // that drifts one key over still types the right letter). After: the
+            // pointer is locked to the original key, key previews are hidden, and
+            // only the trail follows the finger.
+            if (!p.gliding) {
+                val dx = x - p.downX
+                val dy = y - p.downY
+                val dist = sqrt(dx * dx + dy * dy)
+                val keyW = if (rows.isNotEmpty() && rows[0].isNotEmpty()) {
+                    rows[0][0].right - rows[0][0].left
+                } else dp(40f)
+                if (dist > keyW * GLIDE_START_KEY_WIDTHS) {
+                    p.gliding = true
+                    // Cancel any pending long-press / repeat — a glide is not a hold.
+                    cancelLong(p)
+                    // Hide the key preview popup — the trail is the only feedback now.
+                    hidePreview()
+                    // Clear the live preview composing text so the first letter (if
+                    // instant-typed) doesn't linger while the decoder hasn't run yet.
+                    listener?.onGlidePreview(null)
+                    hapticTick()
+                }
+            }
+
             slidePath.addLast(floatArrayOf(x, y))
             if (slidePath.size > 240) slidePath.removeFirst()
 
@@ -1268,17 +1374,25 @@ class KeyboardView(context: Context) : View(context) {
             val elapsed = (android.os.SystemClock.uptimeMillis() - gestureStartTime).toInt()
             gestureEngine?.addEventPoint(x, y, elapsed)
 
-            // Glide live preview using the gesture engine's sampled path
-            val sampledPath = gestureEngine?.getIncrementalPath()
-            val nowMs = android.os.SystemClock.uptimeMillis()
-            if (sampledPath != null && sampledPath.size >= 6 &&
-                gestureEngine?.hasRecognitionTimePast(nowMs, lastGlidePreviewMs) == true) {
-                lastGlidePreviewMs = nowMs
-                listener?.onGlidePreview(slidePathToWord(sampledPath))
+            // Glide live preview — only once we're actually gliding (not during the
+            // initial tap). The service decodes the sampled path through the real
+            // SlideDecoder and surfaces a real word (or nothing) as composing text.
+            if (p.gliding) {
+                val sampledPath = gestureEngine?.getIncrementalPath()
+                val nowMs = android.os.SystemClock.uptimeMillis()
+                if (sampledPath != null && sampledPath.size >= 6 &&
+                    gestureEngine?.hasRecognitionTimePast(nowMs, lastGlidePreviewMs) == true) {
+                    lastGlidePreviewMs = nowMs
+                    listener?.onGlidePreviewPath(sampledPath)
+                }
             }
 
-            // Draw trail via gesture engine
-            updateTrail(x, y)
+            // Redraw so the gesture-engine trail follows the finger.
+            invalidate()
+
+            // While gliding, do NOT fall through to the key-rollover block below.
+            // The pointer stays on the original key; crossed keys are not "pressed".
+            if (p.gliding) return
         }
         if (k.kind == KeyKind.SPACE) {
             if (p.consumed) return
@@ -1286,13 +1400,25 @@ class KeyboardView(context: Context) : View(context) {
                 p.swiping = true
                 cancelLong(p)
                 hidePreview()
-                p.lastX = x
-                p.lastY = y
+                // Anchor lastX at the DOWN point — NOT the current x.
+                // Previously this was `p.lastX = x`, which swallowed the
+                // threshold-crossing motion: the first 14dp that triggered
+                // the swipe was never translated into a cursor event, so the
+                // first cursor step fired late. When the user reversed
+                // direction quickly, the accumulated swallowed motion made
+                // the cursor feel inverted (finger moving left, cursor
+                // still moving right until the backlog cleared).
+                // Anchoring at downX means the first cursor event fires
+                // immediately in the correct direction.
+                p.lastX = p.downX
+                p.lastY = p.downY
                 startTrail(p.downX, p.downY)
             }
             if (p.swiping) {
                 val step = dp(14f)
+                // Finger moved RIGHT (x > lastX) → cursor RIGHT (delta = +1)
                 while (x - p.lastX >= step) { listener?.onCursor(1); p.lastX += step }
+                // Finger moved LEFT (x < lastX) → cursor LEFT (delta = -1)
                 while (p.lastX - x >= step) { listener?.onCursor(-1); p.lastX -= step }
                 updateTrail(x, y)
             }
@@ -1371,49 +1497,9 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     /** Quick raw sequence from slide path — for live preview only. */
-    private fun slidePathToWord(path: List<FloatArray>): String? {
-        if (path.size < 4) return null
-        val out = StringBuilder()
-        var last = ' '
-        for (point in path) {
-            val x = point[0]
-            val y = point[1]
-            var best: Key? = null
-            var bestDist = Float.MAX_VALUE
-            for (row in rows) {
-                for (k in row) {
-                    if (k.kind != KeyKind.CHAR || k.label.length != 1) continue
-                    val cx = (k.left + k.right) / 2f
-                    val cy = (k.top + k.bottom) / 2f
-                    val dx = x - cx
-                    val dy = y - cy
-                    val dist = dx * dx + dy * dy
-                    if (dist < bestDist) {
-                        bestDist = dist
-                        best = k
-                    }
-                }
-            }
-            // Same crossing gate as the decoder: preview must show crossed keys
-            // only, not every key the swipe happened to pass nearest to.
-            val k = best
-            if (k != null && bestDist <= slideKeyThreshold(k) * slideKeyThreshold(k)) {
-                val c = k.label[0].lowercaseChar()
-                if (c != last) {
-                    out.append(c)
-                    last = c
-                }
-            }
-        }
-        return out.toString().ifEmpty { null }
-    }
-
-    /** Max distance from a key center that still counts as crossing the key (0.4 key sizes). */
-    private fun slideKeyThreshold(k: Key): Float {
-        val w = (k.right - k.left).coerceAtLeast(1f)
-        val h = (k.bottom - k.top).coerceAtLeast(1f)
-        return 0.4f * minOf(w, h)
-    }
+    // NOTE: live preview now goes through the real SlideDecoder via onGlidePreviewPath
+    // (see ShadeService). The raw-crossing guess here used to surface "qwertyui" while
+    // sliding, which read as "the slide triggers every key in its path". Removed.
 
     private fun up(id: Int, cancel: Boolean) {
         val p = pointers.get(id) ?: return
@@ -1428,7 +1514,16 @@ class KeyboardView(context: Context) : View(context) {
         // Don't commit a glide word if the finger ended on an accent selection — the accent
         // branch below handles that. Without this guard, a slide that started before the
         // long-press fired (recording a few glide points) would also commit a glide word.
-        if (!cancel && !altShown && id == slidePointerId && slidePath.size >= 4 && slidePathSpread(slidePath) > dp(48f)) {
+        //
+        // The glide is committed when EITHER:
+        //  - the pointer entered glide mode (p.gliding — the finger crossed the
+        //    GLIDE_START threshold), OR
+        //  - the slide path is long enough by the old spread heuristic (backward compat
+        //    for the case where gliding wasn't set — e.g. a very fast flick that never
+        //    hit a MOVE event after the threshold).
+        val wasGlide = p.gliding
+        if (!cancel && !altShown && id == slidePointerId &&
+            (wasGlide || (slidePath.size >= 4 && slidePathSpread(slidePath) > dp(48f)))) {
             // Gesture typing: use the gesture engine's properly sampled path
             val path = gestureEngine?.getPath() ?: slidePath.toList()
             slideConsumed = listener?.onSwipePath(path) == true
