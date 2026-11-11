@@ -394,9 +394,7 @@
     <string name="cat_appearance_sub">Theme, colors, key style, size, layout</string>
     <string name="cat_typing">Typing</string>
     <string name="cat_typing_sub">Autocorrect, suggestions, glide, haptics, sound</string>
-    <string name="cat_languages">Languages &amp; data</string>
     <string name="cat_languages_sub">Dictionaries, emoji, GIF, voice, learning</string>
-    <string name="cat_backup">Backup &amp; data</string>
     <string name="cat_backup_sub">Export, import, clipboard, clear data</string>
     <string name="cat_about">About &amp; updates</string>
     <string name="cat_about_sub">Version, update checker, typing stats</string>
@@ -462,7 +460,6 @@
 
     <string name="pref_glide_typing">Glide typing</string>
     <string name="pref_glide_typing_sub">Swipe across letters to type without lifting your finger</string>
-    <string name="pref_haptic_strength">Haptic strength</string>
     <string name="pref_longpress_delay">Long-press delay</string>
 
     <string name="pref_emoji_suggestions">Emoji suggestions</string>

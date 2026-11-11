@@ -66,9 +66,9 @@
 
     <!-- Section card -->
     <color name="settings_card_bg">@color/m3_surface_container</color>
-    <color name="settings_card_stroke">@android:color/transparent</color>
+    <color name="m3_settings_card_stroke">@android:color/transparent</color>
     <color name="settings_row_bg">@color/m3_surface_bright</color>
-    <color name="settings_divider">@color/m3_outline_variant</color>
+    <color name="m3_settings_divider">@color/m3_outline_variant</color>
     <color name="settings_section_title">@color/m3_primary</color>
     <color name="settings_row_title">@color/m3_on_surface</color>
     <color name="settings_row_subtitle">@color/m3_on_surface_variant</color>
