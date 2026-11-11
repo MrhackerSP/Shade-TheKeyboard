@@ -89,7 +89,7 @@ object SmartComposeEngine {
 
             // Chain forward from firstWord
             val chain = chainForward(dict, prev1, firstWord, firstCost, maxWords - 1)
-            if (chain.isNotEmpty()) {
+            if (chain.phrase.isNotEmpty()) {
                 phrases.add(chain)
             }
         }
@@ -191,24 +191,25 @@ object SmartComposeEngine {
     /** A phrase with its total bigram cost (lower = better). */
     private data class ScoredPhrase(val phrase: String, val cost: Float)
 
-    companion object {
-        /** Maximum bigram cost for a word to be included (weights in en_bi.txt are 0-14, stored as /2). */
-        private const val MAX_COST = 8.0f
+    // NOTE: SmartComposeEngine is an `object` (singleton), so companion objects
+    // are not allowed. These constants are defined directly on the object.
 
-        /** Maximum total cost for a multi-word phrase. */
-        private const val MAX_TOTAL_COST = 20.0f
+    /** Maximum bigram cost for a word to be included (weights in en_bi.txt are 0-14, stored as /2). */
+    private const val MAX_COST = 8.0f
 
-        /** Default cost when no bigram data is available. */
-        private const val DEFAULT_COST = 6.0f
+    /** Maximum total cost for a multi-word phrase. */
+    private const val MAX_TOTAL_COST = 20.0f
 
-        /**
-         * Very common stopwords that make phrases boring when chained together.
-         * E.g. "the and of" is not a useful suggestion. We allow individual
-         * stopwords but block chains of two or more.
-         */
-        private val BORING_STOPWORDS = setOf(
-            "the", "a", "an", "of", "to", "in", "on", "at", "by", "for",
-            "and", "or", "but", "is", "was", "are", "were", "be", "been"
-        )
-    }
+    /** Default cost when no bigram data is available. */
+    private const val DEFAULT_COST = 6.0f
+
+    /**
+     * Very common stopwords that make phrases boring when chained together.
+     * E.g. "the and of" is not a useful suggestion. We allow individual
+     * stopwords but block chains of two or more.
+     */
+    private val BORING_STOPWORDS = setOf(
+        "the", "a", "an", "of", "to", "in", "on", "at", "by", "for",
+        "and", "or", "but", "is", "was", "are", "were", "be", "been"
+    )
 }

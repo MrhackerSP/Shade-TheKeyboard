@@ -489,28 +489,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 commitSmart(text, text.length)
             },
             onBack = { transitionToPanel(Panel.NONE) },
-            onDelete = { backspace() },
-            onSearchFocus = {
-                // User tapped the search box — show the letter keyboard so
-                // they can type a search query. The emoji panel's search box
-                // receives the typed text via its TextWatcher.
-                // We temporarily switch to Panel.NONE (keyboard visible) but
-                // keep the emoji panel's search box focused so typed text
-                // goes into it, not the editor.
-                if (panel == Panel.EMOJI) {
-                    // Don't transition away — instead, show the keyboard
-                    // underneath the emoji panel. The emoji panel is the IME's
-                    // input view; the keyboard (kb) is a child of the same
-                    // container. We make kb visible alongside the emoji panel.
-                    kb.visibility = View.VISIBLE
-                    emoji.bringToFront()
-                }
-            },
-            onSearchExit = {
-                // Search exited — hide the letter keyboard, return to emoji browse.
-                kb.visibility = View.GONE
-            }
+            onDelete = { backspace() }
         )
+        // Wire search mode callbacks (set after construction — they're public var properties)
+        emoji.onSearchFocus = {
+            // User tapped the search box — show the letter keyboard so
+            // they can type a search query. The emoji panel's search box
+            // receives the typed text via its TextWatcher.
+            if (panel == Panel.EMOJI) {
+                kb.visibility = View.VISIBLE
+                emoji.bringToFront()
+            }
+        }
+        emoji.onSearchExit = {
+            // Search exited — hide the letter keyboard, return to emoji browse.
+            kb.visibility = View.GONE
+        }
         clipPanel = ClipboardPanel(
             this, clips,
             onPaste = { clip ->
@@ -1840,7 +1834,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
             // 1) Try contextual suggestions first: find clips relevant to the current
             //    field type and foreground app.
-            val pkg = if (this::info.isInitialized) info?.packageName else null
+            val pkg = info?.packageName
             val contextual = ClipboardSuggestions.suggest(
                 clips = allClips,
                 fieldType = currentFieldType,

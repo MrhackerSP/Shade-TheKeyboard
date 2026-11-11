@@ -76,18 +76,18 @@ object ClipboardSuggestions {
      * @return relevant clips, most relevant first. Empty if nothing matches.
      */
     fun suggest(
-        clips: List<Clip>,
+        clips: List<ClipboardStore.Clip>,
         fieldType: FieldTypeDetector.FieldType,
         appPackage: String?,
         maxResults: Int = 3
-    ): List<Clip> {
+    ): List<ClipboardStore.Clip> {
         if (clips.isEmpty()) return emptyList()
 
         // Determine which clip types are relevant for this context
         val relevantTypes = relevantTypesFor(fieldType, appPackage)
         if (relevantTypes.isEmpty()) return emptyList()
 
-        val results = ArrayList<Clip>()
+        val results = ArrayList<ClipboardStore.Clip>()
         val seenTexts = HashSet<String>()  // dedupe by text content
 
         for (clip in clips) {

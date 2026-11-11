@@ -152,7 +152,8 @@ class EmojiPanel(
 
     private val searchBox = EditText(context)
     private val emptyView = TextView(context)
-    private var searchMode = false
+    var searchMode = false
+        private set
 
     /**
      * Search results grid — shown ABOVE the search box when the user types a query.

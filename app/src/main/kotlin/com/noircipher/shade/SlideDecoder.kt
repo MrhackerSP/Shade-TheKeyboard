@@ -83,16 +83,14 @@ class SlideDecoder(
         // 'ё' to 'е', 'ъ' to 'ь', 'й' to 'и'
     )
 
-    private companion object {
+    companion object {
         const val SHAPE_N = 24
         const val LOOP_MIN_TURNING = 4.5f
         const val MAX_DOUBLE_LETTER_WORD = 16
         const val CROSSING_THRESHOLD = 0.4f
         const val MAX_SUBSEQ_RAW = 14
         const val MAX_SUBSEQ_CANDIDATES = 64
-    }
 
-    companion object {
         /**
          * Minimum duration (ms) for a stroke to be considered a glide rather than a
          * tap-with-jitter. Mirrors Expressive's `looksLikeGlide` 140ms threshold.
