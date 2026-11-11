@@ -1,16 +1,13 @@
 package com.noircipher.shade
 
 import android.content.Context
-import android.animation.ValueAnimator
 import android.graphics.drawable.GradientDrawable
 import android.text.Editable
 import android.text.TextWatcher
-import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.GridView
@@ -19,7 +16,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.TextView
-import kotlin.math.abs
 
 class EmojiPanel(
     context: Context,
@@ -28,98 +24,13 @@ class EmojiPanel(
     private val onDelete: () -> Unit
 ) : LinearLayout(context) {
 
-    // Comprehensive emoji set — 8 categories covering the most-used Unicode emoji.
-    // Each category has 40-60 emojis. Total ~400 emojis, matching what Gboard
-    // and SwiftKey ship in their default panels (full Unicode 15.1 set is 3700+,
-    // but most users only need the common ones; the rest are reachable via search).
     private val baseCategories: List<Pair<String, List<String>>> = listOf(
-        // Smileys & emotion
-        "😀" to listOf(
-            "😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃","😉","😊","😇","🥰","😍","🤩",
-            "😘","😗","😚","😙","😋","😛","😜","🤪","😝","🤗","🤭","🫢","🫣","🤔","🫡","🤐",
-            "🤨","😐","😑","😶","🫥","😏","😒","🙄","😬","😮‍💨","🤥","😌","😔","😪","🤤","😴",
-            "😷","🤒","🤕","🤢","🤮","🤧","🥵","🥶","🥴","😵","🤯","🤠","🥳","🥸","😎","🤓",
-            "🧐","😕","🫤","😟","🙁","☹️","😮","😯","😲","😳","🥺","🥹","😦","😧","😨","😰",
-            "😥","😢","😭","😱","😖","😣","😞","😓","😩","😫","🥱","😤","😡","😠","🤬","😈",
-            "👿","💀","☠️","💩","🤡","👹","👺","👻","👽","👾","🤖","😺","😸","😹","😻","😼",
-            "😽","🙀","😿","😾","🙈","🙉","🙊","💌","💘","💝","💖","💗","💓","💞","💕","💟"
-        ),
-        // People & gestures
-        "👍" to listOf(
-            "👍","👎","👌","✌️","🤞","🫰","🤟","🤘","🤙","👈","👉","👆","🖕","👇","☝️","🫵",
-            "👋","🤚","✋","🖖","🤌","🤏","👏","🙌","🤝","🙏","✍️","💪","🦾","🦿","🦵","🦶",
-            "👂","🦻","👃","🧠","🫀","🫁","🦷","🦴","👀","👁️","👅","👄","🫦","💋","🧒","👦",
-            "👧","🧑","👱","👨","👩","🧓","👴","👵","🙇","💁","🙅","🙆","🙋","🧏","🤦","🤷",
-            "💆","💇","🚶","🧍","🧎","🏃","💃","🕺","🕴️","👯","🧖","🧗","🤺","🏇","⛷️","🏂",
-            "🏌️","🏄","🚣","🏊","⛹️","🏋️","🚴","🤸","🤼","🤽","🤾","🤹","👶","🤱","👼","🎅"
-        ),
-        // Animals & nature
-        "🐻" to listOf(
-            "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐽","🐸","🐵",
-            "🙈","🙉","🙊","🐒","🐔","🐧","🐦","🐤","🐣","🐥","🦆","🦅","🦉","🦇","🐺","🐗",
-            "🐴","🦄","🐝","🪱","🐛","🦋","🐌","🐞","🐜","🪰","🪲","🪳","🦟","🦗","🕷️","🕸️",
-            "🦂","🐢","🐍","🦎","🦖","🦕","🐙","🦑","🦐","🦞","🦀","🐡","🐠","🐟","🐬","🐳",
-            "🐋","🦈","🐊","🐅","🐆","🦓","🦍","🦧","🐘","🦣","🦛","🦏","🐪","🐫","🦒","🦘",
-            "🦬","🐃","🐂","🐄","🐎","🐖","🐏","🐑","🦙","🐐","🦌","🐕","🐩","🦮","🐕‍🦺","🐈",
-            "🐈‍⬛","🪶","🐓","🦃","🦤","🦚","🦜","🦢","🦩","🕊️","🐇","🦝","🦨","🦡","🦫","🦦",
-            "🦥","🐁","🐀","🐿️","🦔","🐾","🐉","🐲","🌵","🎄","🌲","🌳","🌴","🪵","🌱","🌿",
-            "☘️","🍀","🎍","🪴","🎋","🍃","🍂","🍁","🍄","🐚","🪨","🌾","💐","🌷","🌹","🥀",
-            "🌺","🌸","🌼","🌻","🌞","🌝","🌛","🌜","🌚","🌕","🌖","🌗","🌘","🌑","🌒","🌓",
-            "🌔","🌙","🌎","🌍","🌏","🪐","💫","⭐","🌟","✨","⚡","☄️","💥","🔥","🌪️","🌈",
-            "☀️","🌤️","⛅","🌥️","☁️","🌦️","🌧️","⛈️","🌩️","🌨️","❄️","☃️","⛄","🌬️","💨","💧",
-            "💦","☔","☂️","🌊","🌫️"
-        ),
-        // Food & drink
-        "🍎" to listOf(
-            "🍏","🍎","🍐","🍊","🍋","🍌","🍉","🍇","🍓","🫐","🍈","🍒","🍑","🥭","🍍","🥥",
-            "🥝","🍅","🍆","🥑","🥦","🥬","🥒","🌶️","🫑","🌽","🥕","🫒","🧄","🧅","🥔","🍠",
-            "🥐","🥯","🍞","🥖","🥨","🧀","🧈","🥚","🍳","🧇","🥞","🧊","🥓","🥩","🍗","🍖",
-            "🦴","🌭","🍔","🍟","🍕","🥪","🥙","🧆","🌮","🌯","🫔","🥗","🥘","🫕","🥫","🍝",
-            "🍜","🍲","🍛","🍣","🍱","🥟","🦪","🍤","🍙","🍚","🍘","🍥","🥠","🥮","🍢","🍡",
-            "🍧","🍨","🍦","🥧","🧁","🍰","🎂","🍮","🍭","🍬","🍫","🍿","🍩","🍪","🌰","🥜",
-            "🍯","🥛","🍼","🫖","☕","🍵","🧃","🥤","🧋","🍶","🍺","🍻","🥂","🍷","🥃","🍸",
-            "🍹","🧉","🍾","🧊","🥄","🍴","🍽️","🥣","🥡","🥢","🧂"
-        ),
-        // Activities & sports
-        "⚽" to listOf(
-            "⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🥏","🎱","🪀","🏓","🏸","🏒","🏑","🥍",
-            "🏏","🪃","🥅","⛳","🪁","🏹","🎣","🤿","🥊","🥋","🎽","🛹","🛼","🛷","⛸️","🥌",
-            "🎿","⛷️","🏂","🪂","🏋️","🤼","🤸","⛹️","🤺","🤾","🏌️","🏇","🧘","🏄","🏊","🤽",
-            "🚣","🧗","🚵","🚴","🏆","🥇","🥈","🥉","🏅","🎖️","🏵️","🎗️","🎫","🎟️","🎪","🤹",
-            "🎭","🩰","🎨","🎬","🎤","🎧","🎼","🎹","🥁","🪘","🎷","🎺","🎸","🪕","🎻","🎲",
-            "♟️","🎯","🎳","🎮","🎰","🧩"
-        ),
-        // Travel & places
-        "🚗" to listOf(
-            "🚗","🚕","🚙","🚌","🚎","🏎️","🚓","🚑","🚒","🚐","🛻","🚚","🚛","🚜","🦯","🦽",
-            "🦼","🛴","🚲","🛵","🏍️","🛺","🚨","🚔","🚍","🚘","🚖","🚡","🚠","🚟","🚃","🚋",
-            "🚞","🚝","🚄","🚅","🚈","🚂","🚆","🚇","🚊","🚉","✈️","🛫","🛬","🛩️","💺","🛰️",
-            "🚀","🛸","🚁","🛶","⛵","🚤","🛥️","🛳️","⛴️","🚢","⚓","🪝","⛽","🚧","🚦","🚥",
-            "🚏","🗺️","🗿","🗽","🗼","🏰","🏯","🏟️","🎡","🎢","🎠","⛲","⛱️","🏖️","🏝️","🏜️",
-            "🌋","⛰️","🏔️","🗻","🏕️","⛺","🛖","🏠","🏡","🏘️","🏚️","🏗️","🏭","🏢","🏬","🏣",
-            "🏤","🏥","🏦","🏨","🏪","🏫","🏩","💒","🏛️","⛪","🕌","🕍","🛕","🕋","⛩️","🛤️",
-            "🛣️","🗾","🎑","🏞️","🌅","🌄","🌠","🎇","🎆","🌇","🌆","🏙️","🌃","🌌","🌉","🌁"
-        ),
-        // Objects
-        "💡" to listOf(
-            "⌚","📱","📲","💻","⌨️","🖥️","🖨️","🖱️","🖲️","🕹️","🗜️","💽","💾","💿","📀","📼",
-            "📷","📸","📹","🎥","📽️","🎞️","📞","☎️","📟","📠","📺","📻","🎙️","🎚️","🎛️","🧭",
-            "⏱️","⏲️","⏰","🕰️","💡","🔦","🏮","🪔","📔","📕","📖","📗","📘","📙","📚","📓",
-            "📒","📃","📜","📰","🗞️","📑","🔖","🏷️","💰","🪙","💴","💵","💶","💷","💸","💳",
-            "🧾","✏️","✒️","🖋️","🖊️","🖌️","🖍️","📝","💼","📁","📂","🗂️","📅","📆","🗒️","🗓️",
-            "📇","📈","📉","📊","📋","📌","📍","📎","🖇️","📏","📐","✂️","🗃️","🗄️","🗑️","🔒",
-            "🔓","🔏","🔐","🔑","🗝️","🔨","🪓","⛏️","⚒️","🛠️","🗡️","⚔️","💣","🪃","🏹","🛡️",
-            "🪚","🔧","🪛","🔩","⚙️","🗜️","⚖️","🦯","🔗","⛓️","🪝","🧰","🧲","🪜"
-        ),
-        // Symbols & hearts
-        "❤️" to listOf(
-            "❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔","❣️","💕","💞","💓","💗","💖",
-            "💘","💝","💟","❌","⭕","🛑","⛔","✅","✔️","❗","❓","⁉️","‼️","💲","💱","⚜️",
-            "🔱","📛","🔰","✳️","❇️","©️","®️","™️","🔵","🔴","🟠","🟡","🟢","🟣","⚫","⚪",
-            "🟤","🔺","🔻","🔸","🔹","🔶","🔷","🔳","🔲","▪️","▫️","◾","◽","◼️","◻️","🟥",
-            "🟧","🟨","🟩","🟦","🟪","⬛","⬜","🟫","🔈","🔇","🔉","🔊","🔔","🔕","🎵","🎶",
-            "➕","➖","➗","✖️","♾️","💤","💨","💦","♻️","⚠️","🚸","⚜️","🔱","🔰","⭕","✳️"
-        )
+        "😀" to "😀 😃 😄 😁 😆 😅 😂 🤣 🙂 😉 😊 😇 🥰 😍 🤩 😘 😋 😛 😜 🤪 🤔 🤨 😐 😑 😶 🙄 😏 😣 😥 😮 😴 😌 😢 😭 😤 😠 😡 🤯 😳 🥵 🥶 😱 😰 😓 🤗 🤭 🫡 😎 🤓 🥳 🥺 😬 🙃".split(" "),
+        "👍" to "👍 👎 👌 ✌️ 🤞 🤟 🤘 👋 🙏 👏 🙌 💪 👀 🧠 ❤️ 🧡 💛 💚 💙 💜 🖤 💔 💕 💯 🔥 ✨ ⭐ 🎉 🎂".split(" "),
+        "🐻" to "🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🐔 🐧 🐦 🦆 🦉 🐺 🐴 🦄 🐝 🦋 🐢 🐍 🐙 🐬 🐳 🌸 🌹 🌻 🌲 🌴 🍀 🌍 🌙 ☀️ ⛅ ☔ ⚡ ❄️".split(" "),
+        "🍎" to "🍎 🍌 🍇 🍓 🍒 🍑 🍍 🥑 🍅 🥕 🌽 🍞 🧀 🍗 🍔 🍟 🍕 🌭 🌮 🍣 🍜 🍩 🍪 🍫 🍿 ☕ 🍵 🍺 🍷 🥤".split(" "),
+        "⚽" to "⚽ 🏀 🏈 🎾 🎮 🎧 🎸 🎬 📱 💻 📷 💡 📚 ✏️ 🔑 💰 🎁 ⏰ 🚗 🚕 🚌 ✈️ 🚀 🚲 🏠 🏖️ ⛰️".split(" "),
+        "✅" to "✅ ❌ ❗ ❓ ⚠️ 💤 ➕ ➖ ➡️ ⬅️ ⬆️ ⬇️ 🔴 🟢 🔵 ⚪ ⚫ ♻️ ✔️ ©️ ®️ ™️".split(" ")
     )
 
     /**
@@ -152,167 +63,7 @@ class EmojiPanel(
 
     private val searchBox = EditText(context)
     private val emptyView = TextView(context)
-    var searchMode = false
-        private set
-
-    /**
-     * Search results grid — shown ABOVE the search box when the user types a query.
-     * The main [grid] is hidden during search; this grid takes its place.
-     */
-    private val searchGrid = GridView(context)
-    private var searchResults: List<String> = emptyList()
-    private val searchAdapter = object : BaseAdapter() {
-        override fun getCount() = searchResults.size
-        override fun getItem(position: Int) = searchResults[position]
-        override fun getItemId(position: Int) = position.toLong()
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-            val tv = (convertView as? TextView) ?: TextView(context).apply {
-                gravity = Gravity.CENTER
-                textSize = 24f
-                setPadding(0, dp(8f), 0, dp(8f))
-            }
-            tv.text = searchResults[position]
-            return tv
-        }
-    }
-
-    /**
-     * Callbacks for the host (ShadeService) to show/hide the letter keyboard
-     * when the user enters/exits emoji search mode.
-     */
-    var onSearchFocus: (() -> Unit)? = null
-    var onSearchExit: (() -> Unit)? = null
-
-    /**
-     * The current search query text. Read by the host (ShadeService) when
-     * the keyboard's backspace or letter keys are pressed during emoji
-     * search — the host appends/removes characters here instead of the
-     * editor. Setting it via [setSearchQuery] triggers [applySearch].
-     */
-    val searchQuery: String get() = searchBox.text.toString()
-
-    /** Update the search box text from the host (keyboard input). */
-    fun setSearchQuery(query: String) {
-        searchBox.setText(query)
-        searchBox.setSelection(query.length)
-    }
-
-    /**
-     * Total number of selectable tabs = recent (1) + categories.
-     * Used by the swipe-to-cycle-category gesture.
-     */
-    private val tabCount: Int get() = 1 + baseCategories.size
-
-    /**
-     * Gesture detector for vertical swipes on the emoji grid.
-     *
-     * WhatsApp-style: swiping UP on the grid cycles to the NEXT category AND
-     * hides the category bar (slide-down animation). Swiping DOWN cycles to
-     * the PREVIOUS category AND brings the bar back (slide-up animation).
-     * The bar stays hidden until the user swipes down again — giving the
-     * emoji grid more room while browsing.
-     *
-     * Horizontal swipes are left to the GridView (for scrolling within a
-     * category). Only vertical swipes beyond the threshold trigger
-     * a category change + bar toggle.
-     */
-    private val swipeThreshold: Int = dp(60f)
-    private val swipeVelocityThreshold = 200f
-
-    /** True when the category bar is currently hidden (slid out below). */
-    private var barHidden = false
-    /** Height of the category bar in px (for the slide animation distance). */
-    private val barHeight: Int = dp(44f)
-    /** Current slide animation (cancelled if a new swipe fires mid-animation). */
-    private var barAnimator: ValueAnimator? = null
-
-    private val gridGestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-        override fun onDown(e: MotionEvent): Boolean = true
-
-        override fun onFling(
-            e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float
-        ): Boolean {
-            if (searchMode) return false  // don't cycle categories while searching
-            if (e1 == null) return false
-            val dy = e2.y - e1.y
-            val dx = e2.x - e1.x
-            // Only react to predominantly-vertical swipes (|dy| > |dx|)
-            // so horizontal scrolling within a category still works.
-            if (abs(dy) < abs(dx)) return false
-            if (abs(dy) < swipeThreshold && abs(velocityY) < swipeVelocityThreshold) return false
-            if (dy < 0) {
-                // Swipe UP → next category + hide the bar
-                select((selected + 1) % tabCount)
-                hideBar()
-            } else {
-                // Swipe DOWN → previous category + show the bar
-                select((selected - 1 + tabCount) % tabCount)
-                showBar()
-            }
-            return true
-        }
-    })
-
-    /**
-     * Slide the category bar out of view (downward, below the keyboard).
-     * The bar's height collapses to 0 so the grid expands to fill the space.
-     */
-    private fun hideBar() {
-        if (barHidden) return
-        barHidden = true
-        barAnimator?.cancel()
-        barAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 200
-            interpolator = AccelerateDecelerateInterpolator()
-            addUpdateListener { anim ->
-                val t = anim.animatedValue as Float
-                // Slide down: translationY goes from 0 to barHeight
-                bar.translationY = barHeight * t
-                // Fade out
-                bar.alpha = 1f - t
-            }
-            addListener(object : android.animation.AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: android.animation.Animator) {
-                    bar.visibility = GONE
-                    bar.translationY = 0f
-                    bar.alpha = 1f
-                    // Request layout so the grid expands to fill the bar's space
-                    requestLayout()
-                }
-            })
-            start()
-        }
-    }
-
-    /**
-     * Slide the category bar back into view (upward from below).
-     * Restores the bar's height and the grid shrinks accordingly.
-     */
-    private fun showBar() {
-        if (!barHidden) return
-        barHidden = false
-        bar.visibility = VISIBLE
-        barAnimator?.cancel()
-        barAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
-            duration = 200
-            interpolator = AccelerateDecelerateInterpolator()
-            addUpdateListener { anim ->
-                val t = anim.animatedValue as Float
-                // Slide up: translationY goes from barHeight to 0
-                bar.translationY = barHeight * t
-                // Fade in
-                bar.alpha = 1f - t
-            }
-            addListener(object : android.animation.AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: android.animation.Animator) {
-                    bar.translationY = 0f
-                    bar.alpha = 1f
-                    requestLayout()
-                }
-            })
-            start()
-        }
-    }
+    private var searchMode = false
 
     /** keyword -> list of emojis, loaded lazily from assets/emoji/emoji_keywords_*.tsv */
     private val keywordMap: Map<String, List<String>> by lazy { loadKeywordMap() }
@@ -337,9 +88,7 @@ class EmojiPanel(
     init {
         orientation = VERTICAL
 
-        // ── Search box (top, always visible) ──────────────────────────────
-        // In browse mode the search box shows the hint "Search emoji".
-        // In search mode the user types here, and results appear in searchGrid below.
+        // Search bar (added above the suggestion row)
         searchBox.hint = context.getString(R.string.emoji_search_hint)
         searchBox.maxLines = 1
         searchBox.textSize = 14f
@@ -356,17 +105,8 @@ class EmojiPanel(
                 applySearch(s?.toString().orEmpty().trim())
             }
         })
-        // When the search box gains focus, enter search mode — the host shows
-        // the letter keyboard so the user can type, and the search results grid
-        // appears below the search box.
-        searchBox.setOnFocusChangeListener { _, hasFocus ->
-            if (hasFocus && !searchMode) {
-                enterSearch()
-            }
-        }
         addView(searchBox, LayoutParams(LayoutParams.MATCH_PARENT, dp(40f)))
 
-        // ── Suggestion row (below search box, hidden in search mode) ───────
         suggestionScroll.visibility = GONE
         suggestionScroll.isHorizontalScrollBarEnabled = false
         suggestionRow.orientation = HORIZONTAL
@@ -376,37 +116,10 @@ class EmojiPanel(
         )
         addView(suggestionScroll, LayoutParams(LayoutParams.MATCH_PARENT, dp(44f)))
 
-        // ── Search results grid (hidden by default, shown in search mode) ──
-        // This grid appears ABOVE the main grid when the user is searching.
-        // It takes the same space as the main grid (weight 1).
-        searchGrid.numColumns = 8
-        searchGrid.stretchMode = GridView.STRETCH_COLUMN_WIDTH
-        searchGrid.adapter = searchAdapter
-        searchGrid.setSelector(android.R.color.transparent)
-        searchGrid.visibility = GONE
-        searchGrid.setOnItemClickListener { _, _, pos, _ ->
-            val emoji = searchResults[pos]
-            // Record to recents and insert — pressing back from search
-            // updates only recents, everything else stays the same.
-            recordRecent(emoji)
-            onEmoji(emoji)
-            // Stay in search mode so the user can pick more results.
-            // The user exits search by pressing back.
-        }
-        addView(searchGrid, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
-
-        // ── Main emoji grid ────────────────────────────────────────────────
         grid.numColumns = 8
         grid.stretchMode = GridView.STRETCH_COLUMN_WIDTH
         grid.adapter = adapter
         grid.setSelector(android.R.color.transparent)
-
-        // WhatsApp-style vertical swipe to cycle categories.
-        grid.setOnTouchListener { _, event ->
-            gridGestureDetector.onTouchEvent(event)
-            false  // let the GridView still handle scrolling
-        }
-
         grid.setOnItemClickListener { _, _, pos, _ ->
             val emoji = items[pos]
             recordRecent(emoji)
@@ -425,13 +138,11 @@ class EmojiPanel(
         }
         addView(grid, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
 
-        // ── Empty view (no search results) ────────────────────────────────
         emptyView.text = context.getString(R.string.emoji_no_results)
         emptyView.gravity = Gravity.CENTER
         emptyView.visibility = GONE
         addView(emptyView, LayoutParams(LayoutParams.MATCH_PARENT, dp(40f)))
 
-        // ── Category bar (bottom, slides down/up on swipe) ────────────────
         bar.orientation = HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         abc.text = context.getString(R.string.abc)
@@ -471,127 +182,46 @@ class EmojiPanel(
     private fun select(i: Int) {
         // Selecting a category tab exits search mode (if active) and shows the
         // chosen category. The user can re-enter search by typing in the box.
+        // Clear searchMode BEFORE calling setText("") so the TextWatcher's
+        // synchronous callback doesn't recurse back into select().
         if (searchMode) {
-            exitSearch()
+            searchMode = false
+            searchBox.setText("")
         }
         selected = i
         items = when (i) {
             0 -> if (recent.isNotEmpty()) recent else baseCategories[0].second
             else -> baseCategories[i - 1].second
         }
-        // Cap recents at 4 rows (32 emojis = 8 columns × 4 rows)
-        if (i == 0 && items.size > MAX_RECENT_ROWS * 8) {
-            items = items.take(MAX_RECENT_ROWS * 8)
-        }
-        emptyView.visibility = GONE
-        grid.visibility = VISIBLE
-        searchGrid.visibility = GONE
+        emptyView.visibility = if (items.isEmpty()) VISIBLE else GONE
+        grid.visibility = if (items.isEmpty()) GONE else VISIBLE
         adapter.notifyDataSetChanged()
         grid.setSelection(0)
         paintTabs()
     }
 
-    /**
-     * Enter search mode: hide the main grid + suggestion row, show the search
-     * results grid, and notify the host (ShadeService) to show the letter
-     * keyboard so the user can type a query.
-     *
-     * The search box stays at the top; the search results appear in [searchGrid]
-     * below it. The main [grid] and the category bar are hidden so the search
-     * results have maximum room.
-     */
-    private fun enterSearch() {
-        if (searchMode) return
-        searchMode = true
-        // Hide the suggestion row — the search box replaces it
-        suggestionScroll.visibility = GONE
-        // Show the search results grid, hide the main grid
-        searchGrid.visibility = VISIBLE
-        grid.visibility = GONE
-        // Hide the category bar while searching — it takes up room and isn't
-        // useful in search mode. It comes back when search exits.
-        bar.visibility = GONE
-        // Notify the host to show the letter keyboard
-        onSearchFocus?.invoke()
-        paintTabs()
-    }
-
-    /**
-     * Exit search mode: clear the search query, hide the search results grid,
-     * restore the main grid + category bar, and notify the host to hide the
-     * letter keyboard.
-     *
-     * Recents have already been updated if the user tapped a search result —
-     * pressing back from search changes ONLY recents, everything else stays
-     * the same (the previously-selected category is re-shown).
-     */
-    fun exitSearch() {
-        if (!searchMode) return
-        searchMode = false
-        searchBox.setText("")
-        searchBox.clearFocus()
-        // Hide the search results grid
-        searchGrid.visibility = GONE
-        searchResults = emptyList()
-        searchAdapter.notifyDataSetChanged()
-        // Restore the main grid + category bar
-        grid.visibility = VISIBLE
-        if (!barHidden) bar.visibility = VISIBLE
-        // Restore the suggestion row if there are suggestions
-        if (suggestionRow.childCount > 0) suggestionScroll.visibility = VISIBLE
-        // Notify the host to hide the letter keyboard
-        onSearchExit?.invoke()
-        // Re-select the current category to refresh the grid
-        select(selected)
-    }
-
     private fun applySearch(query: String) {
         if (query.isEmpty()) {
-            // Clear results but stay in search mode — the user might still
-            // be typing. The search box has focus, so they can continue.
-            searchResults = emptyList()
-            searchAdapter.notifyDataSetChanged()
-            emptyView.visibility = if (searchResults.isEmpty()) VISIBLE else GONE
+            if (!searchMode) return
+            searchMode = false
+            select(selected)
             return
         }
-
-        // Tokenize the query on whitespace and match ALL tokens (AND match).
-        val tokens = query.lowercase().trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-        if (tokens.isEmpty()) {
-            searchResults = emptyList()
-            searchAdapter.notifyDataSetChanged()
-            return
-        }
-
-        // Score each emoji by how well it matches.
-        data class Scored(val emoji: String, val score: Float)
-        val scored = ArrayList<Scored>()
-
-        for ((keyword, emojis) in keywordMap) {
-            val kwLower = keyword.lowercase()
-            if (!tokens.all { kwLower.contains(it) }) continue
-            var score = keyword.length.toFloat()
-            for (tok in tokens) {
-                if (kwLower == tok) score -= 10f
-                else if (kwLower.startsWith(tok)) score -= 5f
-            }
-            for (e in emojis) {
-                scored.add(Scored(e, score))
-            }
-        }
-
-        // Sort by score (lower = better), then deduplicate
+        searchMode = true
+        val q = query.lowercase()
         val results = LinkedHashSet<String>()
-        for ((emoji, _) in scored.sortedBy { it.score }) {
-            results.add(emoji)
-            if (results.size >= 96) break
+        for ((keyword, emojis) in keywordMap) {
+            if (keyword.contains(q)) {
+                results.addAll(emojis)
+                if (results.size >= 96) break
+            }
         }
-
-        searchResults = results.toList()
-        emptyView.visibility = if (searchResults.isEmpty()) VISIBLE else GONE
-        searchGrid.visibility = if (searchResults.isEmpty()) GONE else VISIBLE
-        searchAdapter.notifyDataSetChanged()
-        searchGrid.setSelection(0)
+        items = results.toList()
+        emptyView.visibility = if (items.isEmpty()) VISIBLE else GONE
+        grid.visibility = if (items.isEmpty()) GONE else VISIBLE
+        adapter.notifyDataSetChanged()
+        grid.setSelection(0)
+        paintTabs()
     }
 
     private fun paintTabs() {
@@ -671,9 +301,8 @@ class EmojiPanel(
             .putStringSet("items", recent.toSet())
             .putString("order", recent.joinToString("\n"))
             .apply()
-        // If we're currently showing the recent category, refresh it (capped at 4 rows)
         if (selected == 0 && !searchMode) {
-            items = recent.take(MAX_RECENT)
+            items = recent
             adapter.notifyDataSetChanged()
         }
     }
@@ -702,9 +331,7 @@ class EmojiPanel(
 
     fun setSuggestions(suggestions: List<String>) {
         suggestionRow.removeAllViews()
-        // Don't show suggestions while in search mode — the search box is
-        // the active input element.
-        if (searchMode || suggestions.isEmpty()) {
+        if (suggestions.isEmpty()) {
             suggestionScroll.visibility = GONE
             return
         }
@@ -743,48 +370,8 @@ class EmojiPanel(
         paintTabs()
     }
 
-    /**
-     * Called when the emoji panel is about to be shown (from ShadeService's
-     * transitionToPanel). Resets the bar to visible in case the user hid it
-     * last time, and exits search mode if it was left active.
-     */
-    fun onShow() {
-        // Exit search mode if it was left active (e.g. user navigated away
-        // while searching). Recents are preserved.
-        if (searchMode) exitSearch()
-        // Reset the category bar to visible
-        if (barHidden) {
-            barHidden = false
-            bar.visibility = VISIBLE
-            bar.translationY = 0f
-            bar.alpha = 1f
-            barAnimator?.cancel()
-            requestLayout()
-        }
-        // Re-select the current category to refresh the grid
-        select(if (recent.isNotEmpty()) 0 else 1)
-    }
-
-    /**
-     * Handle the system back button. If in search mode, exit search and
-     * return to browse mode (recents already updated). Otherwise return
-     * false so the host handles back (closes the emoji panel).
-     *
-     * @return true if the back press was consumed (search mode exited),
-     *   false if the host should handle it.
-     */
-    fun onBackPressed(): Boolean {
-        if (searchMode) {
-            exitSearch()
-            return true
-        }
-        return false
-    }
-
     companion object {
-        /** Max recent emojis stored = 4 rows × 8 columns = 32 visible at once. */
-        private const val MAX_RECENT_ROWS = 4
-        private const val MAX_RECENT = MAX_RECENT_ROWS * 8  // 32
+        private const val MAX_RECENT = 24
     }
 }
 

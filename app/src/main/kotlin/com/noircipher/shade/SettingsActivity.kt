@@ -80,11 +80,6 @@ class SettingsActivity : AppCompatActivity() {
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
 
-        // Register the predictive-back-compatible callback (replaces deprecated onBackPressed).
-        // Enabled by default so it intercepts back; re-enabled in refreshPage() based on state.
-        backCallback.isEnabled = true
-        onBackPressedDispatcher.addCallback(this, backCallback)
-
         refreshPage()
     }
 
@@ -93,22 +88,17 @@ class SettingsActivity : AppCompatActivity() {
         adapter.notifyDataSetChanged()
     }
 
-    // Migrated from deprecated onBackPressed() to OnBackPressedDispatcher
-    // for Android 16+ predictive back gesture support.
-    private val backCallback = object : androidx.activity.OnBackPressedCallback(false) {
-        override fun handleOnBackPressed() {
-            if (searchContainer.visibility == View.VISIBLE) {
-                searchContainer.visibility = View.GONE
-                searchInput.text.clear()
-                searchQuery = ""
-                adapter.applySearch("", currentPage)
-            } else if (currentPage != SettingsPage.HOME) {
-                navigateTo(SettingsPage.HOME)
-            } else {
-                isEnabled = false
-                onBackPressedDispatcher.onBackPressed()
-                isEnabled = true
-            }
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (searchContainer.visibility == View.VISIBLE) {
+            searchContainer.visibility = View.GONE
+            searchInput.text.clear()
+            searchQuery = ""
+            adapter.applySearch("", currentPage)
+        } else if (currentPage != SettingsPage.HOME) {
+            navigateTo(SettingsPage.HOME)
+        } else {
+            super.onBackPressed()
         }
     }
 
@@ -605,14 +595,6 @@ object SettingsTree {
             default = "off"
         ),
         SettingsItem.Divider,
-        SettingsItem.Slider(
-            key = "one_handed_width",
-            titleRes = R.string.pref_one_handed_width,
-            min = 50f, max = 95f, step = 1f,
-            default = 75,
-            format = "%d%%"
-        ),
-        SettingsItem.Divider,
         SettingsItem.Choice(
             key = "split_keyboard",
             titleRes = R.string.pref_split_keyboard,
@@ -622,14 +604,6 @@ object SettingsTree {
                 "always" to R.string.split_always
             ),
             default = "off"
-        ),
-        SettingsItem.Divider,
-        SettingsItem.Slider(
-            key = "split_gap",
-            titleRes = R.string.pref_split_gap,
-            min = 0f, max = 120f, step = 5f,
-            default = 0,
-            format = "%ddp"
         ),
         SettingsItem.Divider,
         SettingsItem.Toggle(
@@ -683,13 +657,6 @@ object SettingsTree {
             key = "learn_words",
             titleRes = R.string.pref_learn_words,
             default = true
-        ),
-        SettingsItem.Divider,
-        SettingsItem.Toggle(
-            key = "phrase_suggestions",
-            titleRes = R.string.pref_phrase_sugg,
-            subtitleRes = R.string.pref_phrase_sugg_sum,
-            default = false
         ),
         SettingsItem.Divider,
         SettingsItem.Header(R.string.section_glide),
@@ -868,10 +835,8 @@ object SettingsTree {
         Triple(R.string.pref_show_hints, listOf("hint", "accent", "long press", "popup"), SettingsPage.APPEARANCE),
         Triple(R.string.pref_popup_preview, listOf("popup", "preview", "preview"), SettingsPage.APPEARANCE),
         Triple(R.string.pref_key_height, listOf("size", "height", "big", "small", "tall"), SettingsPage.APPEARANCE),
-        Triple(R.string.pref_one_handed, listOf("one hand", "one-handed", "left", "right", "width"), SettingsPage.APPEARANCE),
-        Triple(R.string.pref_one_handed_width, listOf("one hand", "width", "narrow", "thumb"), SettingsPage.APPEARANCE),
-        Triple(R.string.pref_split_keyboard, listOf("split", "tablet", "landscape", "always"), SettingsPage.APPEARANCE),
-        Triple(R.string.pref_split_gap, listOf("split", "gap", "width", "distance"), SettingsPage.APPEARANCE),
+        Triple(R.string.pref_one_handed, listOf("one hand", "one-handed", "left", "right"), SettingsPage.APPEARANCE),
+        Triple(R.string.pref_split_keyboard, listOf("split", "tablet", "landscape"), SettingsPage.APPEARANCE),
         Triple(R.string.pref_number_row, listOf("number", "digit", "123"), SettingsPage.APPEARANCE),
         Triple(R.string.color_bg, listOf("color", "background", "bg"), SettingsPage.APPEARANCE),
         Triple(R.string.color_key, listOf("color", "key"), SettingsPage.APPEARANCE),
@@ -884,7 +849,6 @@ object SettingsTree {
         Triple(R.string.pref_auto_caps, listOf("capital", "caps", "uppercase"), SettingsPage.TYPING),
         Triple(R.string.pref_double_space, listOf("double", "period", "space"), SettingsPage.TYPING),
         Triple(R.string.pref_learn_words, listOf("learn", "word", "dictionary"), SettingsPage.TYPING),
-        Triple(R.string.pref_phrase_sugg, listOf("phrase", "smart compose", "multi-word", "completion"), SettingsPage.TYPING),
         Triple(R.string.pref_glide_typing, listOf("glide", "swipe", "slide", "trail"), SettingsPage.TYPING),
         Triple(R.string.pref_trackpad, listOf("trackpad", "cursor", "space"), SettingsPage.TYPING),
         Triple(R.string.pref_haptic, listOf("vibrate", "haptic", "feedback"), SettingsPage.TYPING),

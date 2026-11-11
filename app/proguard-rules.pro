@@ -10,9 +10,6 @@
 -keep class com.noircipher.shade.SettingsItem$* { *; }
 -keep class com.noircipher.shade.SettingsPage { *; }
 -keep class com.noircipher.shade.TypingStatsActivity { *; }
--keep class com.noircipher.shade.engine.SmartComposeEngine { *; }
--keep class com.noircipher.shade.TranslatorPanel { *; }
--keep class com.noircipher.shade.ClipboardSuggestions { *; }
 
 # Reflection-free code, so we can afford aggressive optimizations
 -optimizationpasses 5

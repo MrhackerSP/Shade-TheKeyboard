@@ -101,10 +101,6 @@ class KeyboardView(context: Context) : View(context) {
     var contentHeightPx = 0
     var oneHanded = 0
         private set
-    /**
-     * One-handed keyboard width as a fraction of screen width (0.5–0.95).
-     * Default 0.75. Set by the user via settings or pinch gesture.
-     */
     var oneHandedWidth = 0.75f
         set(v) { field = v.coerceIn(0.5f, 0.95f); invalidate() }
     var haptic = true
@@ -120,11 +116,6 @@ class KeyboardView(context: Context) : View(context) {
         set(v) { field = v; invalidate() }
     var keyBorders = true
     var splitKeyboard = false
-    /**
-     * Split gap width in dp (0 = use default `min(72dp, 15% screen width)`).
-     * When non-zero, overrides the default gap so the user can adjust how wide
-     * the split is.
-     */
     var splitGapDp = 0f
         set(v) { field = v.coerceIn(0f, 120f); invalidate() }
     var showHints = true
@@ -378,9 +369,6 @@ class KeyboardView(context: Context) : View(context) {
         val oldSide = oneHanded
         oneHanded = side
         val target = if (side == 0) 1f else oneHandedWidth
-        // If the progress is already at the target (e.g. switching from left to
-        // right — both use the same width), the animator would be a no-op. But
-        // the side changed, so we still need to relayout (offX depends on oneHanded).
         if (oneHandedProgress == target) {
             if (side != oldSide) { layoutKeys(); invalidate() }
             return
@@ -391,6 +379,9 @@ class KeyboardView(context: Context) : View(context) {
             interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener {
                 oneHandedProgress = it.animatedValue as Float
+                // TODO(perf): layoutKeys() runs every frame (~11 passes over ~40 keys).
+                // Acceptable for a one-time user-initiated toggle, but could precompute
+                // start/end layouts and interpolate offsets if this becomes hot.
                 layoutKeys()
                 invalidate()
             }
@@ -436,7 +427,6 @@ class KeyboardView(context: Context) : View(context) {
         val bottomRowPad = dp(2f)
         val defaultPad = dp(3f)
         rowHeight = (h - padTop - padBottom) / rows.size
-        // Split gap: use the user-set gap width if non-zero, else the default.
         val maxGap = if (splitGapDp > 0f) dp(splitGapDp) else min(dp(72f), w * 0.15f)
         val gap = maxGap * splitProgress
 
@@ -451,12 +441,6 @@ class KeyboardView(context: Context) : View(context) {
 
             var x = offX + padX
             var gapDone = false
-            // Insert the split gap at the key-count midpoint (idx >= row.size / 2),
-            // NOT the weight midpoint. The old weight-midpoint approach misaligned
-            // the gap across rows of differing weights (e.g. the bottom row has
-            // wider shift/space/enter keys, so its weight midpoint landed at a
-            // different visual column than the letter rows). Using key count
-            // ensures the gap is between the same visual columns on every row.
             val splitIdx = row.size / 2
             for ((idx, k) in row.withIndex()) {
                 if (eligible && !gapDone && idx >= splitIdx) {
@@ -1334,7 +1318,7 @@ class KeyboardView(context: Context) : View(context) {
         // slide path here, otherwise the glide-typing system records the slide-over-accents as a
         // glide word and commits it on finger-up (inserting “letters behind the popup”).
         if (altShown) {
-            p.lastX = x
+            p.lastX = p.downX
             p.lastY = y
             updateAlt(p, x, y)
             return
@@ -1400,25 +1384,13 @@ class KeyboardView(context: Context) : View(context) {
                 p.swiping = true
                 cancelLong(p)
                 hidePreview()
-                // Anchor lastX at the DOWN point — NOT the current x.
-                // Previously this was `p.lastX = x`, which swallowed the
-                // threshold-crossing motion: the first 14dp that triggered
-                // the swipe was never translated into a cursor event, so the
-                // first cursor step fired late. When the user reversed
-                // direction quickly, the accumulated swallowed motion made
-                // the cursor feel inverted (finger moving left, cursor
-                // still moving right until the backlog cleared).
-                // Anchoring at downX means the first cursor event fires
-                // immediately in the correct direction.
                 p.lastX = p.downX
-                p.lastY = p.downY
+                p.lastY = y
                 startTrail(p.downX, p.downY)
             }
             if (p.swiping) {
                 val step = dp(14f)
-                // Finger moved RIGHT (x > lastX) → cursor RIGHT (delta = +1)
                 while (x - p.lastX >= step) { listener?.onCursor(1); p.lastX += step }
-                // Finger moved LEFT (x < lastX) → cursor LEFT (delta = -1)
                 while (p.lastX - x >= step) { listener?.onCursor(-1); p.lastX -= step }
                 updateTrail(x, y)
             }
