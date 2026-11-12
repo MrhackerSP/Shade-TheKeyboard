@@ -88,7 +88,26 @@ object AbbreviationExpander {
         "sis" to "sister",
         "bro" to "brother",
         "bab" to "baby",
-        "babe" to "baby"
+        "babe" to "baby",
+        // ── Gboard's abbreviation pairs (extracted from model.pb) ──
+        "ur" to "your",
+        "bout" to "about",
+        "tho" to "though",
+        "bc" to "because",
+        "bday" to "birthday",
+        "yea" to "yeah",
+        "abt" to "about",
+        "tonite" to "tonight",
+        "rly" to "really",
+        "wat" to "what",
+        "thru" to "through",
+        "tryin" to "trying",
+        "sayin" to "saying",
+        "lookin" to "looking",
+        "goin" to "going",
+        "comin" to "coming",
+        "cuz" to "because",
+        "cause" to "because"
     )
 
     fun expand(typed: String): String? {

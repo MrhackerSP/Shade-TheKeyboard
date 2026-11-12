@@ -221,6 +221,19 @@ class SlideDecoder(
         val corners: IntArray
         val loopMask: Int
 
+        // ── Touch-point spatial features (computed once per swipe, like Gboard's
+        //    TouchPointsDistanceFeatureProducer). These are per-swipe statistics that
+        //    don't depend on the candidate word; they characterise the quality of the
+        //    swipe itself (was it smooth? did it wander? was it fast?).
+        val tpDistMin: Float
+        val tpDistMax: Float
+        val tpDistSum: Float
+        val tpXDistMean: Float   // mean absolute x deviation of swipe points
+        val tpYDistMean: Float   // mean absolute y deviation
+        val tpXRange: Float      // x_max - x_min (horizontal spread)
+        val tpYRange: Float      // y_max - y_min (vertical spread)
+        val keyWhRatio: Float    // most_common_key_width / most_common_key_height
+
         // Reused per word.
         private val dp = FloatArray(m)
         private val vx = FloatArray(GlideLexicon.MAX_LETTERS)
@@ -232,6 +245,44 @@ class SlideDecoder(
             resample(xs, ys, n, shapeX, shapeY, SHAPE_N)
             corners = findCorners(px, py, m)
             loopMask = findLoops(xs, ys, n, geo)
+
+            // Compute touch-point spatial features from the normalised swipe points.
+            var dMin = Float.MAX_VALUE
+            var dMax = 0f
+            var dSum = 0f
+            var xSum = 0f
+            var ySum = 0f
+            var xMin = Float.MAX_VALUE
+            var xMax = -Float.MAX_VALUE
+            var yMin = Float.MAX_VALUE
+            var yMax = -Float.MAX_VALUE
+            for (j in 0 until m) {
+                // Distance from each point to the nearest key centre.
+                var nearest = Float.MAX_VALUE
+                for (c in 0 until 26) {
+                    if (!geo.present[c]) continue
+                    val d = dist(px[j], py[j], geo.x[c], geo.y[c])
+                    if (d < nearest) nearest = d
+                }
+                if (nearest < dMin) dMin = nearest
+                if (nearest > dMax) dMax = nearest
+                dSum += nearest
+                xSum += abs(px[j])
+                ySum += abs(py[j])
+                if (px[j] < xMin) xMin = px[j]
+                if (px[j] > xMax) xMax = px[j]
+                if (py[j] < yMin) yMin = py[j]
+                if (py[j] > yMax) yMax = py[j]
+            }
+            tpDistMin = if (dMin == Float.MAX_VALUE) 0f else dMin
+            tpDistMax = dMax
+            tpDistSum = dSum
+            tpXDistMean = xSum / m
+            tpYDistMean = ySum / m
+            tpXRange = xMax - xMin
+            tpYRange = yMax - yMin
+            // Key width/height ratio from geometry.
+            keyWhRatio = if (geo.py > 0f) geo.px / geo.py else 1f
         }
 
         // Stage-1 survivors, kept as parallel arrays (a bounded "worst out" selection).
@@ -338,6 +389,34 @@ class SlideDecoder(
 
         private fun stage2(bundled: GlideLexicon, user: GlideLexicon): List<String> {
             val hits = ArrayList<Hit>(kept)
+            // Track the best candidate's distance for the c_dist (candidate distance) features.
+            // First pass: compute raw distance for each survivor, find the best.
+            val rawDist = FloatArray(kept)
+            var bestDist = Float.MAX_VALUE
+            for (h in 0 until kept) {
+                val lex = if (keepLex[h] == 0) bundled else user
+                val i = keepIdx[h]
+                val c = lex.codes[i]
+                val len = c.size
+                for (k in 0 until len) {
+                    vx[k] = geo.x[c[k].toInt()]
+                    vy[k] = geo.y[c[k].toInt()]
+                }
+                // Raw distance = mean adherence (how close swipe points are to the drawn word).
+                var adhRaw = 0f
+                for (j in 0 until m) {
+                    var d = Float.MAX_VALUE
+                    for (k in 0 until len - 1) {
+                        val dd = pointSegment(px[j], py[j], vx[k], vy[k], vx[k + 1], vy[k + 1])
+                        if (dd < d) d = dd
+                    }
+                    adhRaw += d
+                }
+                adhRaw /= m
+                rawDist[h] = adhRaw
+                if (adhRaw < bestDist) bestDist = adhRaw
+            }
+
             for (h in 0 until kept) {
                 val lex = if (keepLex[h] == 0) bundled else user
                 val i = keepIdx[h]
@@ -389,8 +468,140 @@ class SlideDecoder(
                     if (d > CORNER_FREE) turn += d - CORNER_FREE
                 }
 
+                // ── New Gboard-inspired features ──────────────────────────────
+
+                // Candidate distance: how much worse this word's adherence is vs. the best.
+                // Gboard's c_dist_mean_d feature. A word that fits much worse than the best
+                // candidate should be penalised more than one that's close.
+                val cDistDiff = rawDist[h] - bestDist  // ≥0; 0 = this is the best-fitting word
+
+                // Vowel pattern: Gboard's vowel_d/p/r/s. Count vowels in the word.
+                // Words with unusual vowel patterns (all consonants, or too many vowels) are
+                // less likely to be English words and can be penalised slightly.
+                var vowelCount = 0
+                for (k in 0 until len) {
+                    val ch = c[k].toInt()
+                    if (ch == 0 || ch == 4 || ch == 8 || ch == 14 || ch == 20) vowelCount++  // a e i o u
+                }
+                val vowelRatio = if (len > 0) vowelCount.toFloat() / len else 0f
+                // Typical English words have ~40% vowels. Penalise extreme deviations.
+                val vowelPenalty = abs(vowelRatio - 0.4f).coerceAtLeast(0f) * W_VOWEL
+
+                // Touch-point spread quality: a good swipe has a wide x-range (horizontal
+                // movement across keys) and moderate y-range. A tiny range means the finger
+                // barely moved — probably a tap, not a swipe. Gboard's touch_points_x_distr.
+                val spreadQuality = if (tpXRange > 0.1f && tpYRange < tpXRange * 2f) 0f
+                    else W_SPREAD * (0.1f - tpXRange.coerceAtMost(0.1f))
+
+                // Char count vs. swipe length: Gboard's literal_candidate_char_num.
+                val charNumFeature = if (len < 3) W_CHAR_NUM * (3 - len) else 0f
+
+                // ── Edit distance decomposition (Gboard's EditDistanceV2FeatureProducer) ──
+                // Instead of a single "edit distance" number, decompose into typed error
+                // counts: how many omissions, insertions, transpositions, and substitutions
+                // the swipe path implies vs. the ideal letter path. This gives the decoder
+                // more signal — e.g., a transposition (adjacent keys swapped) is more likely
+                // than a random substitution.
+                //
+                // We compare the letter sequence implied by the swipe (nearest key at each
+                // resampled point, collapsed) against the candidate word's letters.
+                var omission = 0   // word has a letter the swipe didn't cross
+                var insertion = 0  // swipe crossed a key not in the word
+                var transposition = 0  // two adjacent letters swapped
+                var nearbySub = 0  // substituted a nearby key
+                var generalSub = 0  // substituted a distant key
+
+                // Build the letter sequence the swipe implies: nearest key at each point.
+                val swipeLetters = StringBuilder()
+                var lastLetter = -1
+                for (j in 0 until m) {
+                    var best = -1
+                    var bestD = Float.MAX_VALUE
+                    for (cc in 0 until 26) {
+                        if (!geo.present[cc]) continue
+                        val d = dist(px[j], py[j], geo.x[cc], geo.y[cc])
+                        if (d < bestD) { bestD = d; best = cc }
+                    }
+                    if (best >= 0 && best != lastLetter) {
+                        swipeLetters.append((best + 'a'.code).toChar())
+                        lastLetter = best
+                    }
+                }
+                val swipeStr = swipeLetters.toString()
+                val wordStr = lex.words[i]
+
+                // Simple typed-error count via a lightweight alignment.
+                if (swipeStr.isNotEmpty() && wordStr.isNotEmpty()) {
+                    var wi = 0  // word index
+                    var si = 0  // swipe index
+                    while (wi < wordStr.length && si < swipeStr.length) {
+                        val wc = wordStr[wi].lowercaseChar()
+                        val sc = swipeStr[si]
+                        if (wc == sc) {
+                            wi++; si++
+                        } else {
+                            // Check transposition: word "teh" vs swipe "the"
+                            if (wi + 1 < wordStr.length && si + 1 < swipeStr.length &&
+                                wordStr[wi + 1].lowercaseChar() == sc &&
+                                wc == swipeStr[si + 1]) {
+                                transposition++
+                                wi += 2; si += 2
+                            } else if (si + 1 < swipeStr.length && swipeStr[si + 1] == wc) {
+                                // Swipe had an extra letter (insertion)
+                                insertion++
+                                si++
+                            } else if (wi + 1 < wordStr.length && wordStr[wi + 1].lowercaseChar() == sc) {
+                                // Word has a letter the swipe skipped (omission)
+                                omission++
+                                wi++
+                            } else {
+                                // Substitution — check if keys are adjacent
+                                val wCode = wc - 'a'
+                                val sCode = sc - 'a'
+                                if (wCode in 0..25 && sCode in 0..25) {
+                                    val keyDist = geo.pair[wCode * 26 + sCode]
+                                    if (!keyDist.isNaN() && keyDist <= 1.5f) nearbySub++
+                                    else generalSub++
+                                } else generalSub++
+                                wi++; si++
+                            }
+                        }
+                    }
+                    // Remaining word letters = omissions
+                    omission += (wordStr.length - wi).coerceAtLeast(0)
+                    // Remaining swipe letters = insertions
+                    insertion += (swipeStr.length - si).coerceAtLeast(0)
+                }
+
+                val editFeature = W_OMISSION * omission +
+                    W_INSERTION * insertion +
+                    W_TRANSPOSITION * transposition +
+                    W_NEARBY_SUB * nearbySub +
+                    W_GENERAL_SUB * generalSub
+
+                // ── OOV count (Gboard's OovNumFeatureProducer) ──
+                // How many letters in the word are not on the keyboard layout.
+                // On a complete QWERTY this is 0 for all words, but on partial layouts
+                // (e.g. a language with extra letters) it flags words that can't be typed.
+                var oovNum = 0
+                for (k in 0 until len) {
+                    if (!geo.present[c[k].toInt()]) oovNum++
+                }
+                val oovFeature = W_OOV * oovNum
+
+                // ── Combine all features ──────────────────────────────────────
                 val s1 = keepScore[h]
-                var score = s1 + W_SHAPE * shape + W_ADH * adh + W_CORNER * turn
+                var score = s1 +
+                    W_SHAPE * shape +
+                    W_ADH * adh +
+                    W_CORNER * turn +
+                    W_C_DIST * cDistDiff +
+                    vowelPenalty +
+                    spreadQuality +
+                    charNumFeature +
+                    editFeature +
+                    oovFeature
+
                 if ((lex.doubleMask[i] and loopMask) != 0) score -= LOOP_BONUS
                 hits.add(Hit(lex.words[i], score))
             }
@@ -433,6 +644,30 @@ class SlideDecoder(
         const val LOOP_MIN_TURNING = 4.5f
         const val LOOP_MIN_ARC = 0.75f
         const val LOOP_RADIUS = 0.5f
+        // ── New feature weights (inspired by Gboard's feature producers) ──
+        // Candidate distance: penalises words whose adherence is worse than the best candidate.
+        // Gboard's c_dist_mean_d. Low weight — the adherence score already captures most of this.
+        const val W_C_DIST = 1.5f
+        // Vowel pattern: penalises words with unusual vowel ratios. Gboard's vowel features.
+        const val W_VOWEL = 0.5f
+        // Touch-point spread: penalises swipes with suspiciously small horizontal range.
+        // Gboard's touch_points_x_distr.
+        const val W_SPREAD = 2.0f
+        // Char count: penalises very short words (1-2 letters) on long swipes.
+        // Gboard's literal_candidate_char_num.
+        const val W_CHAR_NUM = 0.8f
+        // ── Edit distance decomposition (Gboard's EditDistanceV2FeatureProducer) ──
+        // Typed error weights: transpositions and nearby substitutions are common in
+        // swipes (finger drifts to an adjacent key) and should be penalised less than
+        // general substitutions or omissions.
+        const val W_OMISSION = 0.8f       // word has a letter the swipe didn't cross
+        const val W_INSERTION = 0.5f      // swipe crossed an extra key
+        const val W_TRANSPOSITION = 0.2f  // adjacent letters swapped (common, low penalty)
+        const val W_NEARBY_SUB = 0.4f     // substituted an adjacent key
+        const val W_GENERAL_SUB = 1.0f    // substituted a distant key (unlikely)
+        // OOV count: penalises words with letters not on the layout.
+        // Gboard's OovNumFeatureProducer.
+        const val W_OOV = 5.0f
 
         fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float {
             val dx = x1 - x2

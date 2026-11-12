@@ -1,6 +1,7 @@
 package com.noircipher.shade.ai
 
 import android.content.Context
+import com.noircipher.shade.GlideLMFeatures
 
 class NeuralVocabulary private constructor(
     val idToToken: List<String>,
@@ -126,6 +127,68 @@ class NeuralVocabulary private constructor(
             if (isSpecialToken(token)) continue
             val bonus = 1f + (logits[outputId] - logZ) / scale
             if (bonus > 0f) out[token] = bonus
+        }
+        return out
+    }
+
+    /**
+     * Rich glide context: 4 derived features from the neural LM, mirroring Gboard's
+     * `mlm_score_d/p/r/s`. Each word gets:
+     *
+     *  - [score]   (the `_s` feature): 0..1 fit, same as [contextBonuses].
+     *  - [diff]    (the `_d` feature): how much better this word is vs. the median candidate,
+     *               0 = median, >0 = better, <0 = worse. Lets the decoder tell "10x more likely"
+     *               from "1.1x more likely".
+     *  - [position] (the `_p` feature): rank in the LM's top predictions (0 = most likely),
+     *               normalised to 0..1 (0 = top, 1 = tail). A word at rank 0 is a strong signal.
+     *  - [ratio]   (the `_r` feature): probability ratio vs. the top word (1 = top word,
+     *               0.5 = half as likely). Distinguishes "both good" from "one clearly better".
+     *
+     * Words below the cutoff (e^-scale) and special tokens are left out.
+     */
+    fun contextFeatures(logits: FloatArray, scale: Float = 12f): Map<String, GlideLMFeatures> {
+        if (logits.isEmpty() || scale <= 0f) return emptyMap()
+        var max = Float.NEGATIVE_INFINITY
+        for (v in logits) if (v > max) max = v
+        var sum = 0.0
+        for (v in logits) sum += kotlin.math.exp((v - max).toDouble())
+        val logZ = max + kotlin.math.ln(sum).toFloat()
+
+        val placeholderOffset = if (
+            idToToken.firstOrNull().isNullOrEmpty() &&
+            logits.size == idToToken.size - 1
+        ) 1 else 0
+
+        // First pass: collect (token, logProb, bonus) for all words above the cutoff.
+        data class Raw(val token: String, val logProb: Float, val bonus: Float)
+        val raws = ArrayList<Raw>(logits.size / 2)
+        for (outputId in logits.indices) {
+            val token = idToToken.getOrNull(outputId + placeholderOffset) ?: continue
+            if (isSpecialToken(token)) continue
+            val logProb = logits[outputId] - logZ  // log-probability (≤ 0)
+            val bonus = 1f + logProb / scale
+            if (bonus > 0f) raws.add(Raw(token, logProb, bonus))
+        }
+        if (raws.isEmpty()) return emptyMap()
+
+        // Sort by logProb descending (most likely first) for rank/position.
+        raws.sortByDescending { it.logProb }
+
+        // The top word's probability (for ratio) and the median bonus (for diff).
+        val topProb = kotlin.math.exp(raws[0].logProb.toDouble()).toFloat()
+        val medianBonus = if (raws.size > 1) {
+            // Median of bonuses — use the middle element of the sorted-by-bonus list.
+            val byBonus = raws.sortedBy { it.bonus }
+            byBonus[byBonus.size / 2].bonus
+        } else raws[0].bonus
+
+        val out = HashMap<String, GlideLMFeatures>(raws.size)
+        for ((rank, r) in raws.withIndex()) {
+            val prob = kotlin.math.exp(r.logProb.toDouble()).toFloat()
+            val ratio = if (topProb > 0f) (prob / topProb).coerceIn(0f, 1f) else 0f
+            val position = if (raws.size > 1) rank.toFloat() / (raws.size - 1) else 0f
+            val diff = r.bonus - medianBonus
+            out[r.token] = GlideLMFeatures(r.bonus, diff, position, ratio)
         }
         return out
     }

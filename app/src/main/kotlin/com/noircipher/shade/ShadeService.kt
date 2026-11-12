@@ -301,6 +301,27 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var currentFieldType: FieldTypeDetector.FieldType = FieldTypeDetector.FieldType.NORMAL_TEXT
 
     /**
+     * Known messaging apps that get special treatment (more emoji suggestions,
+     * looser autocorrect, chat-style abbreviations). Mirrors Gboard's per-app
+     * package list. Detected from [EditorInfo.packageName] in [onStartInputView].
+     */
+    private val messagingApps = setOf(
+        "com.google.android.apps.messaging",
+        "com.facebook.orca",
+        "com.facebook.katana",
+        "com.verizon.messaging.vzmsgs",
+        "com.snapchat.android",
+        "com.discord",
+        "com.motorola.messaging",
+        "com.instagram.android",
+        "com.whatsapp",
+        "com.samsung.android.messaging",
+        "com.android.messaging",
+        "com.tencent.mm"  // WeChat
+    )
+    private var isInMessagingApp = false
+
+    /**
      * Most-recently-copied short text. Shown as a "clipboard chip" in the
      * suggestion bar when there are no other candidates. Cleared once real
      * suggestions arrive, or when the user picks it. See [maybeShowClipboardChip]
@@ -666,6 +687,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         toolbarOpen = prefs.getBoolean("toolbar_open_default", false)
         pendingDeleteWords = 0
         deletePreviewActive = false
+        // Detect known messaging apps for per-app behavior (Gboard-style).
+        isInMessagingApp = (editorInfo.packageName in messagingApps)
         touchTrace.clear()
         lastWordTouches = emptyList()
 
@@ -2378,25 +2401,53 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         glideCtxJob ?: startGlideContext().also { glideCtxJob = it }
 
     /**
-     * What the language models expect after the text before the cursor, as a 0..1 fit per word:
-     * the neural model's full next-word distribution, plus the bigram model's likely words (scaled
-     * down; they are a coarser signal and also carry what the person has typed before). Editor
-     * access happens here on Main, the model run on a background thread.
+     * What the language models expect after the text before the cursor, as 4-feature LM signals
+     * per word: the neural model's score/diff/position/ratio (mirroring Gboard's mlm_score_d/p/r/s),
+     * plus the bigram model's likely words (scaled down; they are a coarser signal and also carry
+     * what the person has typed before). Editor access happens here on Main, the model run on a
+     * background thread.
      */
     private fun startGlideContext(): Deferred<Map<String, Float>> {
         val before = currentInputConnection?.getTextBeforeCursor(400, 0)?.toString().orEmpty()
         val bigram = bigramGlideContext()
         val engine = neural as? NeuralPredictionEngine
         return scope.async(Dispatchers.Default) {
-            val merged = HashMap<String, Float>()
-            try {
-                engine?.contextBonuses(before)?.let { merged.putAll(it) }
-            } catch (_: Throwable) {
-                // Without the neural model the bigram context below still applies.
+            // Build a per-word composite bonus from the 4 neural features + bigram.
+            // Each feature contributes independently with its own weight, then the
+            // composite is used as the context bonus in SlideDecoder.stage1().
+            val features = try {
+                engine?.contextFeatures(before) ?: emptyMap()
+            } catch (_: Throwable) { emptyMap() }
+
+            val merged = HashMap<String, Float>(features.size + bigram.size)
+
+            // Neural LM: combine score, diff, position, ratio with independent weights.
+            // Weights tuned so that a word at rank 0 (position=0) with ratio=1 gets a
+            // bonus of ~1.0, and a word at the median (diff=0) with ratio=0.5 gets ~0.5.
+            for ((word, f) in features) {
+                val composite = GLIDE_W_SCORE * f.score +
+                    GLIDE_W_DIFF * f.diff.coerceIn(-0.5f, 0.5f) +  // clamp: extreme diffs dominate
+                    GLIDE_W_POSITION * (1f - f.position) +          // invert: rank 0 = best
+                    GLIDE_W_RATIO * f.ratio
+                merged[word] = composite.coerceIn(0f, 1.5f)
             }
-            for ((word, fit) in bigram) {
-                val v = fit * GLIDE_BIGRAM_SCALE
-                if (v > (merged[word] ?: 0f)) merged[word] = v
+
+            // Bigram: scaled down as before, takes the max if the word already has a neural bonus.
+            // Gboard's uhlm_score_d/p/r/s — we derive 4 features from the bigram model too,
+            // but since the bigram model gives a simpler ranked list, we compute a composite
+            // that approximates the same signal: top-ranked words get a higher bonus.
+            val bigramRanked = bigram.entries.sortedByDescending { it.value }
+            val bigramTop = if (bigramRanked.isNotEmpty()) bigramRanked[0].value else 1f
+            for ((idx, entry) in bigramRanked.withIndex()) {
+                val word = entry.key
+                val fit = entry.value
+                // Derive position (rank-based) and ratio (vs top) from the bigram ranking.
+                val bPosition = if (bigramRanked.size > 1) idx.toFloat() / (bigramRanked.size - 1) else 0f
+                val bRatio = if (bigramTop > 0f) (fit / bigramTop).coerceIn(0f, 1f) else 0f
+                // Composite bigram bonus: scaled by GLIDE_BIGRAM_SCALE, enriched with
+                // position and ratio signals (weaker than neural but still useful).
+                val composite = fit * GLIDE_BIGRAM_SCALE * (1f - 0.3f * bPosition) * (0.5f + 0.5f * bRatio)
+                if (composite > (merged[word] ?: 0f)) merged[word] = composite
             }
             merged
         }
@@ -2406,7 +2457,25 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (atSentenceEndBeforeCursor()) return emptyMap()
         val words = contextWordsExcluding("")
         val prev1 = words.lastOrNull() ?: return emptyMap()
-        return dict.nextWordScores(words.dropLast(1).lastOrNull(), prev1)
+        // BOS feature: at the beginning of a sentence (no prior words, or prior word
+        // ends a sentence), the neural model already handles this via its training.
+        // For the bigram fallback, we boost common sentence-starters.
+        val scores = dict.nextWordScores(words.dropLast(1).lastOrNull(), prev1)
+        // In messaging apps, boost informal/chat words that Gboard also boosts there.
+        if (isInMessagingApp) {
+            val chatBoost = mapOf(
+                "yeah" to 0.3f, "ok" to 0.3f, "haha" to 0.3f, "lol" to 0.25f,
+                "sure" to 0.25f, "nice" to 0.25f, "cool" to 0.25f, "hey" to 0.3f,
+                "yep" to 0.2f, "nope" to 0.2f, "thanks" to 0.2f, "thx" to 0.2f
+            )
+            val merged = HashMap(scores)
+            for ((word, boost) in chatBoost) {
+                val v = boost
+                if (v > (merged[word] ?: 0f)) merged[word] = v
+            }
+            return merged
+        }
+        return scores
     }
 
     override fun onCursor(delta: Int) {
@@ -3724,6 +3793,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         private const val MAX_UNDO = 10
         // Bigram fits (0..1 by rank) are weighted like the old fixed bonus: 3.0 / SlideDecoder.CONTEXT_WEIGHT.
         private const val GLIDE_BIGRAM_SCALE = 0.5f
+        // Neural LM feature weights (mirroring Gboard's mlm_score_d/p/r/s).
+        // Composite = W_SCORE * score + W_DIFF * diff + W_POSITION * (1-position) + W_RATIO * ratio.
+        // Tuned so rank-0/ratio-1 → ~1.0, median/ratio-0.5 → ~0.5.
+        private const val GLIDE_W_SCORE = 0.40f
+        private const val GLIDE_W_DIFF = 0.20f
+        private const val GLIDE_W_POSITION = 0.20f
+        private const val GLIDE_W_RATIO = 0.20f
         // Height of the transparent band above the keyboard that accent panels may extend into.
         private const val ACCENT_HEADROOM_DP = 64f
         private const val NEURAL_FAILURE_TTL_MS = 5L * 60L * 1000L

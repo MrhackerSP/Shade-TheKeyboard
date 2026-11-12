@@ -73,6 +73,17 @@ class NeuralPredictionEngine private constructor(
         return vocabulary.contextBonuses(logits)
     }
 
+    /**
+     * Rich glide context: 4 derived features (score, diff, position, ratio) from the neural LM,
+     * mirroring Gboard's `mlm_score_d/p/r/s`. See [NeuralVocabulary.contextFeatures].
+     */
+    @Synchronized
+    fun contextFeatures(beforeCursor: String): Map<String, com.noircipher.shade.GlideLMFeatures> {
+        if (!enabled) return emptyMap()
+        val logits = logitsFor(beforeCursor) ?: return emptyMap()
+        return vocabulary.contextFeatures(logits)
+    }
+
     @Synchronized
     fun predictNextBeam(
         beforeCursor: String,
