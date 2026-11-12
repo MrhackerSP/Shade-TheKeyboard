@@ -172,19 +172,23 @@ class EmojiPanel(
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             when (val item = unifiedItems[position]) {
                 is ListItem.HeaderItem -> {
-                    (holder.itemView as TextView).text = item.title
-                    holder.itemView.setTextColor(theme.hint)
+                    // `itemView` comes from the RecyclerView library, so the compiler will not
+                    // smart-cast it after an `as` cast; keep the cast result in a local instead.
+                    val view = holder.itemView as TextView
+                    view.text = item.title
+                    view.setTextColor(theme.hint)
                 }
                 is ListItem.EmojiItem -> {
-                    (holder.itemView as TextView).text = item.emoji
-                    holder.itemView.setOnClickListener {
+                    val view = holder.itemView as TextView
+                    view.text = item.emoji
+                    view.setOnClickListener {
                         recordRecent(item.emoji)
                         onEmoji(item.emoji)
                     }
-                    holder.itemView.setOnLongClickListener {
+                    view.setOnLongClickListener {
                         val base = skinToneBases.firstOrNull { item.emoji.startsWith(it) }
                         if (base != null) {
-                            showSkinTonePopup(holder.itemView, base)
+                            showSkinTonePopup(view, base)
                             true
                         } else false
                     }

@@ -101,6 +101,35 @@ class NeuralVocabulary private constructor(
         return out
     }
 
+    /**
+     * Turns next-word logits into a 0..1 "how well does this word fit here" value per word, for
+     * glide typing. Plain log-probabilities (no temperature): a word with probability p gets
+     * `1 + ln(p) / scale`, so p = 1 gives 1 and p = e^-scale (about 6e-6 for the default) gives 0.
+     * Words less likely than that, and special tokens, are left out (no bonus, no penalty).
+     */
+    fun contextBonuses(logits: FloatArray, scale: Float = 12f): Map<String, Float> {
+        if (logits.isEmpty() || scale <= 0f) return emptyMap()
+        var max = Float.NEGATIVE_INFINITY
+        for (v in logits) if (v > max) max = v
+        var sum = 0.0
+        for (v in logits) sum += kotlin.math.exp((v - max).toDouble())
+        val logZ = max + kotlin.math.ln(sum).toFloat()
+
+        val placeholderOffset = if (
+            idToToken.firstOrNull().isNullOrEmpty() &&
+            logits.size == idToToken.size - 1
+        ) 1 else 0
+
+        val out = HashMap<String, Float>(logits.size / 2)
+        for (outputId in logits.indices) {
+            val token = idToToken.getOrNull(outputId + placeholderOffset) ?: continue
+            if (isSpecialToken(token)) continue
+            val bonus = 1f + (logits[outputId] - logZ) / scale
+            if (bonus > 0f) out[token] = bonus
+        }
+        return out
+    }
+
     private fun isSpecialToken(token: String): Boolean =
         token.isEmpty() ||
             token == "^" ||

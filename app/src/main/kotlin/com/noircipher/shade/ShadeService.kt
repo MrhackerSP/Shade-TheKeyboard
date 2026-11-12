@@ -80,6 +80,8 @@ import com.noircipher.shade.slide.SlideDecoder
 import com.noircipher.shade.voice.VoiceInputController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -2011,13 +2013,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (gifActive || translatorActive) return
         if (path.size < 4) return
         val layout = kbKeyLayout() ?: return
-        val ctx = glideContext()
+        val ctxJob = glideContext()
         glidePreviewJob?.cancel()
         glidePreviewJob = scope.launch {
             // Debounce: collapse rapid move events into one decode per ~32ms.
             delay(32)
             if (!isActive) return@launch
-            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout, ctx) }
+            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout, ctxJob.await()) }
             if (!isActive) return@launch
             // A committed glide (onSwipePath) clears composing and writes the word;
             // a cleared preview (onGlidePreview(null)) already emptied composing. In
@@ -2045,7 +2047,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             // text after the up handler has cleared it.
             glidePreviewJob?.cancel()
             glidePreviewJob = null
-            glideCtx = null
+            glideCtxJob = null // forget it; a swipe in flight keeps its own reference
             // Clear the composing text
             if (composing.isNotEmpty()) {
                 composing.clear()
@@ -2067,11 +2069,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // can't race the commit and overwrite the just-finished composing region.
         glidePreviewJob?.cancel()
         glidePreviewJob = null
-        val ctx = glideContext() // read the editor here, on Main; the decode below runs off-thread
+        val ctxJob = glideContext() // the editor is read here, on Main; models and decode run off-thread
         suggestJob?.cancel()
         suggestJob = scope.launch {
             // Only the pure decoding runs off the main thread; all editor/UI work stays on Main.
-            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout, ctx) }
+            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout, ctxJob.await()) }
             if (!isActive) return@launch
             if (!decoded.isNullOrEmpty()) {
                 // Clear the live preview composing text
@@ -2370,12 +2372,37 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     /** Words likely to follow the previous words, for resolving ambiguous swipes. Cached per swipe. */
-    private var glideCtx: Map<String, Float>? = null
+    private var glideCtxJob: Deferred<Map<String, Float>>? = null
 
-    private fun glideContext(): Map<String, Float> =
-        glideCtx ?: computeGlideContext().also { glideCtx = it }
+    private fun glideContext(): Deferred<Map<String, Float>> =
+        glideCtxJob ?: startGlideContext().also { glideCtxJob = it }
 
-    private fun computeGlideContext(): Map<String, Float> {
+    /**
+     * What the language models expect after the text before the cursor, as a 0..1 fit per word:
+     * the neural model's full next-word distribution, plus the bigram model's likely words (scaled
+     * down; they are a coarser signal and also carry what the person has typed before). Editor
+     * access happens here on Main, the model run on a background thread.
+     */
+    private fun startGlideContext(): Deferred<Map<String, Float>> {
+        val before = currentInputConnection?.getTextBeforeCursor(400, 0)?.toString().orEmpty()
+        val bigram = bigramGlideContext()
+        val engine = neural as? NeuralPredictionEngine
+        return scope.async(Dispatchers.Default) {
+            val merged = HashMap<String, Float>()
+            try {
+                engine?.contextBonuses(before)?.let { merged.putAll(it) }
+            } catch (_: Throwable) {
+                // Without the neural model the bigram context below still applies.
+            }
+            for ((word, fit) in bigram) {
+                val v = fit * GLIDE_BIGRAM_SCALE
+                if (v > (merged[word] ?: 0f)) merged[word] = v
+            }
+            merged
+        }
+    }
+
+    private fun bigramGlideContext(): Map<String, Float> {
         if (atSentenceEndBeforeCursor()) return emptyMap()
         val words = contextWordsExcluding("")
         val prev1 = words.lastOrNull() ?: return emptyMap()
@@ -2949,7 +2976,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             autoShifted = false
             kb.shiftState = 0
         }
-        glideCtx = null
+        glideCtxJob = null
         afterText()
     }
 
@@ -3695,6 +3722,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     companion object {
         private const val MAX_UNDO = 10
+        // Bigram fits (0..1 by rank) are weighted like the old fixed bonus: 3.0 / SlideDecoder.CONTEXT_WEIGHT.
+        private const val GLIDE_BIGRAM_SCALE = 0.5f
         // Height of the transparent band above the keyboard that accent panels may extend into.
         private const val ACCENT_HEADROOM_DP = 64f
         private const val NEURAL_FAILURE_TTL_MS = 5L * 60L * 1000L

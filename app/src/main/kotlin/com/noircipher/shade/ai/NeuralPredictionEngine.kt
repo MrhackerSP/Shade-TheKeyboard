@@ -61,6 +61,18 @@ class NeuralPredictionEngine private constructor(
         return vocabulary.topK(logits, limit, typedPrefix)
     }
 
+    /**
+     * How well each vocabulary word fits as the word after [beforeCursor], 0..1 (see
+     * [NeuralVocabulary.contextBonuses]). Glide typing uses it to pick between swipes that look alike.
+     * The model run is shared with the suggestion bar: for the same context it is already cached.
+     */
+    @Synchronized
+    fun contextBonuses(beforeCursor: String): Map<String, Float> {
+        if (!enabled) return emptyMap()
+        val logits = logitsFor(beforeCursor) ?: return emptyMap()
+        return vocabulary.contextBonuses(logits)
+    }
+
     @Synchronized
     fun predictNextBeam(
         beforeCursor: String,

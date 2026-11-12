@@ -42,7 +42,7 @@ class SlideDecoderTest {
     private fun layoutOf(
         kw: Float = 100f, kh: Float = 100f,
         digits: Boolean = false, punct: Boolean = false, skip: String = ""
-    ): Map<Char, Key> = buildMap {
+    ): Map<Char, Key> = buildMap<Char, Key> {
         val rows = listOf(
             Triple("qwertyuiop", 0f, 0f),
             Triple("asdfghjkl", kw / 2, kh),
@@ -143,7 +143,7 @@ class SlideDecoderTest {
     }
 
     @Test fun layoutWithoutLettersGivesNothing() {
-        val symbols = buildMap { put('1', Key("1", '1'.code).apply { left = 0f; right = 100f; top = 0f; bottom = 100f }) }
+        val symbols = buildMap<Char, Key> { put('1', Key("1", '1'.code).apply { left = 0f; right = 100f; top = 0f; bottom = 100f }) }
         assertNull(decode(pathFor("helo"), FakeDictionary(hellos), symbols))
     }
 
@@ -178,6 +178,24 @@ class SlideDecoderTest {
         val dict = FakeDictionary(mapOf("as" to 0.6f, "ass" to 0.55f))
         assertEquals("as", decode(pathFor("as"), dict))
         assertEquals("ass", decode(pathFor("as"), dict, context = mapOf("ass" to 1f)))
+    }
+
+    @Test fun fullContextFitOutweighsALargeFrequencyGap() {
+        // "as" is far more common than "ass", but the language model says "ass" fits here.
+        val dict = FakeDictionary(mapOf("as" to 0.9f, "ass" to 0.1f))
+        assertEquals("as", decode(pathFor("as"), dict))
+        assertEquals("ass", decode(pathFor("as"), dict, context = mapOf("ass" to 1f)))
+    }
+
+    @Test fun aWeakContextFitDoesNotOverrideAClearFrequencyGap() {
+        val dict = FakeDictionary(mapOf("as" to 0.9f, "ass" to 0.1f))
+        assertEquals("as", decode(pathFor("as"), dict, context = mapOf("ass" to 0.5f)))
+    }
+
+    @Test fun contextCannotTurnAWordThatDoesNotMatchTheSwipeIntoTheAnswer() {
+        // The model strongly expects "dog", but the swipe clearly goes c-a-t.
+        val dict = FakeDictionary(mapOf("cat" to 0.5f, "dog" to 0.9f))
+        assertEquals("cat", decode(pathFor("cat"), dict, context = mapOf("dog" to 1f)))
     }
 
     @Test fun learnedWordsAreDecoded() {
