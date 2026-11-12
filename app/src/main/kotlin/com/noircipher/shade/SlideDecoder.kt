@@ -599,7 +599,6 @@ class SlideDecoder(
                     vowelPenalty +
                     spreadQuality +
                     charNumFeature +
-                    editFeature +
                     oovFeature
 
                 if ((lex.doubleMask[i] and loopMask) != 0) score -= LOOP_BONUS
