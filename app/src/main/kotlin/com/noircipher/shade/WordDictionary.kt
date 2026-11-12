@@ -1,5 +1,6 @@
 package com.noircipher.shade
 
+import com.noircipher.shade.slide.GlideLexicon
 import android.content.Context
 import android.content.SharedPreferences
 import kotlinx.coroutines.Dispatchers
@@ -88,6 +89,7 @@ class WordDictionary(private val ctx: Context) {
             for (e in loaded) words[e.key] = e.value
             rebuildPrefixIndex()
             loadedId = localeId
+            glideBundled = null
 
             // Feature 2: Build SymSpell index from the top 40K words
             symSpell = SymSpellIndex(loaded.map { it.key })
@@ -690,10 +692,92 @@ class WordDictionary(private val ctx: Context) {
         return bundledBigrams?.cost(prev.lowercase(), word.lowercase()) ?: -1f
     }
 
-    /** All dictionary words with their frequency, for the glide decoder's lexicon. */
+    // ------------------------------------------------------------------ glide typing lexicons
+
+    @Volatile private var glideBundled: GlideLexicon? = null
+    @Volatile private var glideBundledFor: String? = null
+    @Volatile private var glideUser: GlideLexicon = GlideLexicon.EMPTY
+    private var glideUserVersion = -1L
+    private var glideUserPersonal: Set<String>? = null
+
+    /**
+     * Swipeable view of the bundled words for the glide decoder. Built once per loaded language and
+     * cached: it used to be rebuilt (185k pairs and logarithms, under the dictionary lock) on every
+     * decode, i.e. every ~100 ms while swiping.
+     */
+    fun glideLexicon(): GlideLexicon {
+        glideBundled?.let { if (glideBundledFor == loadedId) return it }
+        val snap = synchronized(this) {
+            val cached = glideBundled
+            if (cached != null && glideBundledFor == loadedId) return cached
+            val list = ArrayList<String>(words.size)
+            val counts = LongArray(words.size)
+            var i = 0
+            for ((w, f) in words) { list.add(w); counts[i++] = f }
+            Triple(loadedId, list, counts)
+        }
+        // The expensive part runs outside the lock, so typing and suggestions are never blocked.
+        val built = GlideLexicon.build(snap.second, GlideLexicon.priorsFromCounts(snap.third))
+        synchronized(this) {
+            if (loadedId == snap.first) {
+                glideBundled = built
+                glideBundledFor = snap.first
+            }
+        }
+        return built
+    }
+
+    /** Learned words and the Android personal dictionary; small, rebuilt only when they change. */
+    fun glideUserLexicon(): GlideLexicon {
+        val personal = personalWords
+        val snap = synchronized(this) {
+            if (glideUserVersion == userVersion && glideUserPersonal === personal) return glideUser
+            Triple(userVersion, personal, HashMap(user))
+        }
+        val ws = ArrayList<String>(snap.third.size + snap.second.size)
+        val pr = ArrayList<Float>(ws.size)
+        for ((w, score) in snap.third) {
+            ws.add(w)
+            pr.add(0.55f + 0.4f * (score / (score + 4f)))   // learned words rank like fairly common ones
+        }
+        for (w in snap.second) {
+            if (snap.third.containsKey(w)) continue
+            ws.add(w)
+            pr.add(0.6f)
+        }
+        val built = GlideLexicon.build(ws, pr.toFloatArray())
+        synchronized(this) {
+            glideUser = built
+            glideUserVersion = snap.first
+            glideUserPersonal = snap.second
+        }
+        return built
+    }
+
+    /** Records that [word] followed [prev1] (after [prev2]) without learning the word itself. */
     @Synchronized
-    fun glideLexicon(): List<Pair<String, Float>> {
-        return words.entries.map { (w, f) -> w to kotlin.math.ln(f.coerceAtLeast(1L).toDouble()).toFloat() }
+    fun observeBigram(prev2: String?, prev1: String?, word: String) {
+        if (prev1.isNullOrEmpty()) return
+        bigramModel?.observe(prev2, prev1, word.lowercase())
+    }
+
+    /** Builds both glide lexicons ahead of time (call from a background thread). */
+    fun warmGlide() {
+        glideLexicon()
+        glideUserLexicon()
+    }
+
+    /**
+     * Likely next words after [prev1] (and [prev2]) as a 0..1 bonus map for the glide decoder, so
+     * an ambiguous swipe is resolved by what was just typed. Empty without context.
+     */
+    fun nextWordScores(prev2: String?, prev1: String?, max: Int = 24): Map<String, Float> {
+        if (prev1.isNullOrEmpty()) return emptyMap()
+        val ranked = predictNext(prev2, prev1, max)
+        if (ranked.isEmpty()) return emptyMap()
+        val out = HashMap<String, Float>(ranked.size * 2)
+        ranked.forEachIndexed { i, w -> out[w.lowercase()] = 1f - i.toFloat() / ranked.size }
+        return out
     }
 
     /** Rank of a word in the frequency list (0 = most common, -1 = not found). */

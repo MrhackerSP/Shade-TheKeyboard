@@ -120,4 +120,34 @@ class GestureEngineTest {
         assertEquals(1, e.getLength())
         assertFalse(e.hasTrail())         // a single point is not a trail
     }
+
+    // ---- finish(): the last stretch of the swipe -------------------------------------------
+
+    @Test
+    fun finishAppendsTheFinalPositionThatSamplingDropped() {
+        val e = engine(100f)              // sampling distance = 100/6 ~ 16 px
+        e.onDown(0f, 0f, 1000)
+        e.addEventPoint(200f, 0f, 1100)   // kept
+        e.addEventPoint(205f, 0f, 1110)   // 5 px further: dropped by sampling
+        assertEquals(2, e.getLength())
+        e.finish(205f, 0f)
+        assertEquals(3, e.getLength())
+        assertEquals(205f, e.getPath().last()[0], 0f)
+    }
+
+    @Test
+    fun finishIgnoresAPositionOnTopOfTheLastPoint() {
+        val e = engine(100f)
+        e.onDown(0f, 0f, 1000)
+        e.addEventPoint(200f, 0f, 1100)
+        e.finish(200f, 0f)
+        assertEquals(2, e.getLength())
+    }
+
+    @Test
+    fun finishOnAnEmptyEngineDoesNothing() {
+        val e = engine(100f)
+        e.finish(50f, 50f)
+        assertEquals(0, e.getLength())
+    }
 }

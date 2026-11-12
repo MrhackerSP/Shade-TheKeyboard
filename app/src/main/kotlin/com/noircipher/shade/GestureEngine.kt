@@ -132,6 +132,20 @@ class GestureEngine(
         return deltaTime >= timeThreshold && deltaDistance >= distanceThreshold
     }
 
+    /**
+     * Appends the finger's final position. Sampling keeps a point only when it is more than a sixth
+     * of a key away from the previous one, so without this the last stretch of the swipe (up to
+     * that distance) was dropped and the path could stop just short of the last letter.
+     */
+    fun finish(x: Float, y: Float) {
+        val last = eventTimes.size - 1
+        if (last < 0) return
+        val xi = x.toInt()
+        val yi = y.toInt()
+        if (getDistance(xCoords[last], yCoords[last], xi, yi) < 2) return
+        appendPoint(xi, yi, eventTimes[last] + 1)
+    }
+
     /** Get the sampled path as a list of FloatArray(2) = [x, y]. */
     fun getPath(): List<FloatArray> {
         val result = ArrayList<FloatArray>(eventTimes.size)

@@ -2,34 +2,46 @@ package com.noircipher.shade.slide
 
 import com.noircipher.shade.Key
 import com.noircipher.shade.WordDictionary
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.round
 import kotlin.math.sqrt
 
 /**
- * Gesture-based glide typing decoder.
+ * Glide ("swipe") typing decoder.
  *
- * Takes a swipe path (list of x,y points) and decodes it into a word by:
- * 1. Resampling the path to evenly-spaced points
- * 2. For each dictionary word, aligning its letters to the path (DP)
- * 3. Scoring by: letter-path alignment + shape match + corner match + length ratio + word frequency
- * 4. Returning the best-scoring words
+ * Every word of the lexicon is a candidate. Instead of first guessing which letters the finger
+ * crossed and then repairing that guess (which loses the intended word as soon as one letter is
+ * clipped at a corner), each word is *drawn* as the polyline through its letters and compared
+ * with the swipe:
  *
- * The decoder handles:
- * - Double letters (path stays near one key)
- * - Skipped letters (path passes near a key but doesn't stop)
- * - Inflection points (direction changes → letter boundaries)
- * - Shape matching (overall path shape vs ideal letter-to-letter path)
- * - End-point matching (first/last letters must be near path start/end)
+ *  1. Pruning: the first letter must lie near where the swipe starts and the last letter near where
+ *     it ends, and the word's drawn length must be in the same range as the swipe's.
+ *  2. Stage 1 (cheap, every surviving word): the letters are aligned to the swipe in order (DP), the
+ *     length ratio is checked and the word-frequency prior is added. The best [STAGE1_KEEP] go on.
+ *  3. Stage 2: the shape of the drawn word is compared with the swipe (uniform resampling), every
+ *     swipe point is checked against the drawn polyline (a swipe that wanders over other keys does
+ *     not match), direction changes of the swipe must sit on letters, a loop drawn on a key favours
+ *     the doubled spelling, and the previous word's context adds a bonus.
+ *
+ * The best-scoring word is returned even for sloppy swipes, but never a string of crossed letters
+ * that is not a word. Tuned against simulated finger paths over the full 185k-word dictionary.
  */
 
 /** The slice of the dictionary the decoder needs (lets tests use a tiny fake). */
 interface SlideDictionary {
     fun contains(word: String): Boolean
-    suspend fun suggestAsync(prefix: String, max: Int): List<String>
-    fun glideLexicon(): List<Pair<String, Float>>
+
+    /** Bundled words. Expensive to build, so implementations must cache it. */
+    fun glideLexicon(): GlideLexicon
+
+    /** Words the person taught the keyboard; small, may change between swipes. */
+    fun glideUserLexicon(): GlideLexicon = GlideLexicon.EMPTY
 }
 
 class SlideDecoder(
@@ -37,485 +49,493 @@ class SlideDecoder(
 ) {
     constructor(dictionary: WordDictionary) : this(object : SlideDictionary {
         override fun contains(word: String) = dictionary.contains(word)
-        override suspend fun suggestAsync(prefix: String, max: Int) = dictionary.suggestAsync(prefix, max)
         override fun glideLexicon() = dictionary.glideLexicon()
+        override fun glideUserLexicon() = dictionary.glideUserLexicon()
     })
 
-    private data class KeyHit(
-        val char: Char, val x: Float, val y: Float, val dist: Float, val pathIndex: Int,
-        val doubled: Boolean = false
-    )
+    /**
+     * Best word for the swipe, or null when nothing plausible fits.
+     *
+     * @param path    touch points of the swipe in view coordinates.
+     * @param layout  letter -> key, used for the key centres.
+     * @param context optional bonus (0..1) per likely next word given the previous words.
+     */
+    suspend fun decode(
+        path: List<FloatArray>,
+        layout: Map<Char, Key>,
+        context: Map<String, Float> = emptyMap()
+    ): String? = decodeCandidates(path, layout, 1, context).firstOrNull()
 
-    // ── Tunable parameters ──────────────────────────────────────────────────
-    private object P {
-        /** Scatter of finger pass near a letter, in key widths. */
-        var sigma = 0.7f
-        /** Scatter at start/end of the swipe (first/last letters). */
-        var endSigma = 0.54f
-        /** Language model weight (word frequency prior). */
-        var lm = 0.45f
-        /** Shape match weight. */
-        var shape = 3.0f
-        /** Corner match weight. */
-        var corner = 2.9f
-        /** Length ratio weight. */
-        var length = 1.6f
-        /** Max distance (in key widths) from start/end of path to first/last letter. */
-        var endRadius = 1.35f
+    /** The [max] best words, best first. */
+    suspend fun decodeCandidates(
+        path: List<FloatArray>,
+        layout: Map<Char, Key>,
+        max: Int = 3,
+        context: Map<String, Float> = emptyMap()
+    ): List<String> {
+        if (path.isEmpty() || max <= 0) return emptyList()
+        val geo = buildGeometry(layout) ?: return emptyList()
+
+        // Normalise into key units and drop repeated points.
+        val xs = FloatArray(path.size)
+        val ys = FloatArray(path.size)
+        var n = 0
+        for (p in path) {
+            if (p.size < 2) continue
+            val x = p[0] / geo.px
+            val y = p[1] / geo.py
+            if (x.isNaN() || y.isNaN()) continue
+            if (n > 0) {
+                val dx = x - xs[n - 1]
+                val dy = y - ys[n - 1]
+                if (dx * dx + dy * dy < 1e-6f) continue
+            }
+            xs[n] = x
+            ys[n] = y
+            n++
+        }
+        if (n == 0) return emptyList()
+        var length = 0f
+        for (i in 1 until n) length += dist(xs[i], ys[i], xs[i - 1], ys[i - 1])
+        if (n < 2 || length < TINY_PATH) return tinyPath(xs, ys, n, geo)
+
+        val run = Run(geo, xs, ys, n, length, context)
+        var found = run.scan(dictionary.glideLexicon(), dictionary.glideUserLexicon(), relaxed = false)
+        if (found.isEmpty()) found = run.scan(dictionary.glideLexicon(), dictionary.glideUserLexicon(), relaxed = true)
+        return found.take(max)
+    }
+
+    // ---------------------------------------------------------------- layout geometry
+
+    /** Letter centres in key units (1 unit = one key pitch horizontally / one row pitch vertically). */
+    private class Geometry(
+        val px: Float,
+        val py: Float,
+        val x: FloatArray,
+        val y: FloatArray,
+        val present: BooleanArray,
+        val complete: Boolean
+    ) {
+        /** Distance in key units between every pair of letters (NaN if either is missing). */
+        val pair = FloatArray(26 * 26).also { t ->
+            for (a in 0 until 26) for (b in 0 until 26) {
+                t[a * 26 + b] =
+                    if (present[a] && present[b]) dist(x[a], y[a], x[b], y[b]) else Float.NaN
+            }
+        }
+    }
+
+    private fun buildGeometry(layout: Map<Char, Key>): Geometry? {
+        val keys = arrayOfNulls<Key>(26)
+        var count = 0
+        for ((ch, key) in layout) {
+            val c = GlideLexicon.codeOf(ch)
+            if (c < 0 || keys[c] != null) continue
+            keys[c] = key
+            count++
+        }
+        if (count < 2) return null
+        val list = keys.filterNotNull()
+        val widths = list.map { it.right - it.left }.filter { it > 0f }.sorted()
+        if (widths.isEmpty()) return null
+        val heights = list.map { it.bottom - it.top }.filter { it > 0f }.sorted()
+        val kw = widths[widths.size / 2]
+        val kh = if (heights.isEmpty()) kw else heights[heights.size / 2]
+
+        // Horizontal pitch: distance to the nearest neighbour in the same row (median over keys).
+        val hp = ArrayList<Float>()
+        for (a in list) {
+            var best = Float.MAX_VALUE
+            for (b in list) {
+                if (a === b) continue
+                if (abs(a.centerY - b.centerY) > kh * 0.3f) continue
+                val d = abs(a.centerX - b.centerX)
+                if (d > kw * 0.3f && d < best) best = d
+            }
+            if (best < Float.MAX_VALUE) hp.add(best)
+        }
+        val px = if (hp.isEmpty()) kw else hp.sorted()[hp.size / 2]
+
+        // Vertical pitch: gap between distinct row centres (median).
+        val rows = ArrayList<Float>()
+        for (y in list.map { it.centerY }.sorted()) {
+            if (rows.isEmpty() || y - rows.last() > kh * 0.5f) rows.add(y)
+        }
+        val vp = ArrayList<Float>()
+        for (i in 1 until rows.size) vp.add(rows[i] - rows[i - 1])
+        val py = if (vp.isEmpty()) kh else vp.sorted()[vp.size / 2]
+        if (px <= 0f || py <= 0f) return null
+
+        val x = FloatArray(26)
+        val y = FloatArray(26)
+        val present = BooleanArray(26)
+        for (c in 0 until 26) {
+            val k = keys[c] ?: continue
+            x[c] = k.centerX / px
+            y[c] = k.centerY / py
+            present[c] = true
+        }
+        return Geometry(px, py, x, y, present, complete = count == 26)
+    }
+
+    /** A swipe that never really left one key: only a one-letter word ("a", "I") makes sense. */
+    private fun tinyPath(xs: FloatArray, ys: FloatArray, n: Int, geo: Geometry): List<String> {
+        var cx = 0f
+        var cy = 0f
+        for (i in 0 until n) { cx += xs[i]; cy += ys[i] }
+        cx /= n
+        cy /= n
+        var best = -1
+        var bestD = Float.MAX_VALUE
+        for (c in 0 until 26) {
+            if (!geo.present[c]) continue
+            val d = dist(cx, cy, geo.x[c], geo.y[c])
+            if (d < bestD) { bestD = d; best = c }
+        }
+        if (best < 0 || bestD > 0.6f) return emptyList()
+        val letter = ('a' + best).toString()
+        return if (dictionary.contains(letter)) listOf(letter) else emptyList()
+    }
+
+    // ---------------------------------------------------------------- one decode
+
+    private class Hit(val word: String, val score: Float)
+
+    private class Run(
+        val geo: Geometry,
+        xs: FloatArray,
+        ys: FloatArray,
+        n: Int,
+        val length: Float,
+        val context: Map<String, Float>
+    ) {
+        val m: Int = min(M_MAX, max(M_MIN, round(length / RES).toInt()))
+        val px = FloatArray(m)
+        val py = FloatArray(m)
+        val shapeX = FloatArray(SHAPE_N)
+        val shapeY = FloatArray(SHAPE_N)
+        val corners: IntArray
+        val loopMask: Int
+
+        // Reused per word.
+        private val dp = FloatArray(m)
+        private val vx = FloatArray(GlideLexicon.MAX_LETTERS)
+        private val vy = FloatArray(GlideLexicon.MAX_LETTERS)
+        private val cum = FloatArray(GlideLexicon.MAX_LETTERS)
+
+        init {
+            resample(xs, ys, n, px, py, m)
+            resample(xs, ys, n, shapeX, shapeY, SHAPE_N)
+            corners = findCorners(px, py, m)
+            loopMask = findLoops(xs, ys, n, geo)
+        }
+
+        // Stage-1 survivors, kept as parallel arrays (a bounded "worst out" selection).
+        private val keepScore = FloatArray(STAGE1_KEEP)
+        private val keepLex = IntArray(STAGE1_KEEP)
+        private val keepIdx = IntArray(STAGE1_KEEP)
+        private var kept = 0
+        private var worstPos = 0
+        private var worstScore = Float.NEGATIVE_INFINITY
+
+        private fun offer(score: Float, lex: Int, idx: Int) {
+            if (kept < STAGE1_KEEP) {
+                keepScore[kept] = score; keepLex[kept] = lex; keepIdx[kept] = idx
+                kept++
+                if (kept == STAGE1_KEEP) findWorst()
+            } else if (score < worstScore) {
+                keepScore[worstPos] = score; keepLex[worstPos] = lex; keepIdx[worstPos] = idx
+                findWorst()
+            }
+        }
+
+        private fun findWorst() {
+            var w = 0
+            for (i in 1 until kept) if (keepScore[i] > keepScore[w]) w = i
+            worstPos = w
+            worstScore = keepScore[w]
+        }
+
+        suspend fun scan(bundled: GlideLexicon, user: GlideLexicon, relaxed: Boolean): List<String> {
+            kept = 0
+            worstScore = Float.NEGATIVE_INFINITY
+            val sr = if (relaxed) RELAXED_START_R else START_R
+            val er = if (relaxed) RELAXED_END_R else END_R
+            val rmax = if (relaxed) RELAXED_RMAX else RMAX
+            val startOk = BooleanArray(26)
+            val endOk = BooleanArray(26)
+            for (c in 0 until 26) {
+                if (!geo.present[c]) continue
+                startOk[c] = dist(geo.x[c], geo.y[c], px[0], py[0]) <= sr
+                endOk[c] = dist(geo.x[c], geo.y[c], px[m - 1], py[m - 1]) <= er
+            }
+            stage1(bundled, 0, startOk, endOk, rmax)
+            stage1(user, 1, startOk, endOk, rmax)
+            if (kept == 0) return emptyList()
+            return stage2(bundled, user)
+        }
+
+        private suspend fun stage1(
+            lex: GlideLexicon,
+            lexId: Int,
+            startOk: BooleanArray,
+            endOk: BooleanArray,
+            rmax: Float
+        ) {
+            val s2 = 2f * SIGMA * SIGMA
+            val e2 = 2f * END_SIGMA * END_SIGMA
+            val endX = px[m - 1]
+            val endY = py[m - 1]
+            for (i in 0 until lex.size) {
+                if ((i and 511) == 0) currentCoroutineContext().ensureActive()
+                val c = lex.codes[i]
+                val len = c.size
+                if (!startOk[c[0].toInt()] || !endOk[c[len - 1].toInt()]) continue
+                if (!geo.complete && !allPresent(c)) continue
+
+                var il = 0f
+                for (j in 1 until len) il += geo.pair[c[j - 1] * 26 + c[j]]
+                val ratio = ln((length + 0.4f) / (il + 0.4f))
+                if (abs(ratio) > rmax) continue
+
+                // Letters aligned to the swipe in order; first/last anchored to its ends.
+                java.util.Arrays.fill(dp, Float.POSITIVE_INFINITY)
+                val f = c[0].toInt()
+                dp[0] = sq(geo.x[f] - px[0], geo.y[f] - py[0]) / e2
+                for (k in 1 until len - 1) {
+                    val lx = geo.x[c[k].toInt()]
+                    val ly = geo.y[c[k].toInt()]
+                    var runMin = Float.POSITIVE_INFINITY
+                    for (j in 0 until m) {
+                        val old = dp[j]
+                        if (old < runMin) runMin = old
+                        dp[j] = if (runMin == Float.POSITIVE_INFINITY) runMin
+                        else runMin + sq(lx - px[j], ly - py[j]) / s2
+                    }
+                }
+                var best = Float.POSITIVE_INFINITY
+                for (j in 0 until m) if (dp[j] < best) best = dp[j]
+                val l = c[len - 1].toInt()
+                val align = best + sq(geo.x[l] - endX, geo.y[l] - endY) / e2
+
+                val s1 = align + W_LEN * ratio * ratio + W_LM * (1f - lex.prior[i])
+                offer(s1, lexId, i)
+            }
+        }
+
+        private fun allPresent(c: ByteArray): Boolean {
+            for (b in c) if (!geo.present[b.toInt()]) return false
+            return true
+        }
+
+        private fun stage2(bundled: GlideLexicon, user: GlideLexicon): List<String> {
+            val hits = ArrayList<Hit>(kept)
+            for (h in 0 until kept) {
+                val lex = if (keepLex[h] == 0) bundled else user
+                val i = keepIdx[h]
+                val c = lex.codes[i]
+                val len = c.size
+                for (k in 0 until len) {
+                    vx[k] = geo.x[c[k].toInt()]
+                    vy[k] = geo.y[c[k].toInt()]
+                }
+                cum[0] = 0f
+                for (k in 1 until len) cum[k] = cum[k - 1] + dist(vx[k], vy[k], vx[k - 1], vy[k - 1])
+
+                // Shape: the drawn word resampled uniformly vs the swipe resampled the same way.
+                val total = cum[len - 1]
+                var shape = 0f
+                var seg = 0
+                for (q in 0 until SHAPE_N) {
+                    val t = total * q / (SHAPE_N - 1)
+                    while (seg < len - 2 && cum[seg + 1] <= t) seg++
+                    val span = cum[seg + 1] - cum[seg]
+                    val u = if (span > 1e-9f) (t - cum[seg]) / span else 0f
+                    val qx = vx[seg] + (vx[seg + 1] - vx[seg]) * u
+                    val qy = vy[seg] + (vy[seg + 1] - vy[seg]) * u
+                    shape += dist(qx, qy, shapeX[q], shapeY[q])
+                }
+                shape /= SHAPE_N
+
+                // Adherence: how far every swipe point strays from the drawn polyline.
+                var adh = 0f
+                for (j in 0 until m) {
+                    var d = Float.MAX_VALUE
+                    for (k in 0 until len - 1) {
+                        val dd = pointSegment(px[j], py[j], vx[k], vy[k], vx[k + 1], vy[k + 1])
+                        if (dd < d) d = dd
+                    }
+                    val over = d - ADH_TOL
+                    if (over > 0f) adh += over * over
+                }
+                adh /= m
+
+                // Corners: where the swipe turns sharply there should be a letter.
+                var turn = 0f
+                for (cIdx in corners) {
+                    var d = Float.MAX_VALUE
+                    for (k in 0 until len) {
+                        val dd = dist(vx[k], vy[k], px[cIdx], py[cIdx])
+                        if (dd < d) d = dd
+                    }
+                    if (d > CORNER_FREE) turn += d - CORNER_FREE
+                }
+
+                val s1 = keepScore[h]
+                var score = s1 + W_SHAPE * shape + W_ADH * adh + W_CORNER * turn
+                if ((lex.doubleMask[i] and loopMask) != 0) score -= LOOP_BONUS
+                if (context.isNotEmpty()) {
+                    val bonus = context[lex.words[i]]
+                    if (bonus != null) score -= CONTEXT_WEIGHT * bonus
+                }
+                hits.add(Hit(lex.words[i], score))
+            }
+            hits.sortBy { it.score }
+            val seen = HashSet<String>()
+            val out = ArrayList<String>()
+            for (h in hits) if (seen.add(h.word)) out.add(h.word)
+            return out
+        }
     }
 
     private companion object {
-        const val SHAPE_N = 24
+        // Tuned on simulated swipes over the full dictionary (see SlideDecoderTest for the behaviours).
+        const val SIGMA = 0.9f
+        const val END_SIGMA = 0.5f
+        const val W_SHAPE = 3.0f
+        const val W_ADH = 5.0f
+        const val W_CORNER = 1.0f
+        const val W_LEN = 1.6f
+        const val W_LM = 6.0f
+        const val ADH_TOL = 0.4f
+        const val CORNER_FREE = 0.6f
+        const val START_R = 1.1f
+        const val END_R = 1.1f
+        const val RMAX = 1.0f
+        const val RELAXED_START_R = 1.9f
+        const val RELAXED_END_R = 1.9f
+        const val RELAXED_RMAX = 2.0f
+        const val LOOP_BONUS = 2.0f
+        const val CONTEXT_WEIGHT = 3.0f
+        const val STAGE1_KEEP = 250
+        const val SHAPE_N = 32
+        const val RES = 0.16f
+        const val M_MIN = 24
+        const val M_MAX = 72
+        const val TINY_PATH = 0.45f
         const val LOOP_MIN_TURNING = 4.5f
-        const val MAX_DOUBLE_LETTER_WORD = 16
-        const val CROSSING_THRESHOLD = 0.4f
-        const val MAX_SUBSEQ_RAW = 14
-        const val MAX_SUBSEQ_CANDIDATES = 64
-    }
+        const val LOOP_MIN_ARC = 0.75f
+        const val LOOP_RADIUS = 0.5f
 
-    suspend fun decode(path: List<FloatArray>, layout: Map<Char, Key>): String? {
-        if (path.size < 4 || layout.isEmpty()) return null
-
-        // Step 1: Find key crossings via inflection points + proximity
-        val hits = findKeyCrossings(path, layout)
-        if (hits.size < 2) {
-            val raw = rawSequence(path, layout)
-            return raw.ifEmpty { null }?.let { refineWithDictionary(it, path, layout) }
+        fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float {
+            val dx = x1 - x2
+            val dy = y1 - y2
+            return sqrt(dx * dx + dy * dy)
         }
 
-        // Step 2: Build raw letter sequence from crossings
-        val raw = StringBuilder()
-        for (hit in hits) {
-            raw.append(hit.char)
-            if (hit.doubled) raw.append(hit.char)
+        fun sq(dx: Float, dy: Float) = dx * dx + dy * dy
+
+        fun pointSegment(x: Float, y: Float, ax: Float, ay: Float, bx: Float, by: Float): Float {
+            val abx = bx - ax
+            val aby = by - ay
+            val ab2 = abx * abx + aby * aby
+            val t = if (ab2 > 1e-9f) (((x - ax) * abx + (y - ay) * aby) / ab2).coerceIn(0f, 1f) else 0f
+            return dist(x, y, ax + abx * t, ay + aby * t)
         }
 
-        val rawWord = raw.toString()
-        if (rawWord.length < 2) return null
-
-        return refineWithDictionary(rawWord, path, layout)
-    }
-
-    /**
-     * Find points where the path actually passes over a key center.
-     */
-    private fun findKeyCrossings(path: List<FloatArray>, layout: Map<Char, Key>): List<KeyHit> {
-        val hits = ArrayList<KeyHit>()
-        val keyList = layout.values.filter { it.label.length == 1 }
-        if (keyList.isEmpty()) return hits
-
-        for (i in path.indices) {
-            val x = path[i][0]
-            val y = path[i][1]
-            val nearest = nearestKey(x, y, keyList)
-            if (nearest != null && nearest.dist <= keyThreshold(nearest.key)) {
-                hits.add(KeyHit(nearest.key.label[0].lowercaseChar(), x, y, nearest.dist, i))
+        /** Resamples the polyline (xs, ys)[0 until n] into [m] points evenly spaced along its length. */
+        fun resample(xs: FloatArray, ys: FloatArray, n: Int, ox: FloatArray, oy: FloatArray, m: Int) {
+            val cum = FloatArray(n)
+            for (i in 1 until n) cum[i] = cum[i - 1] + dist(xs[i], ys[i], xs[i - 1], ys[i - 1])
+            val total = cum[n - 1]
+            if (n < 2 || total <= 0f) {
+                for (k in 0 until m) { ox[k] = xs[0]; oy[k] = ys[0] }
+                return
+            }
+            var seg = 1
+            for (k in 0 until m) {
+                val target = total * k / (m - 1)
+                while (seg < n - 1 && cum[seg] < target) seg++
+                val a = cum[seg - 1]
+                val b = cum[seg]
+                val t = if (b > a) ((target - a) / (b - a)).coerceIn(0f, 1f) else 0f
+                ox[k] = xs[seg - 1] + (xs[seg] - xs[seg - 1]) * t
+                oy[k] = ys[seg - 1] + (ys[seg] - ys[seg - 1]) * t
             }
         }
 
-        // Group consecutive hits on the same key into runs; keep the closest hit of each run
-        // and flag the run as a double letter when the finger looped on that key.
-        val runs = ArrayList<MutableList<KeyHit>>()
-        for (hit in hits) {
-            if (runs.isEmpty() || runs.last().first().char != hit.char) runs.add(mutableListOf(hit))
-            else runs.last().add(hit)
-        }
-        return runs.map { run ->
-            val best = run.minByOrNull { it.dist } ?: run.first()
-            val key = keyList.firstOrNull { it.label[0].lowercaseChar() == best.char }
-            val looped = key != null && run.size >= 2 &&
-                isLoop(path, run.first().pathIndex, run.last().pathIndex, best.char, key, keyList)
-            if (looped) best.copy(doubled = true) else best
-        }
-    }
-
-    private class Nearest(val key: Key, val label: String, val dist: Float)
-
-    private fun nearestKey(x: Float, y: Float, keyList: List<Key>): Nearest? {
-        var best: Key? = null
-        var bestDist = Float.MAX_VALUE
-        for (k in keyList) {
-            val d = sqrt((x - (k.left + k.right) / 2f) * (x - (k.left + k.right) / 2f) +
-                (y - (k.top + k.bottom) / 2f) * (y - (k.top + k.bottom) / 2f))
-            if (d < bestDist) { bestDist = d; best = k }
-        }
-        return best?.let { Nearest(it, it.label, bestDist) }
-    }
-
-    /** Max distance from a key center that still counts as "crossed this key". */
-    internal fun keyThreshold(k: Key): Float {
-        val w = (k.right - k.left).coerceAtLeast(1f)
-        val h = (k.bottom - k.top).coerceAtLeast(1f)
-        return CROSSING_THRESHOLD * minOf(w, h)
-    }
-
-    /**
-     * True when the stretch of the swipe spent on [key] curls round on itself (a small loop or
-     * a back-and-forth wiggle): total turning of at least ~260 degrees.
-     */
-    private fun isLoop(
-        path: List<FloatArray>,
-        firstHit: Int,
-        lastHit: Int,
-        char: Char,
-        key: Key,
-        keyList: List<Key>
-    ): Boolean {
-        var a = firstHit
-        var b = lastHit
-        while (a > 0 && nearestKey(path[a - 1][0], path[a - 1][1], keyList)
-                ?.label?.get(0)?.lowercaseChar() == char) a--
-        while (b < path.size - 1 && nearestKey(path[b + 1][0], path[b + 1][1], keyList)
-                ?.label?.get(0)?.lowercaseChar() == char) b++
-
-        val keyWidth = (key.right - key.left).coerceAtLeast(1f)
-        val minStep = keyWidth * 0.08f
-        var anchorX = path[a][0]
-        var anchorY = path[a][1]
-        var prevDx = 0f
-        var prevDy = 0f
-        var hasPrev = false
-        var arc = 0f
-        var turning = 0f
-        for (i in a + 1..b) {
-            val dx = path[i][0] - anchorX
-            val dy = path[i][1] - anchorY
-            val len = sqrt(dx * dx + dy * dy)
-            if (len < minStep) continue
-            arc += len
-            if (hasPrev) {
-                turning += abs(atan2(prevDx * dy - prevDy * dx, prevDx * dx + prevDy * dy))
-            }
-            prevDx = dx; prevDy = dy; hasPrev = true
-            anchorX = path[i][0]; anchorY = path[i][1]
-        }
-        return arc >= keyWidth * 0.75f && turning >= LOOP_MIN_TURNING
-    }
-
-    /**
-     * Refine the raw sequence using the dictionary: find the best-matching word.
-     * Uses DP alignment + shape matching + corner detection + length ratio + word frequency.
-     */
-    private suspend fun refineWithDictionary(
-        raw: String,
-        path: List<FloatArray>,
-        layout: Map<Char, Key>
-    ): String? {
-        val lower = raw.lowercase()
-
-        // Try exact match first
-        if (dictionary.contains(lower)) return lower
-
-        // No loop was seen, but the swipe may still hide a double letter ("helo" -> "hello").
-        withOneDoubledLetter(lower).firstOrNull { dictionary.contains(it) }?.let { return it }
-
-        // Get dictionary suggestions for the raw sequence
-        val candidates = LinkedHashSet<String>()
-        candidates.addAll(dictionary.suggestAsync(lower, 12))
-
-        // Also try prefix-based candidates
-        if (lower.length >= 3) {
-            candidates.addAll(dictionary.suggestAsync(lower.substring(0, minOf(3, lower.length)), 8))
-        }
-
-        // Subsequence fallback: words whose letters appear in order along the crossed keys
-        candidates.addAll(subsequenceWords(lower))
-
-        if (candidates.isEmpty()) return lower
-
-        val merged = candidates.distinctBy { it.lowercase() }
-
-        // Use the full scoring algorithm
-        return scoreCandidates(merged, path, layout, lower)
-    }
-
-    /**
-     * Full scoring: DP alignment + shape match + corner match + length ratio + word frequency.
-     */
-    private fun scoreCandidates(
-        candidates: List<String>,
-        path: List<FloatArray>,
-        layout: Map<Char, Key>,
-        raw: String
-    ): String? {
-        if (candidates.isEmpty()) return raw
-
-        // Compute key positions in normalized coordinates (key widths)
-        val (px, py) = pitch(layout)
-        val norm = layout.mapValues { (_, k) ->
-            floatArrayOf((k.left + k.right) / 2f / px, (k.top + k.bottom) / 2f / py)
-        }
-        val rawNorm = path.map { floatArrayOf(it[0] / px, it[1] / py) }
-
-        // Resample the path
-        var pathLen = 0f
-        for (i in 1 until rawNorm.size) {
-            pathLen += dist(rawNorm[i], rawNorm[i - 1])
-        }
-        val m = (pathLen / 0.22f).toInt().coerceIn(16, 96)
-        val pts = resample(rawNorm, m)
-        val start = pts.first()
-        val end = pts.last()
-
-        // Shape: resample both the actual path and ideal paths to SHAPE_N points
-        val shapePts = resample(rawNorm, SHAPE_N)
-
-        // Corners: sharp turns in the path
-        val corners = corners(pts)
-
-        val sig2 = 2f * P.sigma * P.sigma
-        val end2 = 2f * P.endSigma * P.endSigma
-        val r2 = P.endRadius * P.endRadius
-
-        val lexicon = dictionary.glideLexicon()
-        val freqMap = lexicon.toMap()
-
-        var bestWord: String? = null
-        var bestScore = Float.MAX_VALUE
-
-        val ideal = ArrayList<FloatArray>(24)
-        val dp = FloatArray(m)
-        val pref = FloatArray(m)
-
-        for (word in candidates) {
-            if (word.length < 2) continue
-            val f0 = norm[word[0]] ?: continue
-            if (dist2(f0, start) > r2) continue
-            val lc = word[word.length - 1]
-            val l = norm[lc] ?: continue
-            if (dist2(l, end) > r2) continue
-
-            // Build ideal path through the word's letters
-            ideal.clear()
-            var ok = true
-            for (ch in word) {
-                if (ch == '\'' || ch == '-') continue
-                val k = norm[ch] ?: run { ok = false; break }
-                if (ideal.isEmpty() || ideal.last() != k) ideal.add(k)
-            }
-            if (!ok || ideal.size < 2) continue
-
-            // Length ratio check
-            var idealLen = 0f
-            for (i in 1 until ideal.size) idealLen += dist(ideal[i], ideal[i - 1])
-            val ratio = ln((pathLen + 0.3f) / (idealLen + 0.3f))
-            if (abs(ratio) > 1.1f) continue
-
-            // DP alignment: match each letter to the closest point on the path, monotonically
-            val n = ideal.size
-            val first = ideal[0]
-            for (j in 0 until m) dp[j] = if (j == 0) dist2(first, pts[0]) / end2 else Float.MAX_VALUE
-            for (i in 1 until n) {
-                var run = Float.MAX_VALUE
-                for (j in 0 until m) {
-                    if (dp[j] < run) run = dp[j]
-                    pref[j] = run
+        /** Indices of sharp direction changes (> ~60 degrees) of the resampled swipe. */
+        fun findCorners(px: FloatArray, py: FloatArray, m: Int): IntArray {
+            val w = 2
+            val out = ArrayList<Int>()
+            var lastAngle = 0f
+            for (i in w until m - w) {
+                val ax = px[i] - px[i - w]
+                val ay = py[i] - py[i - w]
+                val bx = px[i + w] - px[i]
+                val by = py[i + w] - py[i]
+                val la = sqrt(ax * ax + ay * ay)
+                val lb = sqrt(bx * bx + by * by)
+                if (la < 0.12f || lb < 0.12f) continue
+                val cos = (ax * bx + ay * by) / (la * lb)
+                if (cos > 0.5f) continue
+                val angle = 1f - cos
+                if (out.isNotEmpty() && i - out[out.size - 1] <= w) {
+                    if (angle > lastAngle) { out[out.size - 1] = i; lastAngle = angle }
+                    continue
                 }
-                val k = ideal[i]
-                if (i == n - 1) {
-                    for (j in 0 until m - 1) dp[j] = Float.MAX_VALUE
-                    dp[m - 1] = pref[m - 1] + dist2(k, pts[m - 1]) / end2
-                } else {
-                    for (j in 0 until m) dp[j] = if (pref[j] == Float.MAX_VALUE) Float.MAX_VALUE else pref[j] + dist2(k, pts[j]) / sig2
+                out.add(i)
+                lastAngle = angle
+            }
+            return out.toIntArray()
+        }
+
+        /**
+         * Letters (as a bit mask) on which the finger drew a small loop. A loop is an optional hint
+         * for a doubled letter; people usually just glide over "ll" in "hello".
+         */
+        fun findLoops(xs: FloatArray, ys: FloatArray, n: Int, geo: Geometry): Int {
+            var mask = 0
+            var runLetter = -1
+            var runStart = 0
+            fun close(endExclusive: Int) {
+                if (runLetter < 0 || endExclusive - runStart < 4) return
+                var arc = 0f
+                var turning = 0f
+                var prevAngle = Float.NaN
+                for (i in runStart + 1 until endExclusive) {
+                    val dx = xs[i] - xs[i - 1]
+                    val dy = ys[i] - ys[i - 1]
+                    val l = sqrt(dx * dx + dy * dy)
+                    if (l < 0.03f) continue
+                    arc += l
+                    val a = atan2(dy, dx)
+                    if (!prevAngle.isNaN()) {
+                        var d = a - prevAngle
+                        while (d > Math.PI.toFloat()) d -= 2f * Math.PI.toFloat()
+                        while (d < -Math.PI.toFloat()) d += 2f * Math.PI.toFloat()
+                        turning += abs(d)
+                    }
+                    prevAngle = a
                 }
+                if (arc >= LOOP_MIN_ARC && turning >= LOOP_MIN_TURNING) mask = mask or (1 shl runLetter)
             }
-            val align = dp[m - 1]
-            if (align > 40f) continue
-
-            // Corner penalty: sharp turns should be near word letters
-            var turn = 0f
-            for (c in corners) {
-                var best = Float.MAX_VALUE
-                for (k in ideal) best = min(best, dist2(k, pts[c]))
-                val d = sqrt(best)
-                if (d > 0.6f) turn += d - 0.6f
-            }
-
-            // Shape: compare resampled actual path to resampled ideal path
-            val ip = resample(ideal, SHAPE_N)
-            var shapeSum = 0f
-            for (i in 0 until SHAPE_N) shapeSum += dist(shapePts[i], ip[i])
-            val shapeScore = shapeSum / SHAPE_N
-
-            // Word frequency prior (more common = lower ln(freq) = lower score)
-            val prior = freqMap[word] ?: 10f
-
-            val score = align + P.shape * shapeScore + P.corner * turn + P.length * ratio * ratio + P.lm * prior
-
-            if (score < bestScore) {
-                bestScore = score
-                bestWord = word
-            }
-        }
-
-        return bestWord ?: raw
-    }
-
-    // ── Geometry helpers ────────────────────────────────────────────────────
-
-    /** Key pitch: horizontal step (key width) and vertical step (row height) from key centers. */
-    private fun pitch(layout: Map<Char, Key>): Pair<Float, Float> {
-        val pts = layout.values.map { floatArrayOf((it.left + it.right) / 2f, (it.top + it.bottom) / 2f) }
-        val keyW = layout.values.firstOrNull()?.let { it.right - it.left } ?: 100f
-        val dx = ArrayList<Float>()
-        val rows = ArrayList<Float>()
-        for ((pi, p) in pts.withIndex()) {
-            var best = Float.MAX_VALUE
-            for ((qi, q) in pts.withIndex()) {
-                if (qi == pi) continue
-                if (abs(q[1] - p[1]) < keyW * 0.3f) {
-                    val d = abs(q[0] - p[0])
-                    if (d > keyW * 0.3f && d < best) best = d
-                }
-            }
-            if (best < Float.MAX_VALUE) dx.add(best)
-            if (rows.none { abs(it - p[1]) < keyW * 0.3f }) rows.add(p[1])
-        }
-        dx.sort()
-        rows.sort()
-        val px = if (dx.isEmpty()) keyW else dx[dx.size / 2]
-        val gaps = (1 until rows.size).map { rows[it] - rows[it - 1] }.sorted()
-        val py = if (gaps.isEmpty()) px * 1.5f else gaps[gaps.size / 2]
-        return px to py
-    }
-
-    private fun d2(a: FloatArray, b: FloatArray): Float {
-        val x = a[0] - b[0]
-        val y = a[1] - b[1]
-        return x * x + y * y
-    }
-
-    private fun dist(a: FloatArray, b: FloatArray): Float = sqrt(d2(a, b))
-    private fun dist2(a: FloatArray, b: FloatArray): Float = d2(a, b)
-
-    /** Resample [src] to exactly [n] points, evenly spaced by arc length. */
-    internal fun resample(src: List<FloatArray>, n: Int): Array<FloatArray> {
-        if (n <= 0) return emptyArray()
-        if (src.isEmpty()) return emptyArray()
-        if (src.size == 1) return Array(n) { src[0] }
-        var total = 0f
-        for (i in 1 until src.size) total += dist(src[i], src[i - 1])
-        if (total <= 0f) return Array(n) { src[0] }
-        val step = total / (n - 1)
-        val out = ArrayList<FloatArray>(n)
-        out.add(src[0])
-        var acc = 0f
-        var prev = src[0]
-        var i = 1
-        while (i < src.size && out.size < n) {
-            val cur = src[i]
-            val d = dist(cur, prev)
-            if (d > 0f && acc + d >= step) {
-                val t = (step - acc) / d
-                val q = floatArrayOf(prev[0] + (cur[0] - prev[0]) * t, prev[1] + (cur[1] - prev[1]) * t)
-                out.add(q)
-                prev = q
-                acc = 0f
-            } else {
-                acc += d
-                prev = cur
-                i++
-            }
-        }
-        while (out.size < n) out.add(src.last())
-        return out.toTypedArray()
-    }
-
-    /** Find sharp turns (>60°) in the path — where the finger changes direction at a letter. */
-    private fun corners(pts: Array<FloatArray>): List<Int> {
-        val w = 2
-        val out = ArrayList<Int>()
-        var lastAngle = 0f
-        for (i in w until pts.size - w) {
-            val ax = pts[i][0] - pts[i - w][0]
-            val ay = pts[i][1] - pts[i - w][1]
-            val bx = pts[i + w][0] - pts[i][0]
-            val by = pts[i + w][1] - pts[i][1]
-            val la = sqrt(ax * ax + ay * ay)
-            val lb = sqrt(bx * bx + by * by)
-            if (la < 0.12f || lb < 0.12f) continue
-            val cos = (ax * bx + ay * by) / (la * lb)
-            if (cos > 0.5f) continue
-            val angle = 1f - cos
-            if (out.isNotEmpty() && i - out.last() <= w) {
-                if (angle > lastAngle) {
-                    out[out.lastIndex] = i
-                    lastAngle = angle
-                }
-                continue
-            }
-            out.add(i)
-            lastAngle = angle
-        }
-        return out
-    }
-
-    /** [word] with each letter repeated once in turn, left to right, without duplicates. */
-    internal fun withOneDoubledLetter(word: String): List<String> {
-        if (word.length < 2 || word.length > MAX_DOUBLE_LETTER_WORD) return emptyList()
-        val out = LinkedHashSet<String>()
-        for (i in word.indices) {
-            if (!word[i].isLetter()) continue
-            if (i > 0 && word[i] == word[i - 1]) continue
-            out.add(word.substring(0, i + 1) + word.substring(i))
-        }
-        return out.toList()
-    }
-
-    /** Dictionary words obtainable by deleting letters from [raw] without reordering. */
-    internal fun subsequenceWords(raw: String): List<String> {
-        val n = raw.length
-        if (n < 2 || n > MAX_SUBSEQ_RAW) return emptyList()
-        val letters = raw.lowercase().toCharArray()
-        val out = LinkedHashSet<String>()
-        val masks = 1 shl n
-        for (mask in 0 until masks) {
-            if (mask.countOneBits() < 2) continue
-            val sb = StringBuilder(mask.countOneBits())
             for (i in 0 until n) {
-                if (mask and (1 shl i) != 0) sb.append(letters[i])
-            }
-            val w = sb.toString()
-            if (dictionary.contains(w)) {
-                out.add(w)
-                if (out.size >= MAX_SUBSEQ_CANDIDATES) break
-            }
-        }
-        return out.toList()
-    }
-
-    /** Simple nearest-key sequence — fallback when inflection detection fails. */
-    private fun rawSequence(path: List<FloatArray>, layout: Map<Char, Key>): String {
-        val out = StringBuilder()
-        var last = ' '
-        for (point in path) {
-            val x = point[0]
-            val y = point[1]
-            var best: Key? = null
-            var bestDist = Float.MAX_VALUE
-            for ((ch, key) in layout) {
-                if (!ch.isLetter()) continue
-                val cx = (key.left + key.right) / 2f
-                val cy = (key.top + key.bottom) / 2f
-                val dx = x - cx
-                val dy = y - cy
-                val d = dx * dx + dy * dy
-                if (d < bestDist) {
-                    bestDist = d
-                    best = key
+                var best = -1
+                var bd = LOOP_RADIUS
+                for (c in 0 until 26) {
+                    if (!geo.present[c]) continue
+                    val d = dist(xs[i], ys[i], geo.x[c], geo.y[c])
+                    if (d <= bd) { bd = d; best = c }
+                }
+                if (best != runLetter) {
+                    close(i)
+                    runLetter = best
+                    runStart = i
                 }
             }
-            val key = best
-            if (key != null && bestDist <= keyThreshold(key) * keyThreshold(key)) {
-                val c = key.label[0].lowercaseChar()
-                if (c != last) {
-                    out.append(c)
-                    last = c
-                }
-            }
+            close(n)
+            return mask
         }
-        return out.toString()
     }
-
-    private fun atan2(y: Float, x: Float): Float = kotlin.math.atan2(y, x)
 }

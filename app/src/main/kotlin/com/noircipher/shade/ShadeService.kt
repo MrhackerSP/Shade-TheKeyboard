@@ -186,7 +186,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // their choice). Cleared when sentence-ending punctuation is committed, so
     // auto-caps can apply again for the following sentence.
     private var userShiftOverride = false
-    private var justAutoSpaced = false
     private val composing = StringBuilder()
     private var canCompose = true
     private var suggestionsAllowed = true
@@ -658,7 +657,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         cursorPos = -1
         selectionEnd = -1
         composingEnd = -1
-        justAutoSpaced = false
         lastSpaceTime = 0L
         shiftState = 0
         autoShifted = false
@@ -677,8 +675,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         val passwordField = variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
             variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
-            variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
-            variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
+            variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+
+        // Email addresses are typed verbatim (no composing, no autocorrect) but, unlike passwords,
+        // still get the suggestion bar (this used to be lumped in with passwords and lost it).
+        val emailField = variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
             variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
 
         val searchField = variation == InputType.TYPE_TEXT_VARIATION_URI ||
@@ -687,7 +688,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         val isTextField = cls == InputType.TYPE_CLASS_TEXT
 
-        canCompose = isTextField && (passwordField == false) && (searchField == false)
+        canCompose = isTextField && (passwordField == false) && (searchField == false) && (emailField == false)
         suggestionsAllowed = isTextField && (passwordField == false)
 
         applyPrefs()
@@ -849,7 +850,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         incognito = prefs.getBoolean("incognito", false) || fieldNoPersonalizedLearning || fieldSecureInput
         layoutName = prefs.getString("layout", "qwerty") ?: "qwerty"
         kb.trackpadEnabled = prefs.getBoolean("trackpad_mode", true)
-        kb.glideEnabled = prefs.getBoolean("glide_typing", true)
+        kb.glideEnabled = prefs.getBoolean("glide_typing", true) && !fieldSecureInput
         kb.typingBurstEnabled = prefs.getBoolean("typing_burst", false)
         kb.longPressMs = prefs.getInt("longpress_delay", 300).toLong()
         kb.repeatDelayMs = prefs.getInt("repeat_delay", 350).toLong()
@@ -2010,12 +2011,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (gifActive || translatorActive) return
         if (path.size < 4) return
         val layout = kbKeyLayout() ?: return
+        val ctx = glideContext()
         glidePreviewJob?.cancel()
         glidePreviewJob = scope.launch {
             // Debounce: collapse rapid move events into one decode per ~32ms.
             delay(32)
             if (!isActive) return@launch
-            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout) }
+            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout, ctx) }
             if (!isActive) return@launch
             // A committed glide (onSwipePath) clears composing and writes the word;
             // a cleared preview (onGlidePreview(null)) already emptied composing. In
@@ -2043,6 +2045,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             // text after the up handler has cleared it.
             glidePreviewJob?.cancel()
             glidePreviewJob = null
+            glideCtx = null
             // Clear the composing text
             if (composing.isNotEmpty()) {
                 composing.clear()
@@ -2064,12 +2067,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // can't race the commit and overwrite the just-finished composing region.
         glidePreviewJob?.cancel()
         glidePreviewJob = null
+        val ctx = glideContext() // read the editor here, on Main; the decode below runs off-thread
         suggestJob?.cancel()
         suggestJob = scope.launch {
-            delay(32)
-            if (!isActive) return@launch
             // Only the pure decoding runs off the main thread; all editor/UI work stays on Main.
-            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout) }
+            val decoded = withContext(Dispatchers.Default) { slideDecoder.decode(path, layout, ctx) }
             if (!isActive) return@launch
             if (!decoded.isNullOrEmpty()) {
                 // Clear the live preview composing text
@@ -2310,29 +2312,21 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             val isPunct = text.length == 1 && text[0] in ".,!?;:"
             ic.beginBatchEdit()
             try {
-                if (justAutoSpaced && composing.isEmpty() && isPunct) {
-                    ic.deleteSurroundingText(1, 0)
-                    popTail(1)
-                }
                 endWord(if (isPunct) text else null)
                 ic.commitText(text, 1)
                 appendTail(text)
 
+                // No space is inserted after typed punctuation: it split "3.14", "10:30", "1,000",
+                // "example.com" and "https://" into "3. 14", "10: 30"... A space follows when the
+                // person presses space (or after a suggestion / swipe), as on Gboard.
                 if (smartCorrectionOn && canCompose && text.length == 1) {
                     val c = text[0]
-                    val autoSpace = c == '.' || c == '!' || c == '?' ||
-                        c == ',' || c == ';' || c == ':'
-                    if (autoSpace) {
-                        ic.commitText(" ", 1)
-                        appendTail(" ")
-                        pushUndo(1, "")
-                        if (c == '.' || c == '!' || c == '?') {
-                            resetBigramContext()
-                            // A sentence has ended: allow auto-caps to apply
-                            // again for the start of the next sentence, even
-                            // if the user had pressed shift-off for this one.
-                            userShiftOverride = false
-                        }
+                    if (c == '.' || c == '!' || c == '?') {
+                        resetBigramContext()
+                        // A sentence has ended: allow auto-caps to apply
+                        // again for the start of the next sentence, even
+                        // if the user had pressed shift-off for this one.
+                        userShiftOverride = false
                     }
                 }
             } finally {
@@ -2361,13 +2355,31 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (this::kb.isInitialized == false) return null
         val rows = kb.rows
         if (rows.isEmpty()) return null
+        // Letters only. Digits, punctuation and symbol keys would otherwise take part in decoding
+        // (a swipe near the number row or the comma key picked up stray characters) and skew the
+        // key-pitch estimate. Fewer than 10 letters means this is not a letter page (symbols,
+        // numpad...), so there is nothing to glide over and the touch is treated as a normal tap.
         val map = HashMap<Char, Key>(64)
         for (row in rows) for (k in row) {
             if (k.kind == KeyKind.CHAR && k.label.length == 1) {
-                map[k.label[0].lowercaseChar()] = k
+                val c = k.label[0].lowercaseChar()
+                if (c in 'a'..'z') map[c] = k
             }
         }
-        return map
+        return if (map.size >= 10) map else null
+    }
+
+    /** Words likely to follow the previous words, for resolving ambiguous swipes. Cached per swipe. */
+    private var glideCtx: Map<String, Float>? = null
+
+    private fun glideContext(): Map<String, Float> =
+        glideCtx ?: computeGlideContext().also { glideCtx = it }
+
+    private fun computeGlideContext(): Map<String, Float> {
+        if (atSentenceEndBeforeCursor()) return emptyMap()
+        val words = contextWordsExcluding("")
+        val prev1 = words.lastOrNull() ?: return emptyMap()
+        return dict.nextWordScores(words.dropLast(1).lastOrNull(), prev1)
     }
 
     override fun onCursor(delta: Int) {
@@ -2581,7 +2593,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             val prev2 = prevWords.dropLast(1).lastOrNull()
 
             // Lightweight live rewrite layer for common informal typed forms.
-            if (smartCorrectionOn) {
+            if (smartCorrectionOn && autocorrectOn && sep != null && canCompose) {
                 try {
                     val rewritten = rewriteManager.engine.rewrite(originalWord)
                     if (!rewritten.isNullOrBlank() && rewritten != originalWord && rewritten.length <= 60) {
@@ -2814,6 +2826,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             configuredLocale = locale
 
             dict.configure(locale)
+            // Build the glide lexicon now so the first swipe of the session is not slow.
+            scope.launch(Dispatchers.Default) { try { dict.warmGlide() } catch (_: Exception) {} }
             val oldEmojiPredictor = emojiPredictor
             emojiPredictor = EmojiPredictionEngine.load(this@ShadeService, locale)
             try { oldEmojiPredictor.close() } catch (_: Exception) {}
@@ -2908,14 +2922,46 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         afterText()
     }
 
-    private fun commitSlideWord(word: String) {
+    private fun commitSlideWord(decoded: String) {
         endWord()
-        currentInputConnection?.commitText("$word ", 1)
-        appendTail("$word ")
-        if (personalLearningAllowed()) userWordMemory.bump(word)
-        pushUndo(word.length + 1, "")
+        val ic = currentInputConnection ?: return
+        val word = glideCased(decoded)
+
+        // A glided word follows the previous one with a space, even when that one was typed and has
+        // not been followed by a space yet ("hello" + swipe "world" -> "hello world").
+        val before = ic.getTextBeforeCursor(1, 0)?.toString().orEmpty()
+        val lead = if (before.isNotEmpty() && (before.last().isLetterOrDigit() || before.last() in ".,!?;:")) " " else ""
+        val text = "$lead$word "
+
+        val prevWords = contextWordsExcluding("")
+        ic.commitText(text, 1)
+        appendTail(text)
+        if (personalLearningAllowed()) userWordMemory.bump(decoded)
+        // Teach the next-word model what follows what, but do not add the word itself to the learned
+        // dictionary: a wrong decode would otherwise start to favour itself.
+        if (learnOn && personalLearningAllowed()) {
+            dict.observeBigram(prevWords.dropLast(1).lastOrNull(), prevWords.lastOrNull(), decoded)
+        }
+        pushUndo(text.length, "") // backspace right after a swipe removes the whole word
         composing.clear()
+        if (shiftState == 1) { // a one-shot shift is used up by the swiped word
+            shiftState = 0
+            autoShifted = false
+            kb.shiftState = 0
+        }
+        glideCtx = null
         afterText()
+    }
+
+    /** Applies shift / caps lock to a glided word and capitalises the pronoun "I". */
+    private fun glideCased(word: String): String {
+        var w = word
+        if (isEnglishLocale() && (w == "i" || w.startsWith("i'"))) w = "I" + w.substring(1)
+        return when (shiftState) {
+            2 -> w.uppercase()
+            1 -> w.replaceFirstChar { it.uppercaseChar() }
+            else -> w
+        }
     }
 
 

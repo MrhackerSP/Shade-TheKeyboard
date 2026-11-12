@@ -1497,6 +1497,8 @@ class KeyboardView(context: Context) : View(context) {
         if (!cancel && !altShown && id == slidePointerId &&
             (wasGlide || (slidePath.size >= 4 && slidePathSpread(slidePath) > dp(48f)))) {
             // Gesture typing: use the gesture engine's properly sampled path
+            // The sampler drops the last stretch of the swipe; add where the finger actually lifted.
+            slidePath.lastOrNull()?.let { gestureEngine?.finish(it[0], it[1]) }
             val path = gestureEngine?.getPath() ?: slidePath.toList()
             slideConsumed = listener?.onSwipePath(path) == true
             if (slideConsumed) p.consumed = true
