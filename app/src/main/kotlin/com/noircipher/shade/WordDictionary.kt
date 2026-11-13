@@ -92,7 +92,10 @@ class WordDictionary(private val ctx: Context) {
             glideBundled = null
 
             // Feature 2: Build SymSpell index from the top 40K words
-            symSpell = SymSpellIndex(loaded.map { it.key })
+            // Build the index from words sorted by descending frequency so that a word's
+            // index in the vocabulary IS its frequency rank (used by SymSpellIndex.rankOf
+            // and the rank-based tie-breaks in SpatialCorrector).
+            symSpell = SymSpellIndex(loaded.sortedByDescending { it.value }.map { it.key })
 
             // Feature 4: Load rare word forms (if available)
             rareWords = loadRareWords(localeId, loaded.size)
@@ -397,8 +400,11 @@ class WordDictionary(private val ctx: Context) {
             scored[it.lowercase()] = if (known) 12f else 100f
         }
 
+        // Snapshot the buckets inside the lock: learn() (main thread) mutates the user
+        // buckets in place, and iterating the live ArrayList from a suggestion thread
+        // throws ConcurrentModificationException mid-typing.
         val userBucket: List<String>? = synchronized(this) {
-            if (p.length >= 2) userPrefix2[p.substring(0, 2)] else userPrefix1[p.substring(0, 1)]
+            (if (p.length >= 2) userPrefix2[p.substring(0, 2)] else userPrefix1[p.substring(0, 1)])?.toList()
         }
         val userFreq = synchronized(this) {
             userBucket.orEmpty().mapNotNull { cand -> user[cand]?.let { cand to it } }.toMap()
@@ -416,7 +422,7 @@ class WordDictionary(private val ctx: Context) {
 
         var completions = 0
         val bucket: List<String>? = synchronized(this) {
-            if (p.length >= 2) prefix2[p.substring(0, 2)] else prefix1[p.substring(0, 1)]
+            (if (p.length >= 2) prefix2[p.substring(0, 2)] else prefix1[p.substring(0, 1)])?.toList()
         }
         val freq = synchronized(this) {
             bucket.orEmpty().mapNotNull { cand -> words[cand]?.let { cand to it } }.toMap()
@@ -433,7 +439,7 @@ class WordDictionary(private val ctx: Context) {
 
         if (p.length in 3..20 && (!known || completions < max)) {
             val limit = if (p.length <= 4) 1.0f else 1.6f
-            val fuzzyBucket: List<String>? = synchronized(this) { prefix1[p.substring(0, 1)] }
+            val fuzzyBucket: List<String>? = synchronized(this) { prefix1[p.substring(0, 1)]?.toList() }
             val fuzzyFreq = synchronized(this) {
                 fuzzyBucket.orEmpty().mapNotNull { cand -> words[cand]?.let { cand to it } }.toMap()
             }
@@ -783,7 +789,7 @@ class WordDictionary(private val ctx: Context) {
     /** Rank of a word in the frequency list (0 = most common, -1 = not found). */
     fun rankOf(word: String): Int {
         val ss = symSpell ?: return -1
-        return ss.rankOf(ss.size) // placeholder: actual rank needs the index
+        return ss.rankOf(word.lowercase())
     }
 
     /** SymSpell candidates for a word (deletion-based typo lookup). */

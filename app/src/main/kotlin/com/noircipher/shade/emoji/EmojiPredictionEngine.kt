@@ -121,7 +121,7 @@ class EmojiPredictionEngine(
                     val map = LinkedHashMap<String, MutableList<String>>()
                     context.assets.open(path).bufferedReader().useLines { lines ->
                         for (line in lines) {
-                            val parts = line.split('	')
+                            val parts = line.split('\t')
                             if (parts.size >= 2) {
                                 val key = parts[0].trim().lowercase()
                                 val emoji = parts[1].trim()
@@ -133,8 +133,10 @@ class EmojiPredictionEngine(
                     }
                     if (map.isNotEmpty()) {
                         val scorers = listOfNotNull(
-                            try { TfliteExpressionScorer(context) } catch (_: Exception) { null },
-                            try { TfliteEmotionScorer(context) } catch (_: Exception) { null }
+                            // Throwable (not Exception): a failed TFLite native load is an Error
+                            // and must disable the scorer, not crash the IME process.
+                            try { TfliteExpressionScorer(context) } catch (_: Throwable) { null },
+                            try { TfliteEmotionScorer(context) } catch (_: Throwable) { null }
                         )
                         val scorer = CompositeExpressionScorer(scorers).takeIf { it.isAvailable }
                         return EmojiPredictionEngine(map, scorer)

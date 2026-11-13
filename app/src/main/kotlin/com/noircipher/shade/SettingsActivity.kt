@@ -1,9 +1,13 @@
 package com.noircipher.shade
 
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
 import android.os.Bundle
 import android.text.Editable
+import android.text.InputType
 import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
@@ -15,6 +19,10 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -22,10 +30,14 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.updatePadding
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ============================================================================
 // Material 3 settings UI for Shade — inspired by Expressive Keyboard's
@@ -57,6 +69,11 @@ class SettingsActivity : AppCompatActivity() {
     private var currentPage = SettingsPage.HOME
     private var searchQuery: String = ""
 
+    // Backup file pickers (SAF). The result flows into askBackupPassphrase(), which runs
+    // Backup.export/import on IO.
+    private lateinit var exportLauncher: ActivityResultLauncher<String>
+    private lateinit var importLauncher: ActivityResultLauncher<Array<String>>
+
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,6 +81,13 @@ class SettingsActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, true)
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         PrefsMigration.run(prefs)
+
+        exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            if (uri != null) askBackupPassphrase(isExport = true, uri)
+        }
+        importLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) askBackupPassphrase(isExport = false, uri)
+        }
 
         setContentView(R.layout.activity_settings_new)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { v, insets ->
@@ -113,6 +137,102 @@ class SettingsActivity : AppCompatActivity() {
             return true
         }
         return false
+    }
+
+    // ── Backup / restore / update actions ─────────────────────────────────
+
+    /** Called from SettingsTree's action items; ctx there is this activity. */
+    internal fun startExport() = exportLauncher.launch("shade-backup.shdbak")
+
+    internal fun startImport() = importLauncher.launch(arrayOf("*/*"))
+
+    internal fun openTypingStats() {
+        startActivity(Intent(this, TypingStatsActivity::class.java))
+    }
+
+    /** Asks for the backup passphrase, then runs Backup.export / Backup.import on IO. */
+    private fun askBackupPassphrase(isExport: Boolean, uri: Uri) {
+        val input = EditText(this).apply {
+            hint = getString(R.string.backup_pass_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+        val dialog = AlertDialog.Builder(this, R.style.ShadeDialogTheme)
+            .setTitle(getString(if (isExport) R.string.backup_pass_title_export else R.string.backup_pass_title_import))
+            .setMessage(getString(R.string.backup_pass_warning))
+            .setView(input)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val pass = input.text.toString()
+                if (isExport && pass.length < 8) {
+                    Toast.makeText(this, R.string.backup_pass_short, Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                dialog.dismiss()
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val ok = try {
+                        if (isExport) Backup.export(applicationContext, uri, pass)
+                        else Backup.import(applicationContext, uri, pass)
+                    } catch (_: Exception) { false }
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            this@SettingsActivity,
+                            if (ok) R.string.backup_done else R.string.backup_failed,
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    internal fun confirmClearLearned() {
+        AlertDialog.Builder(this, R.style.ShadeDialogTheme)
+            .setTitle(getString(R.string.action_clear_learned))
+            .setMessage(getString(R.string.action_clear_learned_sub))
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        LearningDataCleaner.clearAll(applicationContext)
+                        WordDictionary.clearLearned(applicationContext)
+                        // Learned next-word bigrams live in their own file; clearing it makes
+                        // the model re-seed from the bundled primer on the next start.
+                        java.io.File(applicationContext.filesDir, "ngram.json").delete()
+                    } catch (_: Exception) {}
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@SettingsActivity, R.string.backup_done, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    internal fun checkForUpdates() {
+        lifecycleScope.launch {
+            Updater.check(this@SettingsActivity)
+            val info = Updater.available
+            if (info != null) {
+                AlertDialog.Builder(this@SettingsActivity, R.style.ShadeDialogTheme)
+                    .setTitle(getString(R.string.update_available, info.version))
+                    .setMessage(info.notes.ifBlank { null })
+                    .setPositiveButton(R.string.update_download) { _, _ ->
+                        lifecycleScope.launch {
+                            Updater.downloadAndInstall(this@SettingsActivity, info)
+                        }
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            } else {
+                val msg = Updater.error ?: if (Updater.upToDate) getString(R.string.update_uptodate)
+                else getString(R.string.update_failed)
+                Toast.makeText(this@SettingsActivity, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     // ── View binding ───────────────────────────────────────────────────────
@@ -440,6 +560,11 @@ class SettingsAdapter(
             val group = itemView.findViewById<MaterialButtonToggleGroup>(R.id.choice_group)
             group.removeAllViews()
             group.clearOnButtonCheckedListeners()
+            // singleSelection is FALSE by default in Material 1.12: without this, tapping a new
+            // option leaves the old one checked (two "selected" segments), and tapping the
+            // checked one deselects it, leaving the row with nothing highlighted.
+            group.isSingleSelection = true
+            group.isSelectionRequired = true
             val current = prefs.getString(item.key, item.default)
             var checkedId = View.NO_ID
             item.options.forEachIndexed { idx, (value, labelRes) ->
@@ -800,17 +925,17 @@ object SettingsTree {
         SettingsItem.Action(
             titleRes = R.string.action_export,
             subtitleRes = R.string.action_export_sub
-        ) { _, _ -> /* TODO: backup export */ },
+        ) { ctx, _ -> (ctx as? SettingsActivity)?.startExport() },
         SettingsItem.Divider,
         SettingsItem.Action(
             titleRes = R.string.action_import,
             subtitleRes = R.string.action_import_sub
-        ) { _, _ -> /* TODO: backup import */ },
+        ) { ctx, _ -> (ctx as? SettingsActivity)?.startImport() },
         SettingsItem.Divider,
         SettingsItem.Action(
             titleRes = R.string.action_clear_learned,
             subtitleRes = R.string.action_clear_learned_sub
-        ) { _, _ -> /* TODO: clear learned */ }
+        ) { ctx, _ -> (ctx as? SettingsActivity)?.confirmClearLearned() }
     )
 
     // ── About ──────────────────────────────────────────────────────────
@@ -827,11 +952,11 @@ object SettingsTree {
         SettingsItem.Divider,
         SettingsItem.Action(
             titleRes = R.string.action_check_update
-        ) { _, _ -> /* TODO: update check */ },
+        ) { ctx, _ -> (ctx as? SettingsActivity)?.checkForUpdates() },
         SettingsItem.Divider,
         SettingsItem.Action(
             titleRes = R.string.action_typing_stats
-        ) { _, _ -> /* TODO: open typing stats */ }
+        ) { ctx, _ -> (ctx as? SettingsActivity)?.openTypingStats() }
     )
 
     // ── Search ─────────────────────────────────────────────────────────

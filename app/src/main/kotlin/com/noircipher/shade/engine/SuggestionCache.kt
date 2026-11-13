@@ -51,6 +51,10 @@ object SuggestionCache {
         return e.candidates
     }
 
+    // Synchronized: two concurrent suggestion jobs could both pass the size check and the
+    // eviction scan (oldestKey can point at an entry already removed inside the loop), so
+    // the map would grow past MAX_ENTRIES until the TTL sweep.
+    @Synchronized
     fun put(prev2: String?, prev1: String?, prefix: String, candidates: List<String>) {
         val k = key(prev2, prev1, prefix)
         if (cache.size >= MAX_ENTRIES) {

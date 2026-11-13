@@ -167,9 +167,15 @@ class BigramModel(private val ctx: Context) {
         }
     }
 
+    @Synchronized
     fun clear() {
         stats.clear()
+        // Hold the same lock as save() and drop the dirty flag: otherwise a debounced save
+        // running concurrently (or shutdown's flush thread) re-writes the just-deleted file
+        // and the "cleared" data resurrects on the next launch.
+        dirty = false
         store.delete()
+        try { store.resolveSibling(store.name + ".tmp").delete() } catch (_: Exception) {}
     }
 
     companion object {

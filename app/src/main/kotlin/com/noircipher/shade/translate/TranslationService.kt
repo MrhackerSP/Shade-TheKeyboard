@@ -1,5 +1,7 @@
 package com.noircipher.shade.translate
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -41,12 +43,17 @@ object TranslationService {
             1500 to ::viaDictExt,
             450 to ::viaMyMemory
         )) {
-            val result = runCatching {
-                splitText(clean, limit).joinToString("") { piece ->
-                    val trail = piece.takeLastWhile { it.isWhitespace() }
-                    fn(piece.trim(), src, to).trim() + trail
-                }
-            }.getOrNull()
+            // All three backends do blocking HttpURLConnection I/O: they must run on IO,
+            // otherwise every call throws NetworkOnMainThreadException (swallowed below)
+            // and translation fails 100% of the time.
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    splitText(clean, limit).joinToString("") { piece ->
+                        val trail = piece.takeLastWhile { it.isWhitespace() }
+                        fn(piece.trim(), src, to).trim() + trail
+                    }
+                }.getOrNull()
+            }
 
             if (!result.isNullOrEmpty()) return result
         }

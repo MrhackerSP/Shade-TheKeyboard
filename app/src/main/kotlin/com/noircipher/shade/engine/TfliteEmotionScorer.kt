@@ -40,7 +40,9 @@ class TfliteEmotionScorer(
     private val interpreter: Interpreter? = try {
         val modelBuffer = AssetMmap.load(context, modelPath)
         Interpreter(modelBuffer)
-    } catch (_: Exception) { null }
+        // Throwable, not Exception: a failed native-library load (UnsatisfiedLinkError) is an
+        // Error and would otherwise escape this guard and kill the whole IME process.
+    } catch (_: Throwable) { null }
 
     /** Index of the `processed_predictions` output, or -1 if the contract doesn't hold. */
     private val predictionsIndex: Int = run {

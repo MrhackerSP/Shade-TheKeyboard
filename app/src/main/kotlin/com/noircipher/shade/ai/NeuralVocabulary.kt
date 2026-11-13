@@ -39,7 +39,9 @@ class NeuralVocabulary private constructor(
 
     fun encode(tokens: List<String>, maxContext: Int): IntArray {
         val tail = tokens.takeLast(maxContext).filter { it.isNotEmpty() }
-        if (tail.isEmpty()) return intArrayOf(bosId)
+        // Empty context: only emit BOS when the vocabulary actually has one; -1 ids would
+        // corrupt ONNX models that wrap negative indices.
+        if (tail.isEmpty()) return if (bosId >= 0) intArrayOf(bosId) else IntArray(0)
 
         val hasBos = bosId >= 0
         val ids = IntArray(tail.size + if (hasBos) 1 else 0)

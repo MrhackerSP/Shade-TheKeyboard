@@ -56,6 +56,11 @@ object AccentGrid {
      * @param defaultItem index of the item that goes into the anchor cell.
      */
     fun layout(n: Int, anchorCol: Int, defaultItem: Int): Layout {
+        // Guard against empty/negative item counts: with n = 0 the loop below still runs once
+        // for `def` (coerced to 0) and writes cellOfItem[0] on a zero-length array, and n < 0
+        // throws NegativeArraySizeException — both would crash the keyboard while the accent
+        // panel is being built.
+        require(n >= 1) { "AccentGrid.layout needs at least 1 item, got $n" }
         val cols = columns(n)
         val rows = rows(n)
         val ac = anchorCol.coerceIn(0, cols - 1)

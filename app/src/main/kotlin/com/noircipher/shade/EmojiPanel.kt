@@ -35,9 +35,14 @@ class EmojiPanel(
         "✅" to "✅ ❌ ❗ ❓ ⚠️ 💤 ➕ ➖ ➡️ ⬅️ ⬆️ ⬇️ 🔴 🟢 🔵 ⚪ ⚫ ♻️ ✔️ ©️ ®️ ™️".split(" ")
     )
 
+    // One label per section: index 0 is the recents header, 1..N label the categories in
+    // `allCategories` order. buildUnifiedList() reads categoryNames[i + 1], so this list must
+    // always have exactly one more entry than allCategories — a shorter list made the last
+    // category read past the end (ArrayIndexOutOfBoundsException) and crashed the keyboard
+    // the moment its input view was created.
     private val categoryNames = listOf(
-        "Recent", "Smileys & People", "Animals & Nature", "Food & Drink",
-        "Activities & Objects", "Symbols"
+        "Recent", "Smileys & People", "Gestures & Hearts", "Animals & Nature",
+        "Food & Drink", "Activities & Objects", "Symbols"
     )
 
     private val skinToneBases: Set<String> = setOf(
@@ -111,7 +116,9 @@ class EmojiPanel(
             recent.take(MAX_RECENT).forEach { out += ListItem.EmojiItem(it) }
         }
         for (i in allCategories.indices) {
-            out += ListItem.HeaderItem(categoryNames[i + 1])
+            // getOrNull keeps a mismatched names list from crashing the keyboard; the
+            // categoryNames comment above documents the required invariant.
+            out += ListItem.HeaderItem(categoryNames.getOrNull(i + 1) ?: "Category")
             allCategories[i].second.forEach { out += ListItem.EmojiItem(it) }
         }
         return out

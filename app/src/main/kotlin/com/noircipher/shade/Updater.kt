@@ -132,13 +132,18 @@ object Updater {
         val o = JSONObject(body)
         val tag = o.optString("tag_name").ifEmpty { throw NoReleaseException() }
         val assets = o.optJSONArray("assets") ?: throw NoReleaseException()
+        // Pick deterministically: prefer "Shade*" names (first one wins instead of the
+        // last matching asset overwriting it, which made the choice depend on the
+        // order GitHub happened to list the release assets in).
         var best: JSONObject? = null
         for (i in 0 until assets.length()) {
             val a = assets.optJSONObject(i) ?: continue
             val name = a.optString("name")
             if (!name.endsWith(".apk", ignoreCase = true)) continue
             if (name.contains("debug", ignoreCase = true)) continue
-            if (best == null || name.startsWith("Shade", ignoreCase = true)) best = a
+            if (best == null) best = a
+            else if (name.startsWith("Shade", ignoreCase = true) &&
+                !best.optString("name").startsWith("Shade", ignoreCase = true)) best = a
         }
         val apk = best ?: throw NoReleaseException()
         val apkUrl = apk.optString("browser_download_url")

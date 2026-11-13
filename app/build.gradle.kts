@@ -99,6 +99,9 @@ android {
         // Android stubs return defaults instead of throwing, so pure-logic classes that
         // touch android.* types can still be unit-tested on the JVM.
         unitTests.isReturnDefaultValues = true
+        // Include the merged app resources so Robolectric IME smoke tests can resolve
+        // app strings/layouts exactly like a real device build would.
+        unitTests.isIncludeAndroidResources = true
     }
 
     lint {
@@ -139,4 +142,7 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
     implementation("com.google.ai.edge.litert:litert:1.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // Robolectric drives the real IME lifecycle (create / onCreateInputView / onStartInputView /
+    // layout / draw) on the JVM, so a startup crash in ShadeService shows up as a test failure.
+    testImplementation("org.robolectric:robolectric:4.16.1")
 }

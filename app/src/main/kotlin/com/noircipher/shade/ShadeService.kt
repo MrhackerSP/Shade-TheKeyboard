@@ -357,7 +357,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             try { clips.cleanupExpired() } catch (_: Throwable) {}
         }
         scope.launch(Dispatchers.Default) {
-            configureLocaleAssets(locale)
+            try { configureLocaleAssets(locale) } catch (t: Throwable) {
+                // The IME must never die from a background asset/model load; the features that
+                // depend on this simply stay disabled until the next configure.
+                Log.w("ShadeService", "configureLocaleAssets failed", t)
+            }
         }
     }
 
@@ -883,7 +887,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         val locale = dictIds()
         scope.launch(Dispatchers.Default) {
-            configureLocaleAssets(locale)
+            try { configureLocaleAssets(locale) } catch (t: Throwable) {
+                Log.w("ShadeService", "configureLocaleAssets failed", t)
+            }
         }
 
         val keyH = prefs.getInt("key_height", 50)
@@ -2754,7 +2760,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     if (candidate == null && w.length >= 3) {
                         val locale = dictIds().split(',').firstOrNull()?.trim() ?: "en"
                         SystemSpell.flush()
-                        val sys = SystemSpell.await(locale, w, 0L)
+                        // 20ms: the spell-check round trip is async; the speculative request() fired on the
+                        // keystrokes is usually done by now, and endWord() runs on Main so the
+                        // bounded wait keeps the space press instant.
+                        val sys = SystemSpell.await(locale, w, 20L)
                         if (sys != null && sys.typo && sys.suggestions.isNotEmpty()) {
                             candidate = sys.suggestions.first()
                         }
@@ -2928,12 +2937,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             emojiPredictor = EmojiPredictionEngine.load(this@ShadeService, locale)
             try { oldEmojiPredictor.close() } catch (_: Exception) {}
 
-            try { rankingScorer?.close() } catch (_: Exception) {}
-            rankingScorer = try { TfliteCandidateRankingScorer(this@ShadeService) } catch (_: Exception) { null }
+            try {
+                rankingScorer?.close()
+            } catch (_: Exception) {}
+            // Throwable (not Exception): a failed TFLite/ONNX native load is an Error and must
+            // disable the model, not crash the IME process on the background loader thread.
+            rankingScorer = try { TfliteCandidateRankingScorer(this@ShadeService) } catch (_: Throwable) { null }
 
             try { contextEncoder?.close() } catch (_: Exception) {}
             contextEncoder = if (locale.contains("hi") || locale.contains("hg") || locale.contains("hinglish")) {
-                try { TfliteContextEncoder(this@ShadeService, "ranking/context_encoder_hi_xa.tflite") } catch (_: Exception) { null }
+                try { TfliteContextEncoder(this@ShadeService, "ranking/context_encoder_hi_xa.tflite") } catch (_: Throwable) { null }
             } else {
                 null
             }

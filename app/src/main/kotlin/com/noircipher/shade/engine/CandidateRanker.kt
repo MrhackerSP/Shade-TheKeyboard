@@ -32,9 +32,12 @@ object CandidateRanker {
         }
         if (displayWords.isEmpty()) return emptyList()
 
-        val fallbackOrder = (neural.map { it.first } + heuristics.map { it.first } + dictionary.map { it.first })
-            .mapIndexed { index, word -> word.trim().lowercase() to index }
-            .toMap()
+        // First-seen order wins: toMap() alone keeps the LAST index of a duplicated word,
+        // which would give an early (better) source the worse fallback prior.
+        val fallbackOrder = LinkedHashMap<String, Int>()
+        for ((index, entry) in (neural + heuristics + dictionary).withIndex()) {
+            fallbackOrder.putIfAbsent(entry.first.trim().lowercase(), index)
+        }
         val denominator = displayWords.size.coerceAtLeast(1).toFloat()
 
         return displayWords.entries

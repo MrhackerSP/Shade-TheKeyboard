@@ -30,7 +30,12 @@ class BundledBigramModel(lines: List<String>) {
             starts[n] = k
             for (i in 1 until r.size) {
                 val cut = r[i].lastIndexOf('/')
-                nexts[k] = Arrays.binarySearch(vocab, r[i].substring(0, cut))
+                // Skip malformed tokens (no "/weight" suffix, or an empty word): substring(0, -1)
+                // would throw and discard the WHOLE bigram table for this language.
+                if (cut <= 0) continue
+                val id = Arrays.binarySearch(vocab, r[i].substring(0, cut))
+                if (id < 0) continue
+                nexts[k] = id
                 weights[k] = (r[i].substring(cut + 1).toIntOrNull() ?: 40).toByte()
                 k++
             }

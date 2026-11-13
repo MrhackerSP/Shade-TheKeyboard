@@ -51,9 +51,11 @@ class OnnxNwpPredictor(
 
     @Synchronized
     override fun predictLogits(contextIds: IntArray): FloatArray {
+        // Fall back to 0 (never a -1 id) when the context has no real token: ONNX Gather
+        // wraps negative indices to the last embedding row.
         val lastMeaningful = contextIds.lastOrNull {
             it != vocabulary.bosId && it != vocabulary.eosId
-        } ?: vocabulary.unkId
+        } ?: (if (vocabulary.unkId >= 0) vocabulary.unkId else 0).coerceAtLeast(0)
 
         val buffer = IntBuffer.allocate(1)
         buffer.put(lastMeaningful)
@@ -65,7 +67,13 @@ class OnnxNwpPredictor(
             longArrayOf(1)
         )
 
-        val result = session.run(mapOf(inputName to input))
+        val result = try {
+            session.run(mapOf(inputName to input))
+        } catch (t: Throwable) {
+            // Match OnnxNeuralPredictor: release the input tensor when the run fails.
+            try { input.close() } catch (_: Exception) {}
+            throw t
+        }
         try {
             val output = result.get(0) as? OnnxTensor
                 ?: throw IllegalStateException("NWP model returned no tensor output")
@@ -73,8 +81,8 @@ class OnnxNwpPredictor(
             val length = minOf(floatBuffer.remaining(), vocabulary.size)
             return FloatArray(length) { floatBuffer.get() }
         } finally {
-            result.close()
-            input.close()
+            try { result.close() } catch (_: Exception) {}
+            try { input.close() } catch (_: Exception) {}
         }
     }
 
