@@ -13,8 +13,8 @@ import java.net.URLEncoder
  * Translation service with multiple free backends, tried in order.
  * No API key required for any of them.
  *
- * 1. Google Translate (unofficial gtx endpoint, POST body, ~4500 chars/chunk)
- * 2. Google Translate (dict-chrome-ex endpoint, GET, ~1500 chars/chunk)
+ * 1. Web translate endpoint (gtx, POST body, ~4500 chars/chunk)
+ * 2. Web translate endpoint (dict-chrome-ex, GET, ~1500 chars/chunk)
  * 3. MyMemory (free API, 450 chars/limit)
  *
  * Long text is split at sentence/paragraph boundaries and translated piece

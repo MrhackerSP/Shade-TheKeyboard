@@ -6,7 +6,7 @@ import org.tensorflow.lite.Interpreter
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * On-device neural spell checker over the Gboard encoder/decoder package
+ * On-device neural spell checker over the bundled encoder/decoder package
  * (`assets/spell_checker/{encoder_0,decoder_init_0,decoder_step_0}.tflite` +
  * `wpm.vocab`).
  *

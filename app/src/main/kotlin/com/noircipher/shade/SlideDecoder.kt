@@ -221,8 +221,8 @@ class SlideDecoder(
         val corners: IntArray
         val loopMask: Int
 
-        // ── Touch-point spatial features (computed once per swipe, like Gboard's
-        //    TouchPointsDistanceFeatureProducer). These are per-swipe statistics that
+        // ── Touch-point spatial features (computed once per swipe). These are
+        //    per-swipe statistics that
         //    don't depend on the candidate word; they characterise the quality of the
         //    swipe itself (was it smooth? did it wander? was it fast?).
         val tpDistMin: Float
@@ -475,15 +475,15 @@ class SlideDecoder(
                     if (d > CORNER_FREE) turn += d - CORNER_FREE
                 }
 
-                // ── New Gboard-inspired features ──────────────────────────────
+                // ── Additional ranking features ─────────────────────────────
 
                 // Candidate distance: how much worse this word's adherence is vs. the best.
-                // Gboard's c_dist_mean_d feature. A word that fits much worse than the best
+                // (the c_dist_mean_d feature.) A word that fits much worse than the best
                 // candidate should be penalised more than one that's close. Capped so one
                 // bad candidate can't dominate the calibrated LM/shape scale.
                 val cDistDiff = (rawDist[h] - bestDist).coerceIn(0f, 1.5f)  // ≥0; 0 = best-fitting
 
-                // Vowel pattern: Gboard's vowel_d/p/r/s. Count vowels in the word.
+                // Vowel pattern (the vowel_d/p/r/s features). Count vowels in the word.
                 // Words with unusual vowel patterns (all consonants, or too many vowels) are
                 // less likely to be English words and can be penalised slightly.
                 var vowelCount = 0
@@ -497,14 +497,14 @@ class SlideDecoder(
 
                 // Touch-point spread quality: a good swipe has a wide x-range (horizontal
                 // movement across keys) and moderate y-range. A tiny range means the finger
-                // barely moved — probably a tap, not a swipe. Gboard's touch_points_x_distr.
+                // barely moved — probably a tap, not a swipe (touch_points_x_distr).
                 val spreadQuality = if (tpXRange > 0.1f && tpYRange < tpXRange * 2f) 0f
                     else W_SPREAD * (0.1f - tpXRange.coerceAtMost(0.1f))
 
-                // Char count vs. swipe length: Gboard's literal_candidate_char_num.
+                // Char count vs. swipe length (literal_candidate_char_num).
                 val charNumFeature = if (len < 3) W_CHAR_NUM * (3 - len) else 0f
 
-                // ── Edit distance decomposition (Gboard's EditDistanceV2FeatureProducer) ──
+                // ── Edit distance decomposition ─────────────────────────────
                 // Instead of a single "edit distance" number, decompose into typed error
                 // counts: how many omissions, insertions, transpositions, and substitutions
                 // the swipe path implies vs. the ideal letter path.
@@ -596,7 +596,7 @@ class SlideDecoder(
                     W_NEARBY_SUB * nearbySub +
                     W_GENERAL_SUB * generalSub) / alignLen).coerceAtMost(2.0f)
 
-                // ── OOV count (Gboard's OovNumFeatureProducer) ──
+                // ── OOV count ──
                 // How many letters in the word are not on the keyboard layout.
                 // On a complete QWERTY this is 0 for all words, but on partial layouts
                 // (e.g. a language with extra letters) it flags words that can't be typed.
@@ -664,19 +664,17 @@ class SlideDecoder(
         // Max distance (in key-pitch units) a swipe point may be from a key centre to count as
         // a "visited" key in the edit-distance feature. Points farther out are travel, not hits.
         const val SWIPE_KEY_R = 0.6f
-        // ── New feature weights (inspired by Gboard's feature producers) ──
+        // ── Additional feature weights ──
         // Candidate distance: penalises words whose adherence is worse than the best candidate.
-        // Gboard's c_dist_mean_d. Low weight — the adherence score already captures most of this.
+        // c_dist_mean_d: low weight — the adherence score already captures most of this.
         const val W_C_DIST = 1.5f
-        // Vowel pattern: penalises words with unusual vowel ratios. Gboard's vowel features.
+        // Vowel pattern: penalises words with unusual vowel ratios.
         const val W_VOWEL = 0.5f
         // Touch-point spread: penalises swipes with suspiciously small horizontal range.
-        // Gboard's touch_points_x_distr.
         const val W_SPREAD = 2.0f
         // Char count: penalises very short words (1-2 letters) on long swipes.
-        // Gboard's literal_candidate_char_num.
         const val W_CHAR_NUM = 0.8f
-        // ── Edit distance decomposition (Gboard's EditDistanceV2FeatureProducer) ──
+        // ── Edit distance decomposition ──
         // Typed error weights: transpositions and nearby substitutions are common in
         // swipes (finger drifts to an adjacent key) and should be penalised less than
         // general substitutions or omissions.
@@ -686,7 +684,6 @@ class SlideDecoder(
         const val W_NEARBY_SUB = 0.4f     // substituted an adjacent key
         const val W_GENERAL_SUB = 1.0f    // substituted a distant key (unlikely)
         // OOV count: penalises words with letters not on the layout.
-        // Gboard's OovNumFeatureProducer.
         const val W_OOV = 5.0f
 
         fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float {

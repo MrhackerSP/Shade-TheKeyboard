@@ -134,8 +134,8 @@ class NeuralVocabulary private constructor(
     }
 
     /**
-     * Rich glide context: 4 derived features from the neural LM, mirroring Gboard's
-     * `mlm_score_d/p/r/s`. Each word gets:
+     * Rich glide context: 4 derived features from the neural LM
+     * (`mlm_score_d/p/r/s`). Each word gets:
      *
      *  - [score]   (the `_s` feature): 0..1 fit, same as [contextBonuses].
      *  - [diff]    (the `_d` feature): how much better this word is vs. the median candidate,

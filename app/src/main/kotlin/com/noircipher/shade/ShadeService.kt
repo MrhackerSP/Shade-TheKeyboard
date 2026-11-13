@@ -307,8 +307,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     /**
      * Known messaging apps that get special treatment (more emoji suggestions,
-     * looser autocorrect, chat-style abbreviations). Mirrors Gboard's per-app
-     * package list. Detected from [EditorInfo.packageName] in [onStartInputView].
+     * looser autocorrect, chat-style abbreviations). Package list, detected from
+     * [EditorInfo.packageName] in [onStartInputView].
      */
     private val messagingApps = setOf(
         "com.google.android.apps.messaging",
@@ -704,7 +704,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         toolbarOpen = prefs.getBoolean("toolbar_open_default", false)
         pendingDeleteWords = 0
         deletePreviewActive = false
-        // Detect known messaging apps for per-app behavior (Gboard-style).
+        // Detect known messaging apps for per-app behavior.
         isInMessagingApp = (editorInfo.packageName in messagingApps)
         touchTrace.clear()
         lastWordTouches = emptyList()
@@ -2362,7 +2362,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
                 // No space is inserted after typed punctuation: it split "3.14", "10:30", "1,000",
                 // "example.com" and "https://" into "3. 14", "10: 30"... A space follows when the
-                // person presses space (or after a suggestion / swipe), as on Gboard.
+                // person presses space (or after a suggestion / swipe).
                 if (smartCorrectionOn && canCompose && text.length == 1) {
                     val c = text[0]
                     if (c == '.' || c == '!' || c == '?') {
@@ -2421,7 +2421,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     /**
      * What the language models expect after the text before the cursor, as 4-feature LM signals
-     * per word: the neural model's score/diff/position/ratio (mirroring Gboard's mlm_score_d/p/r/s),
+     * per word: the neural model's score/diff/position/ratio (the mlm_score_d/p/r/s features),
      * plus the bigram model's likely words (scaled down; they are a coarser signal and also carry
      * what the person has typed before). Editor access happens here on Main, the model run on a
      * background thread.
@@ -2452,7 +2452,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
 
             // Bigram: scaled down as before, takes the max if the word already has a neural bonus.
-            // Gboard's uhlm_score_d/p/r/s — we derive 4 features from the bigram model too,
+            // We derive 4 features from the bigram model too,
             // but since the bigram model gives a simpler ranked list, we compute a composite
             // that approximates the same signal: top-ranked words get a higher bonus.
             val bigramRanked = bigram.entries.sortedByDescending { it.value }
@@ -2480,7 +2480,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // ends a sentence), the neural model already handles this via its training.
         // For the bigram fallback, we boost common sentence-starters.
         val scores = dict.nextWordScores(words.dropLast(1).lastOrNull(), prev1)
-        // In messaging apps, boost informal/chat words that Gboard also boosts there.
+        // In messaging apps, boost informal/chat words.
         if (isInMessagingApp) {
             val chatBoost = mapOf(
                 "yeah" to 0.3f, "ok" to 0.3f, "haha" to 0.3f, "lol" to 0.25f,
@@ -3828,7 +3828,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         private const val MAX_UNDO = 10
         // Bigram fits (0..1 by rank) are weighted like the old fixed bonus: 3.0 / SlideDecoder.CONTEXT_WEIGHT.
         private const val GLIDE_BIGRAM_SCALE = 0.5f
-        // Neural LM feature weights (mirroring Gboard's mlm_score_d/p/r/s).
+        // Neural LM feature weights (the mlm_score_d/p/r/s set).
         // Composite = W_SCORE * score + W_DIFF * diff + W_POSITION * (1-position) + W_RATIO * ratio.
         // Tuned so rank-0/ratio-1 → ~1.0, median/ratio-0.5 → ~0.5.
         private const val GLIDE_W_SCORE = 0.40f

@@ -5,7 +5,7 @@ import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 
 /**
- * Transformer expression scorer over the Gboard model bundled in
+ * Transformer expression scorer over the model bundled in
  * `assets/emoji_expression/transformer_expression.tflite`.
  *
  * The model takes INT32 token ids `[1,10]` produced by its own tokenizer
@@ -96,12 +96,12 @@ class TfliteExpressionScorer(
             val inputTensor = itp.getInputTensor(0)
             if (inputTensor.dataType() != DataType.INT32) return emptyList()
 
-                val words = query.lowercase()
-                    .replace(Regex("[^a-z0-9']+"), " ")
-                    .trim()
-                    .split(Regex("\\s+"))
-                    .filter { it.isNotEmpty() }
-                if (words.isEmpty()) return emptyList()
+            val words = query.lowercase()
+                .replace(Regex("[^a-z0-9']+"), " ")
+                .trim()
+                .split(Regex("\\s+"))
+                .filter { it.isNotEmpty() }
+            if (words.isEmpty()) return emptyList()
 
             val seqLen = inputTensor.shape().let { if (it.size >= 2) it[it.size - 1] else 10 }
             val ids = IntArray(seqLen)

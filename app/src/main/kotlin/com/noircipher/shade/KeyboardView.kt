@@ -32,7 +32,7 @@ private const val DELETE_FAST_DP_PER_MS = 0.55f
 
 /**
  * Distance (in key widths) the finger must travel from the down point before we treat
- * the stroke as a glide rather than a tap. Mirrors Expressive's `glideStart` threshold:
+ * the stroke as a glide rather than a tap. Glide start threshold:
  * `max(slop * 1.5f, iw * 0.75f)`. Below this the finger is still "on" the original key
  * (with normal rollover to neighbours); above it the pointer enters glide mode and
  * key rollover / preview popups are suppressed.
@@ -276,7 +276,7 @@ class KeyboardView(context: Context) : View(context) {
          * the original key, no preview popups fire for crossed keys, and [fire] is
          * skipped on up (the glide decoder takes over).
          *
-         * Mirrors Expressive's KeyGesture.GLIDE state: once a glide is detected, the
+         * Glide mode: once a glide is detected, the
          * only feedback is the trail — individual keys are no longer "pressed".
          */
         var gliding = false
@@ -1325,8 +1325,8 @@ class KeyboardView(context: Context) : View(context) {
         }
         if (id == slidePointerId && k.kind == KeyKind.CHAR) {
             // Detect the glide threshold: once the finger has moved far enough from
-            // the down point, this is a glide (not a tap). This mirrors Expressive's
-            // KeyGesture.GLIDE detection — `glideStart = max(slop*1.5, iw*0.75)`.
+            // the down point, this is a glide (not a tap). Detection threshold:
+            // `glideStart = max(slop*1.5, iw*0.75)`.
             // Before the threshold: normal rollover to neighbouring keys (so a thumb
             // that drifts one key over still types the right letter). After: the
             // pointer is locked to the original key, key previews are hidden, and

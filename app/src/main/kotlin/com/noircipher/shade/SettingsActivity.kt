@@ -40,8 +40,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // ============================================================================
-// Material 3 settings UI for Shade — inspired by Expressive Keyboard's
-// card-based layout with a search bar, but built on traditional Android Views
+// Material 3 settings UI for Shade — a card-based layout with a search bar,
+// built on traditional Android Views
 // (RecyclerView + MaterialSwitch + Slider + MaterialButtonToggleGroup) instead
 // of Jetpack Compose. All existing SharedPreferences keys are preserved.
 //

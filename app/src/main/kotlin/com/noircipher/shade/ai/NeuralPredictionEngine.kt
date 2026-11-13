@@ -74,8 +74,8 @@ class NeuralPredictionEngine private constructor(
     }
 
     /**
-     * Rich glide context: 4 derived features (score, diff, position, ratio) from the neural LM,
-     * mirroring Gboard's `mlm_score_d/p/r/s`. See [NeuralVocabulary.contextFeatures].
+     * Rich glide context: 4 derived features (score, diff, position, ratio) from the neural
+     * LM (`mlm_score_d/p/r/s`). See [NeuralVocabulary.contextFeatures].
      */
     @Synchronized
     fun contextFeatures(beforeCursor: String): Map<String, com.noircipher.shade.GlideLMFeatures> {
