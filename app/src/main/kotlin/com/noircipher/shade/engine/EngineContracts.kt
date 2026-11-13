@@ -21,7 +21,3 @@ interface EmojiPredictor {
     fun predictEmoji(typedPrefix: String, limit: Int): List<String>
     fun close()
 }
-
-interface DictionarySource {
-    suspend fun configure(localeId: String)
-}

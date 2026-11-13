@@ -257,13 +257,9 @@ class NeuralVocabulary private constructor(
 
         fun load(
             context: Context,
-            languageTag: String = "en",
-            includeNwp: Boolean = true
+            languageTag: String = "en"
         ): NeuralVocabulary? {
             val candidates = buildList {
-                if (includeNwp && languageTag == "en") {
-                    add("languages/en/vocab_nwp_en.tsv")
-                }
                 add("languages/${languageTag}/vocab_${languageTag}.tsv")
                 add("languages/${languageTag}/vocab.tsv")
                 add("neural/vocab_${languageTag}.tsv")

@@ -9,7 +9,9 @@ import com.noircipher.shade.engine.TfliteExpressionScorer
 
 class EmojiPredictionEngine(
     private val keywordMap: Map<String, List<String>>,
-    private val expressionScorer: ExpressionScorer? = null
+    private val expressionScorer: ExpressionScorer? = null,
+    /** The raw transformer scorer shared with EmojiContextPredictor, if any. */
+    private val sharedExpressionScorer: ExpressionScorer? = null
 ) : EmojiPredictor {
 
     override fun predictEmoji(typedPrefix: String, limit: Int): List<String> {
@@ -39,6 +41,13 @@ class EmojiPredictionEngine(
     }
 
     override fun close() {
+        // Drop the shared reference first so the suggestion-bar hints (#17) never
+        // touch a closed interpreter.
+        if (sharedExpressionScorer != null &&
+            com.noircipher.shade.engine.EmojiContextPredictor.neuralScorer === sharedExpressionScorer
+        ) {
+            com.noircipher.shade.engine.EmojiContextPredictor.neuralScorer = null
+        }
         expressionScorer?.close()
     }
 
@@ -101,7 +110,10 @@ class EmojiPredictionEngine(
             "hinglish" to listOf("🇮🇳", "💬")
         )
 
-        fun builtIn(): EmojiPredictionEngine = EmojiPredictionEngine(BUILT_IN)
+        fun builtIn(): EmojiPredictionEngine {
+            com.noircipher.shade.engine.EmojiContextPredictor.neuralScorer = null
+            return EmojiPredictionEngine(BUILT_IN)
+        }
 
         fun load(context: Context, languageTag: String = "en"): EmojiPredictor {
             val candidates = buildList {
@@ -138,8 +150,12 @@ class EmojiPredictionEngine(
                             try { TfliteExpressionScorer(context) } catch (_: Throwable) { null },
                             try { TfliteEmotionScorer(context) } catch (_: Throwable) { null }
                         )
+                        // Share the transformer expression scorer with the suggestion-bar
+                        // context hints (#17); it is closed with this engine.
+                        val shared = scorers.filterIsInstance<TfliteExpressionScorer>().firstOrNull()
+                        com.noircipher.shade.engine.EmojiContextPredictor.neuralScorer = shared
                         val scorer = CompositeExpressionScorer(scorers).takeIf { it.isAvailable }
-                        return EmojiPredictionEngine(map, scorer)
+                        return EmojiPredictionEngine(map, scorer, shared)
                     }
                 } catch (_: Exception) {
                     // Try the next asset.

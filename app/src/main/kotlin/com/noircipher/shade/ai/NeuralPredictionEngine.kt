@@ -171,18 +171,12 @@ class NeuralPredictionEngine private constructor(
         fun create(context: Context, languageTag: String = "en"): NeuralPredictionEngine? {
             val modelLanguage = normalizeLanguageTag(languageTag)
             return try {
-                val vocabulary = NeuralVocabulary.load(context, modelLanguage, includeNwp = false)
+                val vocabulary = NeuralVocabulary.load(context, modelLanguage)
                     ?: error("Standard vocabulary unavailable")
                 NeuralPredictionEngine(vocabulary, OnnxNeuralPredictor(context, vocabulary, languageTag = modelLanguage))
-            } catch (_: Throwable) {
-                try {
-                    val nwpVocabulary = NeuralVocabulary.load(context, modelLanguage, includeNwp = true) ?: return null
-                    if (nwpVocabulary.size != 9498) return null
-                    NeuralPredictionEngine(nwpVocabulary, OnnxNwpPredictor(context, nwpVocabulary))
-                } catch (t: Throwable) {
-                    Log.i(TAG, "Neural engine unavailable", t)
-                    null
-                }
+            } catch (t: Throwable) {
+                Log.i(TAG, "Neural engine unavailable", t)
+                null
             }
         }
     }

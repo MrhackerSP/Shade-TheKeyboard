@@ -58,6 +58,7 @@ import com.noircipher.shade.emoji.EmojiPredictionEngine
 import com.noircipher.shade.engine.GrammarEngine
 import com.noircipher.shade.engine.HeuristicSuggestionEngine
 import com.noircipher.shade.engine.CandidateRanker
+import com.noircipher.shade.engine.NeuralSpellChecker
 import com.noircipher.shade.engine.TfliteCandidateRankingScorer
 import com.noircipher.shade.engine.TfliteContextEncoder
 import com.noircipher.shade.engine.EmojiPredictor
@@ -195,6 +196,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var neuralOn = true
     @Volatile
     private var neural: LanguageModelEngine? = null
+
+    // On-device neural spell checker (loaded off the main thread; null while loading or
+    // on devices where the models failed to initialize).
+    private var neuralSpell: NeuralSpellChecker? = null
     @Volatile
     private var neuralLocale: String? = null
     private val neuralLock = Any()
@@ -363,12 +368,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 Log.w("ShadeService", "configureLocaleAssets failed", t)
             }
         }
+        scope.launch(Dispatchers.Default) {
+            // Neural spell checker: mmap + a warm-up decode page the models in so the
+            // first real correction on the commit path stays within its latency budget.
+            try { neuralSpell = NeuralSpellChecker(this@ShadeService).also { it.warmUp() } }
+            catch (t: Throwable) { Log.w("ShadeService", "neural spell checker unavailable", t) }
+        }
     }
 
     override fun onDestroy() {
         try { cm.removePrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
         dict.shutdown() // flushes learned words + n-grams on a background thread
         SystemSpell.close() // close the system spell checker session
+        try { neuralSpell?.close() } catch (_: Throwable) {}
+        neuralSpell = null
         suggestJob?.cancel()
         suggestDebounceJob?.cancel()
         correctionJob?.cancel()
@@ -2754,6 +2767,15 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     if (this::kb.isInitialized) kb.flushTouchOffsets()
                     val touches = currentTouchOffsets
                     var candidate = try { dict.correction(w, isEnglishLocale(), touches) } catch (_: Exception) { null }
+
+                    // Feature 1b: Neural spell checker — on-device seq2seq over WPM pieces.
+                    // Runs only when the dictionary had no correction at all (rare), stays
+                    // under a latency budget, and returns nothing when it has no candidate
+                    // better than what the user typed.
+                    if (candidate == null && w.length >= 3) {
+                        val neural = try { neuralSpell?.correct(w) } catch (_: Throwable) { null }
+                        if (!neural.isNullOrEmpty()) candidate = neural.first()
+                    }
 
                     // Feature 1: System Spell Checker — merge with Android's
                     // system says it's a typo and has a suggestion, use it.

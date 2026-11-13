@@ -7,10 +7,19 @@ package com.noircipher.shade.engine
  * typed a word and is now picking the next — we surface a relevant emoji
  * in the suggestion bar.
  *
- * Keep the maps small: the emoji panel itself is the primary surface.
- * This is just a "nice-to-have" contextual hint.
+ * Two layers:
+ *  1. when [neuralScorer] is plugged in (a [TfliteExpressionScorer] running the
+ *     transformer_expression model, whose tokenizer vocabulary was recovered
+ *     from its token.csym container), the model scores the last context word
+ *     against its 4,522 expression queries and contributes emojis first;
+ *  2. the small hardcoded word -> emoji map below fills any remaining slots
+ *     (always available, zero cost).
  */
 object EmojiContextPredictor {
+
+    /** Shared with [com.noircipher.shade.emoji.EmojiPredictionEngine]; cleared on close. */
+    @Volatile
+    var neuralScorer: ExpressionScorer? = null
 
     private val wordToEmoji: Map<String, List<String>> = mapOf(
         "love" to listOf("❤️", "😍", "💕"),
@@ -152,7 +161,18 @@ object EmojiContextPredictor {
     fun suggest(prevWord: String?, limit: Int = 3): List<String> {
         if (prevWord.isNullOrBlank()) return emptyList()
         val w = prevWord.trim().lowercase().trimEnd('.', ',', '!', '?')
-        val emojis = wordToEmoji[w] ?: return emptyList()
-        return emojis.take(limit)
+
+        val out = LinkedHashSet<String>()
+        neuralScorer?.takeIf { it.isAvailable }?.let { scorer ->
+            try {
+                out.addAll(scorer.suggestEmojis(w, limit))
+            } catch (_: Throwable) {
+                // Neural scoring is best-effort; the map below still applies.
+            }
+        }
+        if (out.size >= limit) return out.toList().take(limit)
+
+        out.addAll(wordToEmoji[w].orEmpty())
+        return out.take(limit)
     }
 }
