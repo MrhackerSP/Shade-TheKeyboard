@@ -61,11 +61,13 @@ object EmojiSearch {
 
     /**
      * Curated-synonym fallback: replace ONE query token with each of its
-     * bridge alternatives and rerun the direct pass over the full query
-     * ("gloomy dog" tries "sad dog"). When nothing matches even after the
-     * swaps, each alternative is tried alone so a query like "sob loudly"
-     * still lands on crying emojis. Deterministic: token order, then the
-     * asset's best-first alternative order.
+     * bridge alternatives (asset order = best first) and rerun the direct pass
+     * over the full query ("gloomy dog" tries "sad dog"). The FIRST alternative
+     * that hits donates its single best-ranked emoji and the bridge stops —
+     * the anchor emoji then gets expanded by related fill. When nothing matches
+     * even after the swaps, each alternative is tried alone so a query like
+     * "sob loudly" still lands on crying emojis. Deterministic: token order,
+     * then the asset's best-first alternative order.
      */
     private fun bridgeMatches(
         tokens: List<String>,
@@ -73,38 +75,36 @@ object EmojiSearch {
         limit: Int,
         synonymMap: Map<String, List<String>>
     ): List<String> {
-        val out = LinkedHashSet<String>()
         for ((i, tok) in tokens.withIndex()) {
             for (alt in synonymMap[tok].orEmpty()) {
                 if (alt in tokens) continue
                 val swapped = tokens.toMutableList()
                 swapped[i] = alt
-                for (emoji in rankMatches(swapped, keywordMap, limit, fuzzy = false)) {
-                    out.add(emoji)
-                    if (out.size >= limit) return out.toList()
-                }
+                rankMatches(swapped, keywordMap, limit, fuzzy = false).firstOrNull()?.let { return listOf(it) }
             }
         }
         for (tok in tokens) {
             for (alt in synonymMap[tok].orEmpty()) {
                 if (alt in tokens) continue
-                for (emoji in rankMatches(listOf(alt), keywordMap, limit, fuzzy = false)) {
-                    out.add(emoji)
-                    if (out.size >= limit) return out.toList()
-                }
+                rankMatches(listOf(alt), keywordMap, limit, fuzzy = false).firstOrNull()?.let { return listOf(it) }
             }
         }
-        return out.toList()
+        return emptyList()
     }
 
-    /** Direct and fuzzy matching share one ranking pass; only the token test differs. */
+    /**
+     * Direct and fuzzy matching share one ranking pass; only the token test differs.
+     * Fuzzy candidates are additionally clipped to the BEST summed distance found:
+     * a nearer keyword must never lose its slot to a shorter but further one
+     * ("lonley" surfaces "lonely" alone, not "honey"/"money" two edits away).
+     */
     private fun rankMatches(
         tokens: List<String>,
         keywordMap: Map<String, List<String>>,
         limit: Int,
         fuzzy: Boolean
     ): List<String> {
-        data class Scored(val emoji: String, val score: Float)
+        data class Scored(val emoji: String, val score: Float, val dist: Int)
         val scored = ArrayList<Scored>()
 
         for ((keyword, emojis) in keywordMap) {
@@ -121,7 +121,12 @@ object EmojiSearch {
                 if (kwLower == tok) score -= 10f
                 else if (kwLower.startsWith(tok)) score -= 5f
             }
-            for (e in emojis) scored.add(Scored(e, score))
+            for (e in emojis) scored.add(Scored(e, score, distSum))
+        }
+
+        if (fuzzy && scored.isNotEmpty()) {
+            val best = scored.minOf { it.dist }
+            scored.removeAll { it.dist > best }
         }
 
         val results = LinkedHashSet<String>()

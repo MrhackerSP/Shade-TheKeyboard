@@ -400,6 +400,7 @@ internal class SettingsAdapter(
         rows.clear()
         if (q.isEmpty()) {
             searching = false
+            rows.add(Row.Hero)
             appendCatalog()
         } else {
             searching = true

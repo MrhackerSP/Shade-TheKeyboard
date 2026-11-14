@@ -168,9 +168,16 @@ class TfliteConceptScorer(
         // Layer 1a — direct emoji triggers, longest matching trigger wins.
         matchTrigger(words, directRules)?.let { out.addAll(it) }
 
-        // Layer 1b — concept triggers mapped through the emoji table.
-        matchTrigger(words, conceptRules)?.forEach { concept ->
-            out.addAll(conceptEmojis[concept].orEmpty())
+        // Layer 1b — concept triggers mapped through the emoji table. The
+        // matched concepts' emoji lists merge round-robin so a trailing
+        // concept's TOP emoji still lands inside a small limit: for "yaaaaay"
+        // (high_five|awesome|celebration) celebration's 🎉 must not be crowded
+        // out of the first five by high_five's four hand variants.
+        if (out.size < limit) {
+            val lists = matchTrigger(words, conceptRules)
+                ?.mapNotNull { concept -> conceptEmojis[concept]?.takeIf { it.isNotEmpty() } }
+                .orEmpty()
+            addRoundRobin(out, lists)
         }
 
         // Layer 2 — the concept model, if its probes passed at load time.
@@ -181,6 +188,20 @@ class TfliteConceptScorer(
             }
         }
         return out.toList().take(limit)
+    }
+
+    /**
+     * Appends candidates from several weight-ordered lists round-robin
+     * (every list's first emoji before any list's second), preserving each
+     * list's internal order. LinkedHashSet dedupes.
+     */
+    private fun addRoundRobin(out: LinkedHashSet<String>, lists: List<List<String>>) {
+        val maxLen = lists.maxOfOrNull { it.size } ?: return
+        for (i in 0 until maxLen) {
+            for (l in lists) {
+                if (i < l.size) out.add(l[i])
+            }
+        }
     }
 
     @Synchronized

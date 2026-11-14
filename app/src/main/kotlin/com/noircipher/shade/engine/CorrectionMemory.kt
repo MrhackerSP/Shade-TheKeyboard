@@ -22,7 +22,7 @@ import org.json.JSONObject
  */
 class CorrectionMemory(context: Context) {
 
-    data class Entry(val corrected: String, val count: Int, val lastSeen: Long)
+    data class Entry(val corrected: String, val count: Int, val lastSeen: Long, val restarted: Boolean = false)
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
@@ -40,11 +40,14 @@ class CorrectionMemory(context: Context) {
         ensureLoad()
         val now = System.currentTimeMillis()
         val old = cache[key]
-        val entry = if (old != null && old.corrected == fix) {
-            Entry(fix, (old.count + 1).coerceAtMost(MAX_COUNT), now)
-        } else {
+        val entry = when {
+            old == null -> Entry(fix, 1, now)
+            old.corrected == fix -> Entry(fix, (old.count + 1).coerceAtMost(MAX_COUNT), now)
             // Conflicting fix (user changed their mind): restart the count at 1.
-            Entry(fix, 1, now)
+            // The entry stays visible to [recall] — it replaces an answer the
+            // user had already approved — but [approves] keeps gating on the
+            // count, so the new fix has to be re-confirmed.
+            else -> Entry(fix, 1, now, restarted = true)
         }
         cache[key] = entry
         evict(now)
@@ -69,7 +72,12 @@ class CorrectionMemory(context: Context) {
         save()
     }
 
-    /** What the user usually means by [original], or null. Only pairs seen [APPROVE_COUNT]+ times. */
+    /**
+     * What the memory currently holds for [original], or null. Visible once a
+     * pair reached [APPROVE_COUNT] accepts, and also right after a conflicting
+     * fix replaced an approved pair ([Entry.restarted], count restarted at 1) —
+     * the entry exists and must be inspectable, it is just not pre-approved.
+     */
     @Synchronized
     fun recall(original: String): Entry? {
         val key = norm(original)
@@ -77,13 +85,13 @@ class CorrectionMemory(context: Context) {
         ensureLoad()
         val entry = cache[key] ?: return null
         if (System.currentTimeMillis() - entry.lastSeen >= TTL_MS) return null
-        return if (entry.count >= APPROVE_COUNT) entry else null
+        return if (entry.count >= APPROVE_COUNT || entry.restarted) entry else null
     }
 
     /** True when this exact pair has been accepted enough times to pre-approve. */
     fun approves(original: String, corrected: String): Boolean {
         val entry = recall(original) ?: return false
-        return entry.corrected == norm(corrected)
+        return entry.count >= APPROVE_COUNT && entry.corrected == norm(corrected)
     }
 
     @Synchronized
@@ -136,7 +144,7 @@ class CorrectionMemory(context: Context) {
                 val count = o.optInt("n", 0)
                 val seen = o.optLong("t", 0L)
                 if (fixed.isEmpty() || count <= 0 || now - seen >= TTL_MS) continue
-                cache[k] = Entry(fixed, count, seen)
+                cache[k] = Entry(fixed, count, seen, o.optBoolean("r", false))
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to load correction memory; starting fresh", e)
@@ -157,7 +165,9 @@ class CorrectionMemory(context: Context) {
         try {
             val root = JSONObject()
             for ((k, v) in cache) {
-                root.put(k, JSONObject().put("c", v.corrected).put("n", v.count).put("t", v.lastSeen))
+                val o = JSONObject().put("c", v.corrected).put("n", v.count).put("t", v.lastSeen)
+                if (v.restarted) o.put("r", true)
+                root.put(k, o)
             }
             prefs.edit().putString("pairs", root.toString()).apply()
         } catch (e: Exception) {

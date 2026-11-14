@@ -32,6 +32,10 @@ internal object SuggestionHeuristics {
         return when (last) {
             "in" -> listOf("5", "10", "15", "20", "30").filter { it.startsWith(prefix) }.take(2)
             "costs", "cost", "price", "pay", "paid" -> if (prefix.isEmpty()) listOf("$") else emptyList()
+            // "it" reads both ways — "it costs $20" and "it takes 20 minutes":
+            // dollar sign while nothing is typed, then the numeric pool.
+            "it" -> if (prefix.isEmpty()) listOf("$")
+                    else listOf("5", "10", "15", "20", "30").filter { it.startsWith(prefix) }.take(2)
             "at", "around", "about" -> listOf("5", "10", "20", "50").filter { it.startsWith(prefix) }.take(2)
             "number", "no." -> listOf("1", "2", "3").filter { it.startsWith(prefix) }.take(2)
             else -> emptyList()

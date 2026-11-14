@@ -149,3 +149,33 @@ dependencies {
     // layout / draw) on the JVM, so a startup crash in ShadeService shows up as a test failure.
     testImplementation("org.robolectric:robolectric:4.16.1")
 }
+
+// Robolectric normally downloads its android-all jar from Maven Central at TEST
+// RUNTIME. On runners with flaky or restricted egress that fetch dies with
+// MavenArtifactFetcher IOExceptions and every Robolectric suite fails at
+// classMethod before a single assertion runs. Pin the exact preinstrumented jar
+// Robolectric 4.16.1 wants for @Config(sdk = [34]) as a normal Gradle
+// dependency, copy it into a flat directory, and point Robolectric at it in
+// offline mode — test runs become hermetic and ride the Gradle cache/CI cache.
+val robolectricJars by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+
+dependencies {
+    robolectricJars("org.robolectric:android-all-instrumented:14-robolectric-10818077-i7")
+}
+
+val copyRobolectricJars = tasks.register<Copy>("copyRobolectricJars") {
+    from(robolectricJars)
+    into(layout.buildDirectory.dir("robolectric-deps"))
+}
+
+tasks.withType<Test>().configureEach {
+    dependsOn(copyRobolectricJars)
+    systemProperty("robolectric.offline", "true")
+    systemProperty(
+        "robolectric.dependency.dir",
+        layout.buildDirectory.dir("robolectric-deps").get().asFile.absolutePath
+    )
+}

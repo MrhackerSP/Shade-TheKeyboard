@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Noir palette for the Shade settings UI: pitch black surfaces, white type,
-  hairline dividers. Monochrome is mode-independent, so there is no
-  values-night variant of this file.
+  hairline dividers. This is the DAY (default) config; the night variant in
+  values-night/colors_settings.xml switches the same token names to the
+  Material 3 palette derived from the #3B6FD4 seed.
 -->
 <resources>
     <color name="noir_background">#000000</color>
@@ -16,4 +17,61 @@
     <color name="noir_divider">#161616</color>
     <color name="noir_outline">#2E2E2E</color>
     <color name="noir_control_normal">#6B6B6B</color>
+
+    <!--
+      Day (noir) defaults for every M3 token declared in the night file —
+      each resource MUST have a base declaration or it crashes when queried
+      outside night mode (and lint's MissingDefaultResource fails the build).
+      Monochrome mapping: accents collapse to white, containers to the
+      field/sheet greys.
+    -->
+    <color name="m3_primary">@color/noir_text</color>
+    <color name="m3_on_primary">@color/noir_on_button</color>
+    <color name="m3_primary_container">@color/noir_field</color>
+    <color name="m3_on_primary_container">@color/noir_text</color>
+    <color name="m3_secondary">@color/noir_text</color>
+    <color name="m3_on_secondary">@color/noir_on_button</color>
+    <color name="m3_secondary_container">@color/noir_field</color>
+    <color name="m3_on_secondary_container">@color/noir_text</color>
+    <color name="m3_tertiary">@color/noir_text</color>
+    <color name="m3_on_tertiary">@color/noir_on_button</color>
+    <color name="m3_tertiary_container">@color/noir_field</color>
+    <color name="m3_on_tertiary_container">@color/noir_text</color>
+    <color name="m3_error">@color/noir_text_secondary</color>
+    <color name="m3_on_error">@color/noir_on_button</color>
+    <color name="m3_error_container">@color/noir_field</color>
+    <color name="m3_on_error_container">@color/noir_text</color>
+    <color name="m3_background">@color/noir_background</color>
+    <color name="m3_on_background">@color/noir_text</color>
+    <color name="m3_surface">@color/noir_background</color>
+    <color name="m3_on_surface">@color/noir_text</color>
+    <color name="m3_surface_variant">@color/noir_field</color>
+    <color name="m3_on_surface_variant">@color/noir_text_secondary</color>
+    <color name="m3_surface_container">@color/noir_sheet</color>
+    <color name="m3_surface_container_high">@color/noir_field</color>
+    <color name="m3_surface_container_highest">@color/noir_field_stroke</color>
+    <color name="m3_surface_bright">@color/noir_field</color>
+    <color name="m3_surface_dim">@color/noir_background</color>
+    <color name="m3_outline">@color/noir_outline</color>
+    <color name="m3_outline_variant">@color/noir_divider</color>
+    <color name="m3_inverse_surface">@color/noir_text</color>
+    <color name="m3_inverse_on_surface">@color/noir_background</color>
+    <color name="m3_inverse_primary">@color/noir_text</color>
+    <color name="settings_badge_0_bg">@color/noir_field</color>
+    <color name="settings_badge_0_fg">@color/noir_text</color>
+    <color name="settings_badge_1_bg">@color/noir_field</color>
+    <color name="settings_badge_1_fg">@color/noir_text</color>
+    <color name="settings_badge_2_bg">@color/noir_field</color>
+    <color name="settings_badge_2_fg">@color/noir_text</color>
+    <color name="search_pill_bg">@color/noir_sheet</color>
+    <color name="search_pill_bg_focused">@color/noir_field</color>
+    <color name="search_pill_text">@color/noir_text</color>
+    <color name="search_pill_hint">@color/noir_text_tertiary</color>
+    <color name="settings_card_bg">@color/noir_sheet</color>
+    <color name="m3_settings_card_stroke">@android:color/transparent</color>
+    <color name="settings_row_bg">@color/noir_field</color>
+    <color name="m3_settings_divider">@color/noir_divider</color>
+    <color name="settings_section_title">@color/noir_text_secondary</color>
+    <color name="settings_row_title">@color/noir_text</color>
+    <color name="settings_row_subtitle">@color/noir_text_secondary</color>
 </resources>
