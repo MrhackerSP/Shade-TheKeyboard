@@ -1,7 +1,7 @@
 package com.noircipher.shade
 
 /**
- * Four derived features from the neural language model (`mlm_score_d/p/r/s`).
+ * Four derived features from the neural language model, mirroring Gboard's `mlm_score_d/p/r/s`.
  *
  * @param score    The `_s` feature: 0..1 fit (1 = most likely, 0 = cutoff).
  * @param diff     The `_d` feature: bonus minus the median bonus (0 = median, >0 = better).

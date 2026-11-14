@@ -133,20 +133,6 @@ class AdaptiveWordMemory(context: Context) {
         dirty = false
     }
 
-    /**
-     * Re-reads from disk after a backup restore replaced the underlying file.
-     * Pending in-memory edits are flushed first so they aren't lost or
-     * resurrected after the reload.
-     */
-    @Synchronized
-    fun reload() {
-        flush()
-        flushJob?.cancel()
-        values.clear()
-        load()
-        dirty = false
-    }
-
     companion object {
         private const val TAG = "AdaptiveWordMemory"
         private const val MAX_SCORE = 80f

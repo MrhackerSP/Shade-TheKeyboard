@@ -76,8 +76,8 @@ class GestureEngineTest {
     fun setKeyWidthChangesSamplingDistance() {
         val e = engine(100f)
         e.onDown(0f, 0f, 1000)
-        e.setKeyWidth(200f)               // sampling distance becomes ~33 px
-        e.addEventPoint(30f, 0f, 1100)
+        e.setKeyWidth(200f)               // sampling distance becomes 200/8 = 25 px
+        e.addEventPoint(20f, 0f, 1100)    // 20 px < 25 px: dropped
         assertEquals(1, e.getLength())
     }
 
@@ -94,7 +94,7 @@ class GestureEngineTest {
         val e = engine()
         slowSwipe(e, 3)
         assertTrue(e.hasTrail())
-        now += 800
+        now += 500
         assertTrue(e.hasTrail())          // exactly at the linger limit
         now += 1
         assertFalse(e.hasTrail())         // nothing left to redraw -> no endless invalidate()
@@ -104,12 +104,12 @@ class GestureEngineTest {
     fun addTrailRestartsFadeFromRelease() {
         val e = engine()
         slowSwipe(e, 3)
-        now += 700
+        now += 100
         e.addTrail()                      // finger lifted
-        now += 700
-        assertTrue(e.hasTrail())
-        now += 101
-        assertFalse(e.hasTrail())
+        now += 200
+        assertTrue(e.hasTrail())          // inside the 220 ms fade
+        now += 21
+        assertFalse(e.hasTrail())         // fade over -> no endless invalidate()
     }
 
     @Test

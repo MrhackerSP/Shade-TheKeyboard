@@ -102,8 +102,6 @@
     <string name="pref_suggestions_sum">Offline suggestions while you type</string>
     <string name="pref_autocorrect">Autocorrect</string>
     <string name="pref_autocorrect_sum">Fix typos in words when you press space. Backspace right after undoes it.</string>
-    <string name="pref_block_offensive">Block offensive words</string>
-    <string name="pref_block_offensive_sum">Hide profanity from suggestions and autocorrect. What you type yourself is never changed.</string>
     <string name="pref_smart_correction">Smart correction</string>
     <string name="pref_smart_correction_sum">Auto-space after punctuation, capitalize new sentences, fix “i” to “I”, and double-space for period</string>
     <string name="pref_emoji_sugg">Emoji suggestions</string>
@@ -128,7 +126,6 @@
 
     <!-- Feedback -->
     <string name="pref_haptic">Vibrate on keypress</string>
-    <string name="pref_haptic_strength">Haptic strength</string>
     <string name="pref_sound">Sound on keypress</string>
     <string name="pref_longpress">Long-press delay (ms)</string>
     <string name="pref_typing_burst">Typing burst animation</string>
@@ -172,10 +169,6 @@
     <string name="pref_learning_calibrator_sum">Adjust autocorrect confidence to match your acceptance patterns</string>
     <string name="pref_learning_ranker">Online ranker training</string>
     <string name="pref_learning_ranker_sum">Fine-tune the candidate ranker based on which suggestions you accept</string>
-    <string name="pref_learning_correction">Personal correction memory</string>
-    <string name="pref_learning_correction_sum">Remember the fixes you keep and apply them faster next time; reverting one removes it</string>
-    <string name="pref_learning_touch">Adaptive touch model</string>
-    <string name="pref_learning_touch_sum">Learn where your fingers land on each key to judge typos more accurately</string>
     <string name="pref_learning_clear_all">Clear all adaptive learning data</string>
     <string name="pref_learning_clear_all_confirm">Delete all adaptive learning data? This includes recency scores, app-context vocabularies, autocorrect suppressions, calibration history, and online-ranker weights.</string>
     <string name="pref_learning_clear_adaptive">Clear recency-weighted words</string>
@@ -376,6 +369,8 @@
     <string name="gif_consent_continue">Continue</string>
     <string name="gif_blocked_secure">GIFs are disabled in password fields</string>
     <string name="gif_pasted_link">This app doesn’t accept GIFs, so a link was inserted</string>
+    <string name="gif_setup_message">GIF search needs a free KLIPY API key. Type the key on the keyboard below, then press Enter. Get one at klipy.com</string>
+    <string name="gif_setup_error">That key didn’t work. Check it and press Enter again.</string>
 
     <!-- Translator -->
     <string name="translator_hint">Type to translate</string>
@@ -383,10 +378,17 @@
     <string name="translator_error">Translation failed — check your connection</string>
     <string name="translator_target">Target language</string>
     <string name="translator_auto">Auto</string>
+    <string name="translator_enter_hint">Press Enter to insert the translation</string>
     <string name="pref_translator">Translator</string>
     <string name="pref_translator_sum">Show a translate button in the toolbar</string>
     <string name="pref_gif">GIF search (KLIPY)</string>
     <string name="pref_gif_sum">Show the GIF button in the toolbar. Searches are sent to KLIPY after you accept the notice.</string>
+
+    <!-- Remove suggestion (long-press on a suggestion chip) -->
+    <string name="remove_suggestion_title">Remove suggestion</string>
+    <string name="remove_suggestion_word">“%1$s” won’t be suggested anymore</string>
+    <string name="remove_suggestion_remove">Remove</string>
+    <string name="remove_suggestion_cancel">Cancel</string>
 
     <!-- Onboarding -->
     <string name="try_keyboard">Try the keyboard</string>
@@ -403,9 +405,7 @@
     <string name="cat_appearance_sub">Theme, colors, key style, size, layout</string>
     <string name="cat_typing">Typing</string>
     <string name="cat_typing_sub">Autocorrect, suggestions, glide, haptics, sound</string>
-    <string name="cat_languages">Languages</string>
     <string name="cat_languages_sub">Dictionaries, emoji, GIF, voice, learning</string>
-    <string name="cat_backup">Backup &amp; data</string>
     <string name="cat_backup_sub">Export, import, clipboard, clear data</string>
     <string name="cat_about">About &amp; updates</string>
     <string name="cat_about_sub">Version, update checker, typing stats</string>
@@ -434,7 +434,6 @@
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
     <string name="theme_amoled">AMOLED</string>
-    <string name="theme_material">Material You</string>
 
     <!-- One-handed options -->
     <string name="one_handed_off">Off</string>
@@ -454,17 +453,8 @@
     <!-- Color labels (short) -->
     <string name="color_bg">Background</string>
     <string name="color_key">Keys</string>
-    <string name="color_keyfn">Function keys</string>
-    <string name="color_text">Key text</string>
     <string name="color_accent">Accent</string>
     <string name="color_auto">Auto</string>
-    <string name="color_reset_to_auto">Reset to auto</string>
-    <string name="color_apply">Apply</string>
-    <string name="color_picker_desc">Color picker: drag in the square to set saturation and brightness, use the bar below to set the hue</string>
-    <string name="color_hex_hint">Hex code, e.g. #7C4DFF</string>
-    <string name="color_invalid_hex">Not a valid color code</string>
-    <string name="color_theme_switched">Theme switched to Custom so colors apply</string>
-    <string name="theme_custom">Custom</string>
 
     <!-- Toggle / slider / action labels used by the M3 settings tree.
          Some reuse existing strings (pref_theme, pref_key_borders, etc.);

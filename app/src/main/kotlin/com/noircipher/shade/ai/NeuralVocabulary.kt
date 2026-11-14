@@ -1,7 +1,6 @@
 package com.noircipher.shade.ai
 
 import android.content.Context
-import android.util.Log
 import com.noircipher.shade.GlideLMFeatures
 
 class NeuralVocabulary private constructor(
@@ -40,9 +39,7 @@ class NeuralVocabulary private constructor(
 
     fun encode(tokens: List<String>, maxContext: Int): IntArray {
         val tail = tokens.takeLast(maxContext).filter { it.isNotEmpty() }
-        // Empty context: only emit BOS when the vocabulary actually has one; -1 ids would
-        // corrupt ONNX models that wrap negative indices.
-        if (tail.isEmpty()) return if (bosId >= 0) intArrayOf(bosId) else IntArray(0)
+        if (tail.isEmpty()) return intArrayOf(bosId)
 
         val hasBos = bosId >= 0
         val ids = IntArray(tail.size + if (hasBos) 1 else 0)
@@ -135,8 +132,8 @@ class NeuralVocabulary private constructor(
     }
 
     /**
-     * Rich glide context: 4 derived features from the neural LM
-     * (`mlm_score_d/p/r/s`). Each word gets:
+     * Rich glide context: 4 derived features from the neural LM, mirroring Gboard's
+     * `mlm_score_d/p/r/s`. Each word gets:
      *
      *  - [score]   (the `_s` feature): 0..1 fit, same as [contextBonuses].
      *  - [diff]    (the `_d` feature): how much better this word is vs. the median candidate,
@@ -258,9 +255,13 @@ class NeuralVocabulary private constructor(
 
         fun load(
             context: Context,
-            languageTag: String = "en"
+            languageTag: String = "en",
+            includeNwp: Boolean = true
         ): NeuralVocabulary? {
             val candidates = buildList {
+                if (includeNwp && languageTag == "en") {
+                    add("languages/en/vocab_nwp_en.tsv")
+                }
                 add("languages/${languageTag}/vocab_${languageTag}.tsv")
                 add("languages/${languageTag}/vocab.tsv")
                 add("neural/vocab_${languageTag}.tsv")
@@ -297,9 +298,8 @@ class NeuralVocabulary private constructor(
                         }
                         return NeuralVocabulary(tokens, tokenToId)
                     }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     // Try the next format.
-                    Log.w("NeuralVocabulary", "Failed to load neural vocabulary", e)
                 }
             }
             return null

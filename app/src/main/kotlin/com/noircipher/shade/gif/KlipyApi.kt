@@ -1,9 +1,7 @@
 package com.noircipher.shade.gif
 
 import android.net.Uri
-import android.util.Log
 import com.noircipher.shade.BuildConfig
-import com.noircipher.shade.ShadeLog
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -13,11 +11,17 @@ import java.net.URL
 
 /**
  * KLIPY GIF API (https://docs.klipy.com). The key is baked into the build (see `KLIPY_API_KEY` in
- * app/build.gradle.kts); without one the GIF feature hides itself.
+ * app/build.gradle.kts) when provided; otherwise the person can paste their own free key once in
+ * the GIF panel, which is stored in preferences ("gif_api_key") and used at runtime.
  */
 object KlipyConfig {
     val apiKey: String get() = BuildConfig.KLIPY_API_KEY
-    val isConfigured: Boolean get() = apiKey.isNotBlank()
+
+    /** Resolves the key to use: the build-time key wins, then the runtime key from prefs. */
+    fun effectiveKey(runtime: String?): String =
+        apiKey.ifBlank { runtime?.trim().orEmpty() }
+
+    fun isConfigured(runtime: String?): Boolean = effectiveKey(runtime).isNotBlank()
 }
 
 /** One downloadable rendition of a GIF. */
@@ -145,8 +149,7 @@ class KlipyClient(private val apiKey: String, private val customerId: String) {
             val json = JSONObject().put("customer_id", customerId)
             if (!query.isNullOrBlank()) json.put("q", query)
             HttpFetch.postJson(url, json.toString())
-        } catch (e: Exception) {
-            Log.w("KlipyApi", "KLIPY share registration failed", e)
+        } catch (_: Exception) {
         }
     }
 
@@ -211,8 +214,7 @@ object HttpFetch {
         return try {
             file.writeBytes(getBytes(url, maxBytes))
             true
-        } catch (t: Exception) {
-            ShadeLog.w("KlipyApi", "gif download failed", t, once = true)
+        } catch (_: Exception) {
             file.delete()
             false
         }

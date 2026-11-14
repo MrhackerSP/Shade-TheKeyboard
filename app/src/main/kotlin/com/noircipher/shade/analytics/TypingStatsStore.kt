@@ -4,8 +4,6 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
-import android.util.Log
-import com.noircipher.shade.ShadeLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -78,8 +76,7 @@ class TypingStatsStore(context: Context) {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, secretKey())
             Base64.encodeToString(cipher.iv + cipher.doFinal(text.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
-        } catch (t: Exception) {
-            ShadeLog.w("TypingStatsStore", "stats encrypt failed", t, once = true)
+        } catch (_: Exception) {
             null
         }
     }
@@ -90,8 +87,7 @@ class TypingStatsStore(context: Context) {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
             String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8)
-        } catch (t: Exception) {
-            ShadeLog.w("TypingStatsStore", "stats decrypt failed", t, once = true)
+        } catch (_: Exception) {
             null
         }
     }
@@ -102,7 +98,7 @@ class TypingStatsStore(context: Context) {
         try {
             val json = JSONObject(plain)
             for (key in json.keys()) words[key] = json.optInt(key, 0)
-        } catch (e: Exception) { Log.w("TypingStatsStore", "Failed to parse typing stats store", e) }
+        } catch (_: Exception) {}
     }
 
     private fun migratePlainWords() {
@@ -113,8 +109,7 @@ class TypingStatsStore(context: Context) {
             prefs.edit().remove("words").apply()
             dirty = true
             scheduleFlush()
-        } catch (t: Exception) {
-            ShadeLog.w("TypingStatsStore", "stats words load failed; resetting store", t, once = true)
+        } catch (_: Exception) {
             prefs.edit().remove("words").apply()
         }
     }

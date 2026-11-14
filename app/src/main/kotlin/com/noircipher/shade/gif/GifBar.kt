@@ -35,6 +35,7 @@ class GifBar(
         fun onPick(item: GifItem)
         fun onNearEnd()
         fun onConsent()
+        fun onApiKeySave(key: String)
     }
 
     private var theme: KbTheme = Themes.LIGHT
@@ -188,6 +189,19 @@ class GifBar(
         clearThumbs()
         status.text = context.getString(R.string.gif_consent_message)
         consentBtn.visibility = VISIBLE
+        overlay.visibility = VISIBLE
+    }
+
+    /**
+     * No API key: this build has none baked in and none saved yet. The key is typed on the
+     * keyboard below (the query line shows it, see [com.noircipher.shade.gif.GifController]);
+     * Enter saves it. Get a free key at https://klipy.com.
+     */
+    fun showSetup(error: Boolean = false) {
+        clearThumbs()
+        consentBtn.visibility = GONE
+        status.text = if (error) context.getString(R.string.gif_setup_error)
+        else context.getString(R.string.gif_setup_message)
         overlay.visibility = VISIBLE
     }
 

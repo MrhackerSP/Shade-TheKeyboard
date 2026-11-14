@@ -34,17 +34,17 @@ class BigramModel(private val ctx: Context) {
     }
 
     private fun loadStatic() {
-        // No bundled table: only learned data is used.
-        staticNext = com.noircipher.shade.engine.AssetTsv.use(
-            ctx, "bigrams_en.txt", "BigramModel", emptyMap(),
-            failureMessage = "Failed to load bundled bigrams from assets"
-        ) { lines ->
+        try {
             val m = HashMap<String, Array<String>>(40000)
-            for (line in lines) {
-                val p = line.split('\t')
-                if (p.size >= 2) m[p[0]] = p.subList(1, p.size).toTypedArray()
+            ctx.assets.open("bigrams_en.txt").bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    val p = line.split('\t')
+                    if (p.size >= 2) m[p[0]] = p.subList(1, p.size).toTypedArray()
+                }
             }
-            m
+            staticNext = m
+        } catch (_: Exception) {
+            // No bundled table: only learned data is used.
         }
     }
 
@@ -78,7 +78,7 @@ class BigramModel(private val ctx: Context) {
                 tmp.delete()
             }
             dirty = false
-        } catch (e: Exception) { Log.w("BigramModel", "Failed to save bigram store; keeping data in memory only", e) }
+        } catch (_: Exception) {}
     }
 
     private fun toJson(): String {
@@ -121,9 +121,8 @@ class BigramModel(private val ctx: Context) {
                 bigrams[key] = m
                 bigramTotals[key] = total
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // No prime file — start cold, same as before.
-            Log.w("BigramModel", "Failed to seed bigram model from prime.json", e)
         }
     }
 
@@ -144,7 +143,7 @@ class BigramModel(private val ctx: Context) {
             Log.w("BigramModel", "Failed to load bigrams; starting fresh", e)
             // Keep the unreadable file (e.g. Keystore key lost) instead of letting the
             // next save() overwrite it silently.
-            try { store.renameTo(java.io.File(store.parentFile, store.name + ".bad")) } catch (e: Exception) { Log.w("BigramModel", "Failed to rename corrupt bigram store to .bad", e) }
+            try { store.renameTo(java.io.File(store.parentFile, store.name + ".bad")) } catch (_: Exception) {}
         }
     }
 
@@ -168,15 +167,9 @@ class BigramModel(private val ctx: Context) {
         }
     }
 
-    @Synchronized
     fun clear() {
         stats.clear()
-        // Hold the same lock as save() and drop the dirty flag: otherwise a debounced save
-        // running concurrently (or shutdown's flush thread) re-writes the just-deleted file
-        // and the "cleared" data resurrects on the next launch.
-        dirty = false
         store.delete()
-        try { store.resolveSibling(store.name + ".tmp").delete() } catch (e: Exception) { Log.w("BigramModel", "Failed to delete bigram store temp file", e) }
     }
 
     companion object {
@@ -190,6 +183,6 @@ class BigramModel(private val ctx: Context) {
                 val raw = f.readText()
                 if (raw.trimStart().startsWith("{")) raw else SecureStore.decrypt(KEY_ALIAS, raw)
             }
-        } catch (t: Exception) { ShadeLog.w("BigramModel", "ngram json read failed", t, once = true); null }
+        } catch (_: Exception) { null }
     }
 }

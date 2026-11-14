@@ -18,11 +18,18 @@ import java.nio.ByteBuffer
  */
 class TfliteCandidateRankingScorer(
     context: Context,
-    modelPath: String = "ranking/ranker_en.tflite"
+    modelPath: String = "ranking/candidate_ranking_en.tflite"
 ) : CandidateRankingScorer {
 
-    private val interpreter: Interpreter =
-        TfliteModelLoader.load(context, modelPath, numThreads = 2)
+    private val interpreter: Interpreter = run {
+        val modelBuffer = AssetMmap.load(context, modelPath)
+        Interpreter(
+            modelBuffer,
+            Interpreter.Options().apply {
+                numThreads = 2
+            }
+        )
+    }
 
     private val input: Array<FloatArray> = Array(1) { FloatArray(FEATURE_SIZE) }
     private val output: Array<FloatArray> = Array(1) { FloatArray(1) }

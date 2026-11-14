@@ -35,7 +35,7 @@ class GestureEngine(
     private var dynamicTimeThresholdTo = 20 // ms
     private var dynamicDistanceThresholdFrom = 6.0f * keyWidth // pixels
     private var dynamicDistanceThresholdTo = 0.35f * keyWidth // pixels
-    private var samplingMinimumDistance = keyWidth / 6.0f // pixels
+    private var samplingMinimumDistance = keyWidth / 8.0f // pixels (denser = smoother trail + decode)
     private var recognitionMinimumTime = 100 // ms
     private var recognitionSpeedThreshold = 5.5f * keyWidth // pixels/sec
 
@@ -44,7 +44,7 @@ class GestureEngine(
         detectFastMoveSpeedThreshold = 1.5f * w
         dynamicDistanceThresholdFrom = 6.0f * w
         dynamicDistanceThresholdTo = 0.35f * w
-        samplingMinimumDistance = w / 6.0f
+        samplingMinimumDistance = w / 8.0f
         recognitionSpeedThreshold = 5.5f * w
     }
 
@@ -68,12 +68,14 @@ class GestureEngine(
     private var trailColor = 0x80FFFFFF.toInt()
     private var trailReleaseTime = 0L  // 0 = still drawing; >0 = finger lifted, fading out
 
-    // Trail visual parameters
-    private var trailStartWidth = 10f    // px at the finger (thick end)
-    private var trailEndWidth = 1f      // px at the tail (thin end)
-    private var trailLingerDuration = 800L   // ms the trail stays visible after the last point before fading
-    private var trailFadeDuration = 800L     // ms for the whole-trail fade-out after release
-    private val trailMaxPoints = 120        // cap memory; old points are dropped
+    // Trail visual parameters (GBoard-style comet ribbon; widths are px, set dp-scaled
+    // by the view via [setTrailWidths]).
+    private var trailStartWidth = 13f    // px at the finger (thick end)
+    private var trailEndWidth = 2f       // px at the tail (thin end)
+    private var trailLingerDuration = 500L   // ms the trail stays visible when the finger pauses
+    private var trailFadeDuration = 220L     // ms for the whole-trail fade-out after release
+    private val trailTailWindowMs = 320f     // points older than this behind the finger fade by age
+    private val trailMaxPoints = 140        // cap memory; old points are dropped
 
     // Reusable buffers for smooth drawing
     private val smoothPath = Path()
@@ -187,14 +189,16 @@ class GestureEngine(
     }
 
     /**
-     * Draw the gesture trail as a smooth bezier curve with width taper and alpha fade.
+     * Draw the gesture trail as a GBoard-style comet ribbon.
      *
      * Trail characteristics:
      * - Smooth quadratic bezier through midpoints (no jagged segments)
-     * - Width tapers from thick (near finger) to thin (at tail)
-     * - Alpha fades from opaque (near finger) to transparent (at tail)
-     * - Round stroke caps for a blob look
-     * - After release, the whole trail fades out together over ~200ms
+     * - Width tapers from thick (near finger) to thin (at tail) with a soft ease
+     * - Alpha fades positionally AND by point age: only the last ~1/3 second of the
+     *   gesture stays visible, so fast glides leave a short comet behind the finger
+     * - A soft glow pass under the core ribbon (GBoard-like luminous feel)
+     * - A subtle blob at the finger position (the "head" of the comet)
+     * - After release, the whole trail fades out quickly (~220ms), GBoard-like
      */
     fun drawTrail(canvas: Canvas, paint: Paint) {
         val n = trailX.size
@@ -211,6 +215,11 @@ class GestureEngine(
             }
             globalAlpha = 1f - elapsed.toFloat() / trailFadeDuration
         }
+
+        // Age of each trail point relative to the newest point. Points older than
+        // [trailTailWindowMs] fade to invisible — the trail is a short comet, not a
+        // full path history.
+        val newestElapsed = trailTimes[n - 1]
 
         // Build a smooth path through the trail points using quadratic beziers.
         // Method: connect consecutive midpoints with quadratic curves, using the
@@ -231,9 +240,6 @@ class GestureEngine(
         val totalLen = pathMeasure.length
         if (totalLen <= 0f) return
 
-        // Draw the trail in ~40 segments, each with its own width and alpha.
-        // Segment 0 = tail (oldest, thin, transparent); last segment = head (newest, thick, opaque).
-        val segments = max(2, min(40, n))
         paint.style = Paint.Style.STROKE
         paint.isAntiAlias = true
         paint.strokeCap = Paint.Cap.ROUND
@@ -244,6 +250,7 @@ class GestureEngine(
         val baseG = (trailColor shr 8) and 0xFF
         val baseB = trailColor and 0xFF
 
+        val segments = max(2, min(48, n))
         var prevX = 0f
         var prevY = 0f
         pathMeasure.getPosTan(0f, posBuffer, tanBuffer)
@@ -257,24 +264,44 @@ class GestureEngine(
             val cx = posBuffer[0]
             val cy = posBuffer[1]
 
-            // Width: thick at the head (t=1), thin at the tail (t=0).
-            val width = trailEndWidth + (trailStartWidth - trailEndWidth) * t
+            // Age fade: segment i corresponds roughly to trail point i*n/segments.
+            val pointIdx = min(n - 1, (t * (n - 1)).toInt())
+            val ageMs = (newestElapsed - trailTimes[pointIdx]).coerceAtLeast(0L).toFloat()
+            val ageAlpha = (1f - ageMs / trailTailWindowMs).coerceIn(0f, 1f)
 
-            // Alpha: opaque at the head (t=1), transparent at the tail (t=0).
-            // During live drawing, the tail is very short; after release the whole
-            // trail fades together via globalAlpha.
-            val segAlpha = (0.15f + 0.85f * t) * globalAlpha
-            val alpha = (255 * segAlpha).toInt().coerceIn(0, 255)
+            // Width: thick at the head (t=1), thin at the tail (t=0), soft ease.
+            val ease = t * (2f - t) // easeOutQuad
+            val coreWidth = trailEndWidth + (trailStartWidth - trailEndWidth) * ease
 
-            paint.color = (alpha shl 24) or (baseR shl 16) or (baseG shl 8) or baseB
-            paint.strokeWidth = width
+            // Core alpha: bright at the head, dimmer at the tail, then age + release fade.
+            val coreAlpha = (0.22f + 0.78f * t) * ageAlpha * globalAlpha
 
-            // Draw a small segment from prev to current.
-            // Using drawLine with ROUND cap gives the smooth blob look.
-            canvas.drawLine(prevX, prevY, cx, cy, paint)
+            if (coreAlpha > 0.005f) {
+                // Glow pass: wider, much dimmer — drawn beneath the core segments.
+                val glowAlpha = coreAlpha * 0.20f
+                paint.color = ((255 * glowAlpha).toInt().coerceIn(0, 255) shl 24) or
+                    (baseR shl 16) or (baseG shl 8) or baseB
+                paint.strokeWidth = coreWidth * 2.1f
+                canvas.drawLine(prevX, prevY, cx, cy, paint)
+
+                // Core ribbon.
+                paint.color = ((255 * coreAlpha).toInt().coerceIn(0, 255) shl 24) or
+                    (baseR shl 16) or (baseG shl 8) or baseB
+                paint.strokeWidth = coreWidth
+                canvas.drawLine(prevX, prevY, cx, cy, paint)
+            }
 
             prevX = cx
             prevY = cy
+        }
+
+        // Subtle blob under the finger (head of the comet) — GBoard's soft touch indicator.
+        if (trailReleaseTime == 0L) {
+            val headAlpha = (0.14f * globalAlpha * 255).toInt().coerceIn(0, 255)
+            paint.style = Paint.Style.FILL
+            paint.color = (headAlpha shl 24) or (baseR shl 16) or (baseG shl 8) or baseB
+            canvas.drawCircle(trailX[n - 1], trailY[n - 1], trailStartWidth * 1.4f, paint)
+            paint.style = Paint.Style.STROKE
         }
     }
 

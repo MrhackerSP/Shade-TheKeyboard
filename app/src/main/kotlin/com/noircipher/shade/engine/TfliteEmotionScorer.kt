@@ -7,38 +7,40 @@ import org.tensorflow.lite.Interpreter
 /**
  * Emoji suggestions from the bundled emotion/concept QRNN model.
  *
- * Model contract (verified against emotion_classifier.tflite): one STRING [1] input, and three outputs
+ * Model contract (verified against qrnn_df_0.0.tflite): one STRING [1] input, and three outputs
  * (a quantized scalar, the STRING label list, and `processed_predictions`, FLOAT32 [161]).
  * The output is therefore looked up BY NAME, and its class order comes from
  * `emotion_prediction_labels.txt` (the model's own label order), not from assumed ordinals.
  */
 class TfliteEmotionScorer(
     context: Context,
-    modelPath: String = "emoji_expression/emotion_classifier.tflite",
+    modelPath: String = "emoji_expression/qrnn_df_0.0.tflite",
     labelsPath: String = "emoji_expression/emotion_labels.tsv",
     predictionLabelsPath: String = "emoji_expression/emotion_prediction_labels.txt"
 ) : ExpressionScorer {
 
-    private val labels: Map<String, List<String>> = AssetTsv.use(
-        context, labelsPath, TAG, emptyMap()
-    ) { lines ->
-        lines.mapNotNull { line ->
-            val parts = line.split('\t')
-            val label = parts.getOrNull(0) ?: return@mapNotNull null
-            val emojis = parts.getOrNull(1)?.split('|')?.filter { it.isNotEmpty() }.orEmpty()
-            if (emojis.isEmpty()) null else label to emojis
-        }.toMap()
-    }
+    private val labels: Map<String, List<String>> = try {
+        context.assets.open(labelsPath).bufferedReader().useLines { lines ->
+            lines.mapNotNull { line ->
+                val parts = line.split('\t')
+                val label = parts.getOrNull(0) ?: return@mapNotNull null
+                val emojis = parts.getOrNull(1)?.split('|')?.filter { it.isNotEmpty() }.orEmpty()
+                if (emojis.isEmpty()) null else label to emojis
+            }.toMap()
+        }
+    } catch (_: Exception) { emptyMap() }
 
     /** Class names in the order the model emits them. */
-    private val predictionLabels: List<String> = AssetTsv.use(
-        context, predictionLabelsPath, TAG, emptyList()
-    ) { lines ->
-        lines.map { it.trim() }.filter { it.isNotEmpty() }.toList()
-    }
+    private val predictionLabels: List<String> = try {
+        context.assets.open(predictionLabelsPath).bufferedReader().useLines { lines ->
+            lines.map { it.trim() }.filter { it.isNotEmpty() }.toList()
+        }
+    } catch (_: Exception) { emptyList() }
 
-    private val interpreter: Interpreter? =
-        TfliteModelLoader.loadOrNull(context, modelPath)
+    private val interpreter: Interpreter? = try {
+        val modelBuffer = AssetMmap.load(context, modelPath)
+        Interpreter(modelBuffer)
+    } catch (_: Exception) { null }
 
     /** Index of the `processed_predictions` output, or -1 if the contract doesn't hold. */
     private val predictionsIndex: Int = run {
@@ -86,8 +88,7 @@ class TfliteEmotionScorer(
                 if (out.size >= limit) break
             }
             out.take(limit)
-        } catch (t: Exception) {
-            com.noircipher.shade.ShadeLog.w("TfliteEmotionScorer", "emotion inference failed", t, once = true)
+        } catch (_: Exception) {
             emptyList()
         }
     }
@@ -95,9 +96,5 @@ class TfliteEmotionScorer(
     @Synchronized
     override fun close() {
         interpreter?.close()
-    }
-
-    private companion object {
-        private const val TAG = "TfliteEmotionScorer"
     }
 }

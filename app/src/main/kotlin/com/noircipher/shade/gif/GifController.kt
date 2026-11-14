@@ -1,7 +1,6 @@
 package com.noircipher.shade.gif
 
 import android.content.Context
-import com.noircipher.shade.ShadeLog
 import android.content.SharedPreferences
 import com.noircipher.shade.R
 import kotlinx.coroutines.CancellationException
@@ -32,8 +31,8 @@ class GifController(
     val loader = GifImageLoader(context, scope)
     val bar = GifBar(context, loader, this)
 
-    private val client: KlipyClient? =
-        if (KlipyConfig.isConfigured) KlipyClient(KlipyConfig.apiKey, customerId()) else null
+    private var client: KlipyClient? = null
+    private var clientKey: String = ""
 
     private var query = ""
     private var activeQuery = ""
@@ -46,7 +45,26 @@ class GifController(
     var isOpen = false
         private set
 
+    /** True while the bar is asking for the runtime KLIPY key (no key baked in or saved). */
+    private var setupMode = false
+
     private val consented get() = prefs.getBoolean(KEY_CONSENT, false)
+
+    /** Build-time key wins; otherwise the key the person pasted into the panel. */
+    private fun currentKey(): String = KlipyConfig.effectiveKey(prefs.getString(KEY_RUNTIME_API, null))
+
+    /** Lazily builds the client from the current key (re-resolved after a runtime key is saved). */
+    private fun ensureClient(): KlipyClient? {
+        val key = currentKey()
+        if (key.isBlank()) return null
+        var c = client
+        if (c == null || clientKey != key) {
+            c = KlipyClient(key, customerId())
+            client = c
+            clientKey = key
+        }
+        return c
+    }
 
     fun open() {
         isOpen = true
@@ -54,7 +72,10 @@ class GifController(
         activeQuery = ""
         bar.setQuery("")
         when {
-            client == null -> bar.showStatus(context.getString(R.string.gif_unavailable))
+            ensureClient() == null -> {
+                setupMode = true
+                bar.showSetup()
+            }
             !consented -> bar.showConsent()
             else -> loadFirst("")
         }
@@ -62,6 +83,7 @@ class GifController(
 
     fun close() {
         isOpen = false
+        setupMode = false
         generation++
         job?.cancel()
         loading = false
@@ -72,7 +94,9 @@ class GifController(
     // ---- keystrokes forwarded by the service -----------------------------------------------
 
     fun type(text: String) {
-        if (!isOpen || client == null || !consented) return
+        if (!isOpen) return
+        // While asking for the key, everything typed becomes the key.
+        if (!setupMode && (ensureClient() == null || !consented)) return
         query = (query + text).take(MAX_QUERY)
         bar.setQuery(query)
     }
@@ -84,7 +108,16 @@ class GifController(
     }
 
     fun submit() {
-        if (!isOpen || client == null || !consented) return
+        if (!isOpen) return
+        if (setupMode) {
+            val key = query.trim()
+            query = ""
+            activeQuery = ""
+            bar.setQuery("")
+            if (key.isNotEmpty()) onApiKeySave(key)
+            return
+        }
+        if (ensureClient() == null || !consented) return
         activeQuery = query.trim()
         loadFirst(activeQuery)
     }
@@ -104,6 +137,18 @@ class GifController(
         loadFirst("")
     }
 
+    override fun onApiKeySave(key: String) {
+        val trimmed = key.trim()
+        if (trimmed.isEmpty()) return
+        prefs.edit().putString(KEY_RUNTIME_API, trimmed).apply()
+        if (ensureClient() != null) {
+            setupMode = false
+            if (!consented) bar.showConsent() else loadFirst("")
+        } else {
+            bar.showSetup(error = true)
+        }
+    }
+
     // ---- sending ------------------------------------------------------------------------------
 
     /** Downloads the full-size GIF to the cache so it can be handed over through the FileProvider. */
@@ -117,7 +162,7 @@ class GifController(
     }
 
     fun registerShare(item: GifItem, searched: String) {
-        val c = client ?: return
+        val c = ensureClient() ?: return
         scope.launch(Dispatchers.IO) { c.registerShare(item.slug, searched.ifBlank { null }) }
     }
 
@@ -131,7 +176,7 @@ class GifController(
     }
 
     private fun load(q: String, p: Int, replace: Boolean) {
-        val c = client ?: return
+        val c = ensureClient() ?: return
         job?.cancel()
         loading = true
         val gen = generation
@@ -144,8 +189,7 @@ class GifController(
                 withContext(Dispatchers.IO) { if (q.isEmpty()) c.trending(p) else c.search(q, p) }
             } catch (e: CancellationException) {
                 throw e
-            } catch (t: Exception) {
-                ShadeLog.w("GifController", "gif search failed", t, once = true)
+            } catch (_: Exception) {
                 null
             }
             if (gen != generation || !isOpen) return@launch
@@ -172,6 +216,7 @@ class GifController(
     companion object {
         private const val KEY_CONSENT = "gif_consent"
         private const val KEY_CUSTOMER = "gif_customer_id"
+        private const val KEY_RUNTIME_API = "gif_api_key"
         private const val SEND_DIR = "gif_send"
         private const val MAX_QUERY = 60
         private const val MAX_SEND_BYTES = 12 * 1024 * 1024

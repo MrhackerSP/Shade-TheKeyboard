@@ -10,7 +10,6 @@ import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.util.Log
 import android.widget.Toast
 
 class VoiceInputController(
@@ -35,9 +34,8 @@ class VoiceInputController(
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                 )
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // Some restricted contexts cannot start activities.
-                Log.w("VoiceInputController", "Failed to launch voice permission activity", e)
             }
             return
         }
@@ -82,8 +80,8 @@ class VoiceInputController(
         val sr = recognizer
         recognizer = null
         isListening = false
-        try { sr?.setRecognitionListener(null) } catch (e: Exception) { Log.w("VoiceInputController", "Failed to clear recognition listener", e) }
-        try { sr?.cancel() } catch (e: Exception) { Log.w("VoiceInputController", "Failed to cancel speech recognizer", e) }
-        try { sr?.destroy() } catch (e: Exception) { Log.w("VoiceInputController", "Failed to destroy speech recognizer", e) }
+        try { sr?.setRecognitionListener(null) } catch (_: Exception) {}
+        try { sr?.cancel() } catch (_: Exception) {}
+        try { sr?.destroy() } catch (_: Exception) {}
     }
 }

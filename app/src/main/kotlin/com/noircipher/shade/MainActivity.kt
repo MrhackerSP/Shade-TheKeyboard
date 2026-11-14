@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
@@ -73,8 +72,7 @@ class MainActivity : AppCompatActivity() {
     fun openDefaultKeyboardPicker(view: View) {
         try {
             (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
-        } catch (t: Exception) {
-            ShadeLog.w("MainActivity", "IME picker failed; falling back to settings", t, once = true)
+        } catch (_: Exception) {
             startActivitySafe(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
         }
     }
@@ -104,8 +102,7 @@ class MainActivity : AppCompatActivity() {
             enabled = imm.enabledInputMethodList.any { it.packageName == packageName }
             val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
             selected = current?.startsWith("$packageName/") == true
-        } catch (t: Exception) {
-            ShadeLog.w("MainActivity", "IME status check failed", t, once = true)
+        } catch (_: Exception) {
             enabled = false
             selected = false
         }
@@ -128,8 +125,7 @@ class MainActivity : AppCompatActivity() {
         return try {
             val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
             current?.startsWith("$packageName/") == true
-        } catch (t: Exception) {
-            ShadeLog.w("MainActivity", "default-IME probe failed", t, once = true)
+        } catch (_: Exception) {
             false
         }
     }
@@ -144,9 +140,8 @@ class MainActivity : AppCompatActivity() {
     private fun startActivitySafe(intent: Intent) {
         try {
             startActivity(intent)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Keep the setup screen alive if a system screen is unavailable.
-            Log.w("MainActivity", "Failed to start activity", e)
         }
     }
 }

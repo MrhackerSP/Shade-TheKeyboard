@@ -9,14 +9,21 @@ import org.tensorflow.lite.Interpreter
  */
 class TfliteContextEncoder(
     context: Context,
-    modelPath: String = "ranking/context_encoder.tflite"
+    modelPath: String = "ranking/context_encoder_hi_xa.tflite"
 ) : ContextEncoder {
 
-    private val interpreter: Interpreter =
-        TfliteModelLoader.load(context, modelPath, numThreads = 2)
+    private val interpreter: Interpreter = run {
+        val modelBuffer = AssetMmap.load(context, modelPath)
+        Interpreter(
+            modelBuffer,
+            Interpreter.Options().apply {
+                numThreads = 2
+            }
+        )
+    }
 
     init {
-        // Contract check: the encoder must emit a 96-float embedding. The bundled model emits
+        // Contract check: the encoder must emit a 96-float embedding. The bundled hi_xa model emits
         // a scalar, so constructing it fails here and the caller falls back to "no encoder"
         // instead of throwing (and swallowing) on every encode().
         val outCount = interpreter.getOutputTensor(0).shape().fold(1) { a, b -> a * b }

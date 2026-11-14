@@ -9,7 +9,6 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
-import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.graphics.ColorUtils
@@ -101,7 +100,7 @@ class KeyPopupOverlay(
         if (h.width <= 0 || h.height <= 0) return false
         if (host !== h) {
             detach()
-            try { h.overlay.add(this) } catch (t: Throwable) { ShadeLog.w("KeyPopupOverlay", "overlay host add failed", t, once = true); return false }
+            try { h.overlay.add(this) } catch (_: Throwable) { return false }
             host = h
         }
         setBounds(0, 0, h.width, h.height)
@@ -122,7 +121,7 @@ class KeyPopupOverlay(
 
     fun detach() {
         dismissNow()
-        host?.let { try { it.overlay.remove(this) } catch (t: Throwable) { Log.w("KeyPopupOverlay", "Failed to remove key popup overlay", t) } }
+        host?.let { try { it.overlay.remove(this) } catch (_: Throwable) {} }
         host = null
     }
 

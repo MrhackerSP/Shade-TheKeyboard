@@ -145,16 +145,6 @@ class AppContextModel(context: Context) {
         synchronized(dirtyLock) { dirty = false }
     }
 
-    /** Re-reads from disk after a backup restore replaced the underlying file. */
-    @Synchronized
-    fun reload() {
-        flush()
-        flushJob?.cancel()
-        apps.clear()
-        load()
-        synchronized(dirtyLock) { dirty = false }
-    }
-
     companion object {
         private const val TAG = "AppContextModel"
         private const val MAX_APPS = 50

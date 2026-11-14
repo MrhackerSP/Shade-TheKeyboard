@@ -89,7 +89,7 @@ object AbbreviationExpander {
         "bro" to "brother",
         "bab" to "baby",
         "babe" to "baby",
-        // ── Chat-style abbreviation pairs ──
+        // ── Gboard's abbreviation pairs (extracted from model.pb) ──
         "ur" to "your",
         "bout" to "about",
         "tho" to "though",

@@ -62,19 +62,11 @@ class OnnxNeuralPredictor(
 
     @Synchronized
     override fun predictLogits(contextIds: IntArray): FloatArray {
-        // Vocabularies without [BOS] (hi/hg) would otherwise put -1 ids into the model — ONNX
-        // Gather silently wraps negative indices to the LAST embedding row, corrupting context.
-        // Pad with the unknown token (or 0) instead, and only prepend BOS when it exists.
-        val padId = if (vocabulary.bosId >= 0) vocabulary.bosId
-        else if (vocabulary.unkId >= 0) vocabulary.unkId else 0
-        val meaningful = contextIds.filter {
-            it >= 0 && it != vocabulary.bosId && it != vocabulary.eosId
-        }
-        val compact = (if (vocabulary.bosId >= 0) listOf(vocabulary.bosId) + meaningful else meaningful)
-            .takeLast(contextSize + 1)
-        val inputLength = fixedInputLength ?: compact.size.coerceAtLeast(1)
+        val meaningful = contextIds.filter { it != vocabulary.bosId && it != vocabulary.eosId }
+        val compact = (listOf(vocabulary.bosId) + meaningful).takeLast(contextSize + 1)
+        val inputLength = fixedInputLength ?: compact.size
 
-        val ids = IntArray(inputLength) { padId }
+        val ids = IntArray(inputLength) { vocabulary.bosId }
         val copyLength = minOf(compact.size, inputLength)
         val sourceStart = compact.size - copyLength
         for (i in 0 until copyLength) {
@@ -94,7 +86,7 @@ class OnnxNeuralPredictor(
         val result = try {
             session.run(mapOf(inputName to input))
         } catch (t: Throwable) {
-            try { input.close() } catch (e: Exception) { Log.w("OnnxNeuralPredictor", "Failed to close ONNX input tensor", e) }
+            try { input.close() } catch (_: Exception) {}
             throw t
         }
         try {
@@ -110,15 +102,15 @@ class OnnxNeuralPredictor(
             val penalty = 0.8f
             val recent = meaningful.takeLast(8)
             val seen = HashSet<Int>(recent.size + 1)
-            seen.add(padId)
+            seen.add(vocabulary.bosId)
             for (id in recent) seen.add(id)
             for (id in seen) {
                 if (id in 0 until length) logits[id] -= penalty
             }
             return logits
         } finally {
-            try { result.close() } catch (e: Exception) { Log.w("OnnxNeuralPredictor", "Failed to close ONNX result tensor", e) }
-            try { input.close() } catch (e: Exception) { Log.w("OnnxNeuralPredictor", "Failed to close ONNX input tensor", e) }
+            try { result.close() } catch (_: Exception) {}
+            try { input.close() } catch (_: Exception) {}
         }
     }
 

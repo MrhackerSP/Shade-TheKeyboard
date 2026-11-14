@@ -59,12 +59,6 @@ class SymSpellIndex(words: List<String>) {
     fun rankOf(index: Int): Int = index
     val size: Int get() = vocab.size
 
-    /**
-     * Frequency rank of a word (0 = most common, -1 = not in the index). The vocabulary is
-     * built sorted by descending frequency, so the stored rank map is the frequency rank.
-     */
-    fun rankOf(word: String): Int = rank[word] ?: -1
-
     private fun lookup(hash: Int, out: MutableSet<Int>) {
         val key = hash.toLong() shl 32
         var lo = 0

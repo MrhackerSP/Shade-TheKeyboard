@@ -13,8 +13,8 @@ import java.net.URLEncoder
  * Translation service with multiple free backends, tried in order.
  * No API key required for any of them.
  *
- * 1. Web translate endpoint (gtx, POST body, ~4500 chars/chunk)
- * 2. Web translate endpoint (dict-chrome-ex, GET, ~1500 chars/chunk)
+ * 1. Google Translate (unofficial gtx endpoint, POST body, ~4500 chars/chunk)
+ * 2. Google Translate (dict-chrome-ex endpoint, GET, ~1500 chars/chunk)
  * 3. MyMemory (free API, 450 chars/limit)
  *
  * Long text is split at sentence/paragraph boundaries and translated piece
@@ -30,34 +30,35 @@ object TranslationService {
      * @param source Source language code, or "auto" for auto-detection.
      * @param target Target language code (e.g. "en", "es", "ru").
      * @return The translated text, or null on failure.
+     *
+     * All network I/O runs on Dispatchers.IO — callers may invoke this from the
+     * main scope (an earlier version did the HTTP calls inline and every call
+     * failed with a swallowed NetworkOnMainThreadException).
      */
     suspend fun translate(text: String, source: String, target: String): String? {
         val clean = text.trim()
         if (clean.isEmpty()) return ""
 
-        val src = if (source == "auto") guessSource(clean) else source
-        val to = normalizeTarget(target)
+        return withContext(Dispatchers.IO) {
+            val src = if (source == "auto") guessSource(clean) else source
+            val to = normalizeTarget(target)
 
-        for ((limit, fn) in listOf(
-            4500 to ::viaGtx,
-            1500 to ::viaDictExt,
-            450 to ::viaMyMemory
-        )) {
-            // All three backends do blocking HttpURLConnection I/O: they must run on IO,
-            // otherwise every call throws NetworkOnMainThreadException (swallowed below)
-            // and translation fails 100% of the time.
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
+            for ((limit, fn) in listOf(
+                4500 to ::viaGtx,
+                1500 to ::viaDictExt,
+                450 to ::viaMyMemory
+            )) {
+                val result = runCatching {
                     splitText(clean, limit).joinToString("") { piece ->
                         val trail = piece.takeLastWhile { it.isWhitespace() }
                         fn(piece.trim(), src, to).trim() + trail
                     }
                 }.getOrNull()
-            }
 
-            if (!result.isNullOrEmpty()) return result
+                if (!result.isNullOrEmpty()) return@withContext result
+            }
+            null
         }
-        return null
     }
 
     private fun viaGtx(text: String, from: String, to: String): String {

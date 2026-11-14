@@ -110,30 +110,6 @@ class OnlineRankerTrainer(context: Context) {
         return sigmoid(scoreRaw(features))
     }
 
-    /**
-     * Pure negative update: the user ignored this candidate and typed
-     * something else. Only the negative gradient is applied (no positive
-     * example), so the candidate's score drifts DOWN while everything else
-     * stays put. Used for rejection-based personalization from [endWord].
-     *
-     * [learningRate] should be well below [DEFAULT_LR] — rejections are noisy
-     * (the user may simply have wanted to type the word they typed), so the
-     * ranker must move slowly on negative evidence.
-     */
-    @Synchronized
-    fun adaptNegative(features: FloatArray, learningRate: Float = NEGATIVE_DEFAULT_LR) {
-        if (features.size != weights.size) return
-        val effectiveLR = (learningRate * learningRateMultiplier).coerceIn(MIN_LR, MAX_LR)
-        val score = scoreRaw(features)
-        val gradNeg = -sigmoid(score)
-        for (i in weights.indices) {
-            weights[i] = weights[i] * (1f - effectiveLR * L2_LAMBDA) +
-                         effectiveLR * gradNeg * features[i]
-        }
-        bias = bias * (1f - effectiveLR * L2_LAMBDA) + effectiveLR * gradNeg
-        persist()
-    }
-
     private fun scoreRaw(features: FloatArray): Float {
         var z = bias
         for (i in weights.indices) z += weights[i] * features[i]
@@ -162,34 +138,9 @@ class OnlineRankerTrainer(context: Context) {
         prefs.edit().clear().apply()
     }
 
-    /** Re-reads weights from disk after a backup restore replaced the store. */
-    @Synchronized
-    fun reload() {
-        weights.fill(0f)
-        bias = 0f
-        val savedVersion = prefs.getInt(SCHEMA_VERSION_KEY, -1)
-        if (savedVersion == SCHEMA_VERSION) {
-            val saved = prefs.getString(WEIGHTS_KEY, null)
-            if (saved != null) {
-                try {
-                    saved.split(",").mapIndexed { i, v ->
-                        if (i < weights.size) weights[i] = v.toFloat()
-                    }
-                    bias = prefs.getFloat(BIAS_KEY, 0f)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Malformed restored weights; resetting to zero", e)
-                    weights.fill(0f)
-                    bias = 0f
-                }
-            }
-        }
-        learningRateMultiplier = prefs.getFloat(LR_MULT_KEY, 1.0f).coerceIn(MIN_LR_MULT, MAX_LR_MULT)
-    }
-
     companion object {
         private const val TAG = "OnlineRankerTrainer"
         private const val DEFAULT_LR = 0.03f
-        private const val NEGATIVE_DEFAULT_LR = 0.01f
         private const val MIN_LR = 0.001f
         private const val MAX_LR = 0.5f
         private const val MIN_LR_MULT = 0.5f
