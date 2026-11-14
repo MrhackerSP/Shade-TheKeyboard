@@ -51,7 +51,8 @@ object SecureStore {
         cipher.init(Cipher.ENCRYPT_MODE, secretKey(alias))
         val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
         Base64.encodeToString(cipher.iv + encrypted, Base64.NO_WRAP)
-    } catch (_: Exception) {
+    } catch (t: Exception) {
+        ShadeLog.w("SecureStore", "keystore encrypt failed", t, once = true)
         keyCache.remove(alias)
         null
     }
@@ -69,7 +70,8 @@ object SecureStore {
             )
             String(cipher.doFinal(bytes.copyOfRange(IV_SIZE, bytes.size)), Charsets.UTF_8)
         }
-    } catch (_: Exception) {
+    } catch (t: Exception) {
+        ShadeLog.w("SecureStore", "keystore decrypt failed", t, once = true)
         keyCache.remove(alias)
         null
     }

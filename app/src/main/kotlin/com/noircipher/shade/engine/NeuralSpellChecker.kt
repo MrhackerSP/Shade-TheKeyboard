@@ -7,8 +7,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * On-device neural spell checker over the bundled encoder/decoder package
- * (`assets/spell_checker/{encoder_0,decoder_init_0,decoder_step_0}.tflite` +
- * `wpm.vocab`).
+ * (`assets/spellcheck/{spell_encoder,spell_decoder_start,spell_decoder_step}.tflite` +
+ * `spell_vocab.vocab`).
  *
  * Model contract (verified by decoding against the models, see the wiring
  * report):
@@ -69,7 +69,7 @@ class NeuralSpellChecker(
         val vocab = try {
             loadVocab(context)
         } catch (t: Throwable) {
-            Log.w(TAG, "wpm.vocab failed to load; feature disabled", t)
+            Log.w(TAG, "spell_vocab.vocab failed to load; feature disabled", t)
             emptyList<String>() to HashMap<String, Int>()
         }
         pieces = vocab.first
@@ -83,9 +83,9 @@ class NeuralSpellChecker(
         var init: Interpreter? = null
         var step: Interpreter? = null
         try {
-            enc = Interpreter(AssetMmap.load(context, ENCODER_PATH), opts())
-            init = Interpreter(AssetMmap.load(context, DECODER_INIT_PATH), opts())
-            step = Interpreter(AssetMmap.load(context, DECODER_STEP_PATH), opts())
+            enc = TfliteModelLoader.load(context, ENCODER_PATH, numThreads = 2)
+            init = TfliteModelLoader.load(context, DECODER_INIT_PATH, numThreads = 2)
+            step = TfliteModelLoader.load(context, DECODER_STEP_PATH, numThreads = 2)
             // One-time shape fix + allocation; no per-word resizes afterwards.
             enc.resizeInput(0, intArrayOf(1, MAX_T))
             enc.resizeInput(1, intArrayOf(1, MAX_T))
@@ -102,9 +102,9 @@ class NeuralSpellChecker(
             // an Error and would otherwise escape this guard and kill the whole IME process.
         } catch (t: Throwable) {
             Log.w(TAG, "spell checker models failed to load; feature disabled", t)
-            try { enc?.close() } catch (_: Throwable) {}
-            try { init?.close() } catch (_: Throwable) {}
-            try { step?.close() } catch (_: Throwable) {}
+            try { enc?.close() } catch (t: Throwable) { Log.w(TAG, "Failed to close encoder tensor", t) }
+            try { init?.close() } catch (t: Throwable) { Log.w(TAG, "Failed to close decoder-init tensor", t) }
+            try { step?.close() } catch (t: Throwable) { Log.w(TAG, "Failed to close decoder-step tensor", t) }
             enc = null
             init = null
             step = null
@@ -148,9 +148,9 @@ class NeuralSpellChecker(
     }
 
     fun close() {
-        try { encoder?.close() } catch (_: Throwable) {}
-        try { decoderInit?.close() } catch (_: Throwable) {}
-        try { decoderStep?.close() } catch (_: Throwable) {}
+        try { encoder?.close() } catch (t: Throwable) { Log.w(TAG, "Failed to close encoder", t) }
+        try { decoderInit?.close() } catch (t: Throwable) { Log.w(TAG, "Failed to close decoder init", t) }
+        try { decoderStep?.close() } catch (t: Throwable) { Log.w(TAG, "Failed to close decoder step", t) }
         loaded.set(false)
     }
 
@@ -354,10 +354,10 @@ class NeuralSpellChecker(
 
     companion object {
         private const val TAG = "NeuralSpellChecker"
-        private const val ENCODER_PATH = "spell_checker/encoder_0.tflite"
-        private const val DECODER_INIT_PATH = "spell_checker/decoder_init_0.tflite"
-        private const val DECODER_STEP_PATH = "spell_checker/decoder_step_0.tflite"
-        private const val VOCAB_PATH = "spell_checker/wpm.vocab"
+        private const val ENCODER_PATH = "spellcheck/spell_encoder.tflite"
+        private const val DECODER_INIT_PATH = "spellcheck/spell_decoder_start.tflite"
+        private const val DECODER_STEP_PATH = "spellcheck/spell_decoder_step.tflite"
+        private const val VOCAB_PATH = "spellcheck/spell_vocab.vocab"
         private const val VOCAB = 16_000
         private const val D = 384
 
@@ -366,7 +366,5 @@ class NeuralSpellChecker(
         internal const val MAX_PIECES = 16
         private const val MAX_STEPS = 12
         private const val MAX_WORD_CHARS = 24
-
-        private fun opts(): Interpreter.Options = Interpreter.Options().setNumThreads(2)
     }
 }

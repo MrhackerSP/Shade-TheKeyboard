@@ -1,6 +1,7 @@
 package com.noircipher.shade.gif
 
 import android.content.Context
+import com.noircipher.shade.ShadeLog
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.graphics.drawable.AnimatedImageDrawable
@@ -46,7 +47,8 @@ class GifImageLoader(private val context: Context, private val scope: CoroutineS
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
+            } catch (t: Exception) {
+                ShadeLog.w("GifImageLoader", "gif preview load failed", t, once = true)
                 null
             }
             val current = into.tag as? Binding
@@ -78,7 +80,8 @@ class GifImageLoader(private val context: Context, private val scope: CoroutineS
         if (Build.VERSION.SDK_INT >= 28) {
             return try {
                 ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(bytes)))
-            } catch (_: Exception) {
+            } catch (t: Exception) {
+                ShadeLog.w("GifImageLoader", "gif frame decode failed", t, once = true)
                 null
             }
         }

@@ -1,5 +1,6 @@
 package com.noircipher.shade
 
+import android.app.WallpaperManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.Configuration
@@ -66,6 +67,12 @@ object Themes {
         (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
 
+    /** True for theme values that follow the system wallpaper (Material You). */
+    fun usesWallpaper(prefs: SharedPreferences): Boolean {
+        val t = prefs.getString("theme", "system") ?: "system"
+        return (t == "material" || t == "dynamic") && Build.VERSION.SDK_INT >= 31
+    }
+
     fun resolve(ctx: Context, prefs: SharedPreferences): KbTheme {
         val night = isNight(ctx)
         val base = if (night) DARK else LIGHT
@@ -73,7 +80,10 @@ object Themes {
             "light" -> LIGHT
             "dark" -> DARK
             "amoled" -> AMOLED
-            "dynamic" -> if (Build.VERSION.SDK_INT >= 31) dynamic(ctx, night) else base
+            // "dynamic" is the legacy pref value for wallpaper theming; "material"
+            // is the catalog label. Both resolve through the same Material You path.
+            "dynamic" -> if (Build.VERSION.SDK_INT >= 31) materialYou(ctx, night) else base
+            "material" -> if (Build.VERSION.SDK_INT >= 31) materialYou(ctx, night) else base
             "custom" -> custom(prefs, base)
             else -> base
         }
@@ -82,7 +92,7 @@ object Themes {
     private fun parse(s: String?, def: Int): Int {
         if (s.isNullOrBlank()) return def
         val t = s.trim()
-        return try { Color.parseColor(if (t.startsWith("#")) t else "#$t") } catch (_: Exception) { def }
+        return try { Color.parseColor(if (t.startsWith("#")) t else "#$t") } catch (t: Exception) { ShadeLog.w("Theme", "theme color parse failed", t, once = true); def }
     }
 
     private fun custom(p: SharedPreferences, base: KbTheme): KbTheme {
@@ -100,6 +110,38 @@ object Themes {
             accentText = if (ColorUtils.calculateLuminance(accent) > 0.5) Color.BLACK else Color.WHITE,
             popupBg = key
         )
+    }
+
+    /**
+     * Material You: derive the palette from the system wallpaper's colors.
+     *
+     * Order of preference:
+     *  1. WallpaperManager seed colors (real wallpaper, any Android 12+ device)
+     *  2. System dynamic color resources (Monet palette, always present on 12+)
+     *  3. The built-in DARK/LIGHT base
+     *
+     * A contrast guard runs over the wallpaper-derived palette; if the wallpaper
+     * is so extreme that text would be unreadable, the system palette is used.
+     */
+    @RequiresApi(31)
+    private fun materialYou(ctx: Context, night: Boolean): KbTheme {
+        val seeds = runCatching {
+            val wc = WallpaperManager.getInstance(ctx)
+                .getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
+            if (wc != null) MaterialYouPalette.Seeds(
+                primary = MaterialYouPalette.sanitize(wc.primaryColor.toArgb()),
+                secondary = wc.secondaryColor?.let { MaterialYouPalette.sanitize(it.toArgb()) },
+                tertiary = wc.tertiaryColor?.let { MaterialYouPalette.sanitize(it.toArgb()) }
+            ) else null
+        }.getOrNull()
+
+        val fromWallpaper = seeds
+            ?.takeIf { MaterialYouPalette.isValidSeed(it.primary) }
+            ?.let { MaterialYouPalette.build(it, night) }
+        if (fromWallpaper != null && MaterialYouPalette.contrastSafe(fromWallpaper)) {
+            return fromWallpaper
+        }
+        return runCatching { dynamic(ctx, night) }.getOrElse { if (night) DARK else LIGHT }
     }
 
     @RequiresApi(31)

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Shade settings — Noir redesign.
+  Pitch-black canvas, white type, hairline dividers. A pinned search field on
+  top and one flat RecyclerView below: hero title, collapsible section headers
+  and setting rows. No cards, no icons, no page navigation.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/noir_background"
+    android:fitsSystemWindows="true">
+
+    <EditText
+        android:id="@+id/noir_search_input"
+        android:layout_width="match_parent"
+        android:layout_height="54dp"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="8dp"
+        android:background="@drawable/bg_noir_search"
+        android:drawableStart="@drawable/ic_search"
+        android:drawablePadding="12dp"
+        android:paddingHorizontal="18dp"
+        android:hint="@string/settings_search_hint"
+        android:textColorHint="@color/noir_text_tertiary"
+        android:textColor="@color/noir_text"
+        android:textSize="15sp"
+        android:inputType="text"
+        android:imeOptions="actionSearch"
+        android:maxLines="1"
+        android:singleLine="true"
+        android:importantForAutofill="no"
+        android:contentDescription="@string/settings_search_hint" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/noir_divider" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/noir_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="24dp"
+        android:scrollbars="vertical"
+        android:overScrollMode="ifContentScrolls" />
+
+</LinearLayout>

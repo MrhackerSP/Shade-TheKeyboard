@@ -1,16 +1,16 @@
 package com.noircipher.shade
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.widget.BaseAdapter
 import android.widget.EditText
-import android.widget.GridView
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -19,6 +19,23 @@ import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 
+/**
+ * Emoji panel: two pieces.
+ *
+ *  - [header] — ShadeService pins this above the keyboard content, directly in
+ *    the place of the suggestion strip. It holds the emoji search field and,
+ *    while a query is active, a results bar that opens up above the field and is
+ *    used only for showing emoji results. Tapping the field hides the emoji grid
+ *    and draws the real keyboard below the search box; ShadeService routes the
+ *    typed keys into the query, and matching emojis stream into the results bar.
+ *  - the panel body itself — a unified scrolling grid (the Recent section first,
+ *    then every [EmojiCatalog] category with section headers) plus the bottom tab
+ *    bar (ABC / category tabs / ⌫).
+ *
+ * Tapping an emoji — in the results bar, the grid or the skin-tone popup —
+ * records it in the Recent section immediately, so the recently used emojis at
+ * the top of the list stay up to date in real time.
+ */
 class EmojiPanel(
     context: Context,
     private val onEmoji: (String) -> Unit,
@@ -26,29 +43,19 @@ class EmojiPanel(
     private val onDelete: () -> Unit
 ) : LinearLayout(context) {
 
-    private val allCategories: List<Pair<String, List<String>>> = listOf(
-        "😀" to "😀 😃 😄 😁 😆 😅 😂 🤣 🙂 😉 😊 😇 🥰 😍 🤩 😘 😋 😛 😜 🤪 🤔 🤨 😐 😑 😶 🙄 😏 😣 😥 😮 😴 😌 😢 😭 😤 😠 😡 🤯 😳 🥵 🥶 😱 😰 😓 🤗 🤭 🫡 😎 🤓 🥳 🥺 😬 🙃".split(" "),
-        "👍" to "👍 👎 👌 ✌️ 🤞 🤟 🤘 👋 🙏 👏 🙌 💪 👀 🧠 ❤️ 🧡 💛 💚 💙 💜 🖤 💔 💕 💯 🔥 ✨ ⭐ 🎉 🎂".split(" "),
-        "🐻" to "🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🐔 🐧 🐦 🦆 🦉 🐺 🐴 🦄 🐝 🦋 🐢 🐍 🐙 🐬 🐳 🌸 🌹 🌻 🌲 🌴 🍀 🌍 🌙 ☀️ ⛅ ☔ ⚡ ❄️".split(" "),
-        "🍎" to "🍎 🍌 🍇 🍓 🍒 🍑 🍍 🥑 🍅 🥕 🌽 🍞 🧀 🍗 🍔 🍟 🍕 🌭 🌮 🍣 🍜 🍩 🍪 🍫 🍿 ☕ 🍵 🍺 🍷 🥤".split(" "),
-        "⚽" to "⚽ 🏀 🏈 🎾 🎮 🎧 🎸 🎬 📱 💻 📷 💡 📚 ✏️ 🔑 💰 🎁 ⏰ 🚗 🚕 🚌 ✈️ 🚀 🚲 🏠 🏖️ ⛰️".split(" "),
-        "✅" to "✅ ❌ ❗ ❓ ⚠️ 💤 ➕ ➖ ➡️ ⬅️ ⬆️ ⬇️ 🔴 🟢 🔵 ⚪ ⚫ ♻️ ✔️ ©️ ®️ ™️".split(" ")
-    )
+    private val categories = EmojiCatalog.categories
 
-    // One label per section: index 0 is the recents header, 1..N label the categories in
-    // `allCategories` order. buildUnifiedList() reads categoryNames[i + 1], so this list must
-    // always have exactly one more entry than allCategories — a shorter list made the last
-    // category read past the end (ArrayIndexOutOfBoundsException) and crashed the keyboard
-    // the moment its input view was created.
-    private val categoryNames = listOf(
-        "Recent", "Smileys & People", "Gestures & Hearts", "Animals & Nature",
-        "Food & Drink", "Activities & Objects", "Symbols"
-    )
+    // One label per section: index 0 is the recents header, 1..N label the
+    // categories. buildUnifiedList() reads categoryNames[i + 1], so this list
+    // must always have exactly one more entry than there are categories.
+    private val categoryNames = listOf("Recent") + categories.map { it.name }
 
     private val skinToneBases: Set<String> = setOf(
         "👋", "🤚", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞", "🫰", "🤟", "🤘", "🤙",
         "👈", "👉", "👆", "🖕", "👇", "☝️", "🫵", "👍", "👎", "✊", "👊", "🤛", "🤜",
-        "👏", "🙌", "🙏", "✍️", "💅", "🤝"
+        "👏", "🙌", "🫱", "🫲", "🫳", "🫴", "🫷", "🫸", "👐", "🤲", "🤝", "🙏", "✍️",
+        "💅", "🤳", "💪", "🦾", "🦵", "🦶", "👂", "🦻", "👃", "🧠", "🫀", "🫁", "🦷",
+        "🦴", "👀", "👁️", "👅", "👄", "🫦", "🫹", "🫺"
     )
 
     private val skinTones = listOf("🏻", "🏼", "🏽", "🏾", "🏿")
@@ -60,11 +67,29 @@ class EmojiPanel(
 
     private var theme: KbTheme = Themes.LIGHT
 
-    /** The single toggleable top bar: shows search box OR suggestion chips. */
-    private val topBar = LinearLayout(context)
-    private val suggestionScroll = HorizontalScrollView(context)
-    private val suggestionRow = LinearLayout(context)
-    private val searchBox = EditText(context)
+    // ── Header (lives in the service's root layout, above the keyboard content) ──
+
+    /** Search field row + results bar; replaces the suggestion strip in emoji mode. */
+    val header = LinearLayout(context)
+
+    /** Results strip above the search box; opens only when a query has matches. */
+    private val resultsBar = HorizontalScrollView(context)
+    private val resultsRow = LinearLayout(context)
+    private val searchField = EditText(context)
+    private val searchClear = TextView(context)
+
+    private var searchMode = false
+
+    /**
+     * Fired when the search field is activated or dismissed. ShadeService uses it
+     * to swap the emoji grid for the real keyboard underneath the header.
+     */
+    var onSearchModeChanged: ((Boolean) -> Unit)? = null
+
+    /** True while the user is typing an emoji search (keyboard visible below the header). */
+    val isSearching: Boolean get() = searchMode
+
+    // ── Body ──────────────────────────────────────────────────────────────
 
     /** Unified RecyclerView: all categories with section headers, smooth scroll. */
     private val emojiList = RecyclerView(context)
@@ -75,21 +100,15 @@ class EmojiPanel(
     private val del = ImageView(context)
     private val tabs = ArrayList<TextView>()
     private var selected = 0
-    private var searchMode = false
 
     /** keyword -> list of emojis, loaded lazily from assets/emoji/emoji_keywords_*.tsv */
     private val keywordMap: Map<String, List<String>> by lazy { loadKeywordMap() }
 
-    /** Callbacks for search mode. */
-    var onSearchFocus: (() -> Unit)? = null
-    var onSearchExit: (() -> Unit)? = null
+    /** emoji -> weight-ordered related emojis, for the thin-results search fill */
+    private val relatedMap: Map<String, List<String>> by lazy { loadRelatedMap() }
 
-    val searchQuery: String get() = searchBox.text.toString()
-
-    fun setSearchQuery(query: String) {
-        searchBox.setText(query)
-        searchBox.setSelection(query.length)
-    }
+    /** query word -> canonical keyword alternatives, for the synonym search bridge */
+    private val synonymMap: Map<String, List<String>> by lazy { loadSynonymMap() }
 
     private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
 
@@ -101,6 +120,9 @@ class EmojiPanel(
         const val MAX_RECENT = 32
         const val EMOJI_COLUMNS = 8
         const val SPAN_HEADER = 8
+
+        /** Upper bound for the results bar above the search box. */
+        const val SEARCH_RESULTS_LIMIT = 48
     }
 
     private sealed class ListItem {
@@ -115,35 +137,16 @@ class EmojiPanel(
             out += ListItem.HeaderItem(categoryNames[0])
             recent.take(MAX_RECENT).forEach { out += ListItem.EmojiItem(it) }
         }
-        for (i in allCategories.indices) {
+        for (i in categories.indices) {
             // getOrNull keeps a mismatched names list from crashing the keyboard; the
             // categoryNames comment above documents the required invariant.
             out += ListItem.HeaderItem(categoryNames.getOrNull(i + 1) ?: "Category")
-            allCategories[i].second.forEach { out += ListItem.EmojiItem(it) }
+            categories[i].emojis.forEach { out += ListItem.EmojiItem(it) }
         }
         return out
     }
 
     private var unifiedItems: List<ListItem> = emptyList()
-
-    // ── Search results grid ────────────────────────────────────────────────
-
-    private val searchGrid = GridView(context)
-    private var searchResults: List<String> = emptyList()
-    private val searchAdapter = object : BaseAdapter() {
-        override fun getCount() = searchResults.size
-        override fun getItem(position: Int) = searchResults[position]
-        override fun getItemId(position: Int) = position.toLong()
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-            val tv = (convertView as? TextView) ?: TextView(context).apply {
-                gravity = Gravity.CENTER
-                textSize = 24f
-                setPadding(0, dp(8f), 0, dp(8f))
-            }
-            tv.text = searchResults[position]
-            return tv
-        }
-    }
 
     // ── Unified RecyclerView adapter ──────────────────────────────────────
 
@@ -211,79 +214,65 @@ class EmojiPanel(
 
     init {
         orientation = VERTICAL
+        buildHeader()
+        buildEmojiList()
+        buildBottomBar()
+        rebuildUnifiedList()
+    }
 
-        // ── Top bar: search box OR suggestion chips (toggled) ─────────────
-        topBar.orientation = VERTICAL
+    /** Header = results bar (hidden until a query matches) + the search box row. */
+    private fun buildHeader() {
+        header.orientation = VERTICAL
 
-        // Search box — hidden by default, shown when user taps the placeholder
-        searchBox.hint = context.getString(R.string.emoji_search_hint)
-        searchBox.maxLines = 1
-        searchBox.textSize = 14f
-        searchBox.isSingleLine = true
-        searchBox.setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
-        searchBox.background = GradientDrawable().apply {
-            cornerRadius = dp(10f).toFloat()
-            setColor(theme.keyFn)
-        }
-        searchBox.visibility = GONE
-        searchBox.addTextChangedListener(object : TextWatcher {
+        resultsBar.isHorizontalScrollBarEnabled = false
+        resultsBar.visibility = GONE
+        resultsRow.orientation = HORIZONTAL
+        resultsRow.gravity = Gravity.CENTER_VERTICAL
+        resultsBar.addView(
+            resultsRow,
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
+        )
+        header.addView(resultsBar, LayoutParams(LayoutParams.MATCH_PARENT, dp(46f)))
+
+        searchField.hint = context.getString(R.string.emoji_search_hint)
+        searchField.maxLines = 1
+        searchField.isSingleLine = true
+        searchField.textSize = 14f
+        searchField.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
+        searchField.compoundDrawablePadding = dp(8f)
+        searchField.setPadding(dp(10f), dp(8f), dp(10f), dp(8f))
+        // The real keyboard is drawn below the header; this field must never ask
+        // the system for another IME.
+        searchField.showSoftInputOnFocus = false
+        searchField.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
-                applySearch(s?.toString().orEmpty().trim())
+                applySearch(s?.toString().orEmpty())
             }
         })
-        searchBox.setOnFocusChangeListener { _, hasFocus ->
-            if (hasFocus && !searchMode) enterSearch()
-        }
-        topBar.addView(searchBox, LayoutParams(LayoutParams.MATCH_PARENT, dp(44f)))
+        searchField.setOnClickListener { enterSearch() }
+        // Hardware enter closes the search and returns to the emoji grid.
+        searchField.setOnEditorActionListener { _, _, _ -> exitSearch(); true }
 
-        // Suggestion scroll (horizontal chips) — shown by default when suggestions exist
-        suggestionScroll.isHorizontalScrollBarEnabled = false
-        suggestionScroll.visibility = GONE
-        suggestionRow.orientation = HORIZONTAL
-        suggestionScroll.addView(
-            suggestionRow,
-            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
-        )
-        topBar.addView(suggestionScroll, LayoutParams(LayoutParams.MATCH_PARENT, dp(44f)))
+        searchClear.text = "✕"
+        searchClear.textSize = 16f
+        searchClear.gravity = Gravity.CENTER
+        searchClear.setPadding(dp(10f), 0, dp(10f), 0)
+        searchClear.visibility = GONE
+        searchClear.setOnClickListener { exitSearch() }
 
-        // Search placeholder — tappable bar that shows "Search emoji" hint.
-        // When no suggestions are present, this is what the user sees.
-        // Tapping it shows the search box and focuses it.
-        val searchPlaceholder = TextView(context).apply {
-            text = context.getString(R.string.emoji_search_hint)
-            textSize = 14f
-            setTextColor(theme.hint)
+        val searchRow = LinearLayout(context).apply {
+            orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(10f).toFloat()
-                setColor(theme.keyFn)
-            }
-            setOnClickListener {
-                searchBox.visibility = VISIBLE
-                searchBox.requestFocus()
-            }
+            setPadding(dp(10f), dp(6f), dp(10f), dp(8f))
         }
-        topBar.addView(searchPlaceholder, LayoutParams(LayoutParams.MATCH_PARENT, dp(44f)))
+        searchRow.addView(searchField, LayoutParams(0, dp(40f), 1f))
+        searchRow.addView(searchClear, LayoutParams(dp(40f), LayoutParams.MATCH_PARENT))
+        header.addView(searchRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+    }
 
-        addView(topBar, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-
-        // ── Search results grid (hidden by default) ────────────────────────
-        searchGrid.numColumns = EMOJI_COLUMNS
-        searchGrid.stretchMode = GridView.STRETCH_COLUMN_WIDTH
-        searchGrid.adapter = searchAdapter
-        searchGrid.setSelector(android.R.color.transparent)
-        searchGrid.visibility = GONE
-        searchGrid.setOnItemClickListener { _, _, pos, _ ->
-            val emoji = searchResults[pos]
-            recordRecent(emoji)
-            onEmoji(emoji)
-        }
-        addView(searchGrid, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
-
-        // ── Unified emoji list (all categories with headers, smooth scroll) ──
+    private fun buildEmojiList() {
         val layoutManager = GridLayoutManager(context, EMOJI_COLUMNS)
         layoutManager.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
             override fun getSpanSize(position: Int): Int {
@@ -298,8 +287,9 @@ class EmojiPanel(
         emojiList.adapter = unifiedAdapter
         emojiList.setHasFixedSize(true)
         addView(emojiList, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+    }
 
-        // ── Category bar (bottom) ────────────────────────────────────────
+    private fun buildBottomBar() {
         bar.orientation = HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         abc.text = context.getString(R.string.abc)
@@ -311,7 +301,7 @@ class EmojiPanel(
         // Recent tab (index 0)
         val recentTab = TextView(context).apply {
             text = recentIcon
-            textSize = 18f
+            textSize = 17f
             gravity = Gravity.CENTER
             setOnClickListener { scrollToCategory(0) }
         }
@@ -319,10 +309,10 @@ class EmojiPanel(
         bar.addView(recentTab, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
 
         // Category tabs (index 1+)
-        allCategories.forEachIndexed { i, (icon, _) ->
+        categories.forEachIndexed { i, cat ->
             val t = TextView(context).apply {
-                text = icon
-                textSize = 20f
+                text = cat.icon
+                textSize = 17f
                 gravity = Gravity.CENTER
                 setOnClickListener { scrollToCategory(i + 1) }
             }
@@ -335,9 +325,6 @@ class EmojiPanel(
         del.setOnClickListener { onDelete() }
         bar.addView(del, LayoutParams(dp(56f), LayoutParams.MATCH_PARENT))
         addView(bar, LayoutParams(LayoutParams.MATCH_PARENT, dp(44f)))
-
-        // Build initial unified list
-        rebuildUnifiedList()
     }
 
     private fun rebuildUnifiedList() {
@@ -345,11 +332,10 @@ class EmojiPanel(
         unifiedAdapter.notifyDataSetChanged()
     }
 
-    /** Scroll the unified list to a category by index (0=Recent, 1+=categories). */
+    /** Scroll the unified list to a section by index (0=Recent, 1+=categories). */
     private fun scrollToCategory(catIndex: Int) {
-        if (searchMode) exitSearch()
         selected = catIndex
-        // Find the header position for this category
+        // Find the header position for this section
         var headerPos = -1
         var currentCat = 0
         for (i in unifiedItems.indices) {
@@ -372,75 +358,86 @@ class EmojiPanel(
     private fun enterSearch() {
         if (searchMode) return
         searchMode = true
-        // Hide suggestion scroll and placeholder
-        suggestionScroll.visibility = GONE
-        if (topBar.childCount >= 3) topBar.getChildAt(2).visibility = GONE
-        // Search box is already VISIBLE (it triggered the focus change)
-        // Show search results grid, hide the unified list
-        searchGrid.visibility = VISIBLE
-        emojiList.visibility = GONE
-        // Hide the category bar while searching
-        bar.visibility = GONE
-        onSearchFocus?.invoke()
-        paintTabs()
+        searchClear.visibility = VISIBLE
+        searchField.requestFocus()
+        onSearchModeChanged?.invoke(true)
     }
 
     fun exitSearch() {
         if (!searchMode) return
         searchMode = false
-        searchBox.setText("")
-        searchBox.clearFocus()
-        searchBox.visibility = GONE
-        searchGrid.visibility = GONE
+        searchField.setText("")
+        searchField.clearFocus()
+        searchClear.visibility = GONE
         searchResults = emptyList()
-        searchAdapter.notifyDataSetChanged()
-        // Restore the unified list + category bar
-        emojiList.visibility = VISIBLE
-        bar.visibility = VISIBLE
-        // Restore the search placeholder
-        if (topBar.childCount >= 3) topBar.getChildAt(2).visibility = VISIBLE
-        // Restore suggestions if any
-        if (suggestionRow.childCount > 0) suggestionScroll.visibility = VISIBLE
-        onSearchExit?.invoke()
+        rebuildResultsRow()
+        resultsBar.visibility = GONE
+        onSearchModeChanged?.invoke(false)
+    }
+
+    /**
+     * Clears search state without firing [onSearchModeChanged] — used when the
+     * panel is closed or re-opened, where the service sets visibilities itself.
+     */
+    fun resetSearch() {
+        searchMode = false
+        searchField.setText("")
+        searchField.clearFocus()
+        searchClear.visibility = GONE
+        searchResults = emptyList()
+        rebuildResultsRow()
+        resultsBar.visibility = GONE
+    }
+
+    /** Routes keyboard input into the query (called by ShadeService while searching). */
+    fun typeIntoSearch(text: String) {
+        searchField.append(text)
+        searchField.setSelection(searchField.text.length)
+    }
+
+    /** Removes the last query character (backspace key routing while searching). */
+    fun searchBackspace() {
+        val t = searchField.text
+        if (t.isNotEmpty()) {
+            searchField.setText(t.substring(0, t.length - 1))
+            searchField.setSelection(searchField.text.length)
+        }
     }
 
     private fun applySearch(query: String) {
-        if (query.isEmpty()) {
-            searchResults = emptyList()
-            searchAdapter.notifyDataSetChanged()
-            return
+        val results = if (searchMode) {
+            EmojiSearch.search(query, keywordMap, SEARCH_RESULTS_LIMIT, relatedMap, synonymMap)
+        } else {
+            emptyList()
         }
+        searchResults = results
+        rebuildResultsRow()
+        // The results bar opens up only for showing emoji results.
+        resultsBar.visibility = if (searchMode && results.isNotEmpty()) VISIBLE else GONE
+    }
 
-        val tokens = query.lowercase().trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-        if (tokens.isEmpty()) {
-            searchResults = emptyList()
-            searchAdapter.notifyDataSetChanged()
-            return
-        }
+    // ── Results bar ───────────────────────────────────────────────────────
 
-        data class Scored(val emoji: String, val score: Float)
-        val scored = ArrayList<Scored>()
+    private var searchResults: List<String> = emptyList()
 
-        for ((keyword, emojis) in keywordMap) {
-            val kwLower = keyword.lowercase()
-            if (!tokens.all { kwLower.contains(it) }) continue
-            var score = keyword.length.toFloat()
-            for (tok in tokens) {
-                if (kwLower == tok) score -= 10f
-                else if (kwLower.startsWith(tok)) score -= 5f
+    private fun rebuildResultsRow() {
+        resultsRow.removeAllViews()
+        for (emoji in searchResults) {
+            val tv = TextView(context).apply {
+                text = emoji
+                textSize = 26f
+                gravity = Gravity.CENTER
+                setPadding(dp(12f), 0, dp(12f), 0)
+                setOnClickListener {
+                    recordRecent(emoji)
+                    onEmoji(emoji)
+                }
             }
-            for (e in emojis) scored.add(Scored(e, score))
+            resultsRow.addView(
+                tv,
+                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
+            )
         }
-
-        val results = LinkedHashSet<String>()
-        for ((emoji, _) in scored.sortedBy { it.score }) {
-            results.add(emoji)
-            if (results.size >= 96) break
-        }
-
-        searchResults = results.toList()
-        searchAdapter.notifyDataSetChanged()
-        searchGrid.setSelection(0)
     }
 
     // ── Recent ────────────────────────────────────────────────────────────
@@ -455,8 +452,17 @@ class EmojiPanel(
         return ordered
     }
 
+    /**
+     * Moves [emoji] to the front of the Recent section and persists it. Called on
+     * every tap — from the results bar, the grid or the skin-tone popup — so the
+     * recently used emojis at the top of the list update in real time.
+     */
     fun recordRecent(emoji: String) {
         if (emoji.isBlank()) return
+        val anchor = (emojiList.layoutManager as? GridLayoutManager)?.findFirstVisibleItemPosition() ?: -1
+        val oldIndex = unifiedItems.indexOfFirst { it is ListItem.EmojiItem && it.emoji == emoji }
+        val wasInRecents = recent.contains(emoji)
+
         recent.removeAll { it == emoji }
         recent.add(0, emoji)
         while (recent.size > MAX_RECENT) recent.removeAt(recent.size - 1)
@@ -464,93 +470,89 @@ class EmojiPanel(
             .putStringSet("items", recent.toSet())
             .putString("order", recent.joinToString("\n"))
             .apply()
-        if (!searchMode) rebuildUnifiedList()
+
+        // Always rebuild — even while the grid is hidden behind the keyboard — so
+        // the recents section is current the moment the user leaves search mode.
+        rebuildUnifiedList()
+
+        // Keep the viewport stable: moving the tapped emoji to the front of the
+        // recents section shifts the rows between it and the top by one. When the
+        // recents header is on screen (anchor 0) we stay put so the real-time
+        // update is visible.
+        if (anchor > 0) {
+            val shift = when {
+                !wasInRecents -> 1
+                oldIndex > anchor -> 1
+                else -> 0
+            }
+            emojiList.scrollToPosition((anchor + shift).coerceAtMost(unifiedItems.size - 1))
+        }
     }
 
     // ── Keyword map loading ────────────────────────────────────────────────
 
     private fun loadKeywordMap(): Map<String, List<String>> {
         val map = LinkedHashMap<String, MutableList<String>>()
-        for (tag in listOf("en", "hi", "concepts")) {
-            try {
-                context.assets.open("emoji/emoji_keywords_${tag}.tsv").bufferedReader().useLines { lines ->
-                    for (line in lines) {
-                        val parts = line.split('\t')
-                        if (parts.size < 2) continue
-                        val keyword = parts[0].trim().lowercase()
-                        val emoji = parts[1].trim()
-                        if (keyword.isNotEmpty() && emoji.isNotEmpty()) {
-                            map.getOrPut(keyword) { mutableListOf() }.add(emoji)
-                        }
+        // Load order = search priority: curated tables first, then the generated
+        // CLDR-name catalog, then "shortcuts" last so curated keywords keep their
+        // priority and shorthand entries only extend the map.
+        for (tag in listOf("en", "hi", "concepts", "catalog", "shortcuts")) {
+            com.noircipher.shade.engine.AssetTsv.use(
+                context, "emoji/emoji_keywords_${tag}.tsv", "EmojiPanel", Unit
+            ) { lines ->
+                for (line in lines) {
+                    val parts = line.split('\t')
+                    if (parts.size < 2) continue
+                    val keyword = parts[0].trim().lowercase()
+                    val emoji = parts[1].trim()
+                    if (keyword.isNotEmpty() && emoji.isNotEmpty()) {
+                        map.getOrPut(keyword) { mutableListOf() }.add(emoji)
                     }
                 }
-            } catch (_: Exception) {}
+            }
         }
         return map
     }
 
-    // ── Public API ────────────────────────────────────────────────────────
+    private fun loadRelatedMap(): Map<String, List<String>> =
+        com.noircipher.shade.engine.AssetTsv.use(
+            context, "emoji/emoji_related.tsv", "EmojiPanel", emptyMap()
+        ) { lines -> EmojiSearch.parseRelatedTsv(lines) }
 
-    fun setSuggestions(suggestions: List<String>) {
-        suggestionRow.removeAllViews()
-        if (searchMode || suggestions.isEmpty()) {
-            suggestionScroll.visibility = GONE
-            if (topBar.childCount >= 3) topBar.getChildAt(2).visibility = VISIBLE
-            return
-        }
-        // Show suggestion row, hide the search placeholder
-        suggestionScroll.visibility = VISIBLE
-        if (topBar.childCount >= 3) topBar.getChildAt(2).visibility = GONE
-        suggestions.take(10).forEach { emoji ->
-            val tv = TextView(context).apply {
-                text = emoji
-                textSize = 24f
-                gravity = Gravity.CENTER
-                setPadding(dp(12f), 0, dp(12f), 0)
-                setOnClickListener {
-                    recordRecent(emoji)
-                    onEmoji(emoji)
-                }
-            }
-            suggestionRow.addView(tv, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
-        }
-    }
+    private fun loadSynonymMap(): Map<String, List<String>> =
+        com.noircipher.shade.engine.AssetTsv.use(
+            context, "emoji/emoji_synonyms.tsv", "EmojiPanel", emptyMap()
+        ) { lines -> EmojiSearch.parseSynonymTsv(lines) }
+
+    // ── Public API ────────────────────────────────────────────────────────
 
     fun setTheme(t: KbTheme) {
         theme = t
         setBackgroundColor(t.bg)
-        abc.setTextColor(t.text)
-        del.setColorFilter(t.text)
-        searchBox.setTextColor(t.text)
-        searchBox.setHintTextColor(t.hint)
-        searchBox.background = GradientDrawable().apply {
-            cornerRadius = dp(10f).toFloat()
+        header.setBackgroundColor(t.bg)
+        searchField.setTextColor(t.text)
+        searchField.setHintTextColor(t.hint)
+        searchField.background = GradientDrawable().apply {
+            cornerRadius = dp(12f).toFloat()
             setColor(t.keyFn)
         }
-        for (i in 0 until suggestionRow.childCount) {
-            (suggestionRow.getChildAt(i) as? TextView)?.setTextColor(t.text)
-        }
+        searchField.compoundDrawableTintList = ColorStateList.valueOf(t.hint)
+        searchClear.setTextColor(t.hint)
+        abc.setTextColor(t.text)
+        del.setColorFilter(t.text)
         paintTabs()
         unifiedAdapter.notifyDataSetChanged()
     }
 
     fun onShow() {
-        if (searchMode) exitSearch()
+        resetSearch()
         rebuildUnifiedList()
         emojiList.scrollToPosition(0)
     }
 
-    fun onBackPressed(): Boolean {
-        if (searchMode) {
-            exitSearch()
-            return true
-        }
-        return false
-    }
-
     private fun paintTabs() {
         tabs.forEachIndexed { i, t ->
-            t.background = if (i == selected && !searchMode) GradientDrawable().apply {
+            t.background = if (i == selected) GradientDrawable().apply {
                 cornerRadius = dp(10f).toFloat()
                 setColor(theme.keyFn)
             } else null
@@ -596,23 +598,4 @@ class EmojiPanel(
         }
         popup.showAsDropDown(anchor, 0, -anchor.height)
     }
-}
-
-
-/** Keyword -> emoji for inline emoji suggestions while typing. */
-object EmojiKeywords {
-    val map: Map<String, String> = mapOf(
-        "love" to "❤️", "heart" to "❤️", "happy" to "😊", "smile" to "😀", "laugh" to "😂",
-        "lol" to "😂", "sad" to "😢", "cry" to "😭", "angry" to "😠", "cool" to "😎",
-        "thanks" to "🙏", "thank" to "🙏", "please" to "🙏", "pray" to "🙏", "yes" to "👍",
-        "ok" to "👌", "okay" to "👌", "good" to "👍", "no" to "👎", "bad" to "👎", "party" to "🎉",
-        "birthday" to "🎂", "congrats" to "🎉", "congratulations" to "🎉", "fire" to "🔥",
-        "hot" to "🔥", "star" to "⭐", "sun" to "☀️", "moon" to "🌙", "rain" to "☔",
-        "snow" to "❄️", "cat" to "🐱", "dog" to "🐶", "pizza" to "🍕", "coffee" to "☕",
-        "beer" to "🍺", "food" to "🍔", "car" to "🚗", "home" to "🏠", "house" to "🏠",
-        "phone" to "📱", "money" to "💰", "gift" to "🎁", "music" to "🎵", "book" to "📚",
-        "sleep" to "😴", "tired" to "😴", "think" to "🤔", "wow" to "😮", "sorry" to "🙏",
-        "hello" to "👋", "hi" to "👋", "bye" to "👋", "goodbye" to "👋", "strong" to "💪",
-        "idea" to "💡", "time" to "⏰", "world" to "🌍", "rocket" to "🚀", "flower" to "🌸"
-    )
 }

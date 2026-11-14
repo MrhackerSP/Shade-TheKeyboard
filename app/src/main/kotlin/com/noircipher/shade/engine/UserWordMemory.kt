@@ -38,6 +38,9 @@ class UserWordMemory(context: Context) {
 
     fun clear() = State.clear(app)
 
+    /** Re-reads from disk after a backup restore replaced the encrypted store. */
+    fun reload() = State.reload(app)
+
     private object State {
         private const val FILE = "user_word_memory.enc"
         private const val LEGACY_PREFS = "shade_user_word_memory"
@@ -56,7 +59,9 @@ class UserWordMemory(context: Context) {
             if (counts != null) return@synchronized
             val s = EncryptedMapFile(ctx, FILE, WordDictionary.USER_KEY_ALIAS)
             store = s
-            saver = DebouncedSaver(2000L) { flush() }
+            // One saver for the process lifetime: creating a new DebouncedSaver
+            // here (e.g. after backup restore) would leak its executor thread.
+            if (saver == null) saver = DebouncedSaver(2000L) { flush() }
             val loaded: Map<String, Float> = s.load() ?: migrateLegacy(ctx, s)
             counts = HashMap<String, Int>().also { m ->
                 for ((w, v) in loaded) m[w] = v.toInt()
@@ -122,6 +127,14 @@ class UserWordMemory(context: Context) {
                 (store ?: EncryptedMapFile(ctx, FILE, WordDictionary.USER_KEY_ALIAS)).delete()
             }
             ctx.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE).edit().clear().apply()
+        }
+
+        /** Flushes pending edits, then re-reads the encrypted file from disk. */
+        fun reload(ctx: Context) = synchronized(lock) {
+            flush()
+            counts?.clear()
+            counts = null
+            ensureLoaded(ctx)
         }
     }
 }

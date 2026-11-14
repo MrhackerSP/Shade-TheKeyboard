@@ -1,6 +1,7 @@
 package com.noircipher.shade.gif
 
 import android.content.Context
+import com.noircipher.shade.ShadeLog
 import android.content.SharedPreferences
 import com.noircipher.shade.R
 import kotlinx.coroutines.CancellationException
@@ -143,7 +144,8 @@ class GifController(
                 withContext(Dispatchers.IO) { if (q.isEmpty()) c.trending(p) else c.search(q, p) }
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
+            } catch (t: Exception) {
+                ShadeLog.w("GifController", "gif search failed", t, once = true)
                 null
             }
             if (gen != generation || !isOpen) return@launch

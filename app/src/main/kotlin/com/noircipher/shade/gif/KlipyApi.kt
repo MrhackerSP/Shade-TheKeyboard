@@ -1,7 +1,9 @@
 package com.noircipher.shade.gif
 
 import android.net.Uri
+import android.util.Log
 import com.noircipher.shade.BuildConfig
+import com.noircipher.shade.ShadeLog
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -143,7 +145,8 @@ class KlipyClient(private val apiKey: String, private val customerId: String) {
             val json = JSONObject().put("customer_id", customerId)
             if (!query.isNullOrBlank()) json.put("q", query)
             HttpFetch.postJson(url, json.toString())
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("KlipyApi", "KLIPY share registration failed", e)
         }
     }
 
@@ -208,7 +211,8 @@ object HttpFetch {
         return try {
             file.writeBytes(getBytes(url, maxBytes))
             true
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("KlipyApi", "gif download failed", t, once = true)
             file.delete()
             false
         }

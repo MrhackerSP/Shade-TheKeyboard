@@ -15,6 +15,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.util.Log
 import android.util.SparseArray
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -99,6 +100,12 @@ class KeyboardView(context: Context) : View(context) {
     var rows: List<List<Key>> = emptyList()
         private set
     var contentHeightPx = 0
+    /**
+     * Emoji search mode owns the delete key (backspaces the query). The service
+     * turns the slide-on-delete gesture off so a leftward drag while deleting
+     * cannot start a selection in the app's text field underneath.
+     */
+    var slideDeleteEnabled = true
     var oneHanded = 0
         private set
     var oneHandedWidth = 0.75f
@@ -350,17 +357,33 @@ class KeyboardView(context: Context) : View(context) {
         val target = if (split) 1f else 0f
         if (splitProgress == target) return
         splitAnimator?.cancel()
-        splitAnimator = ValueAnimator.ofFloat(splitProgress, target).apply {
+        // Capture both endpoint layouts once, then interpolate key rects per frame.
+        // Key positions are linear in splitProgress (the split gap scales linearly),
+        // so the interpolated frames match what a full layoutKeys() pass would produce
+        // every frame — without ~11 passes over ~40 keys per frame (the old per-frame relayout).
+        val startRects = snapshotKeyRects()
+        val startProgress = splitProgress
+        splitProgress = target
+        layoutKeys()
+        val endRects = snapshotKeyRects()
+        splitAnimator = ValueAnimator.ofFloat(startProgress, target).apply {
             duration = ShadeMotion.MODE_CHANGE_MS
             interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener {
                 splitProgress = it.animatedValue as Float
-                // TODO(perf): layoutKeys() runs every frame (~11 passes over ~40 keys).
-                // Acceptable for a one-time user-initiated toggle, but could precompute
-                // start/end layouts and interpolate offsets if this becomes hot.
-                layoutKeys()
+                val span = target - startProgress
+                val t = if (span == 0f) 1f else (splitProgress - startProgress) / span
+                if (!applyInterpolatedRects(startRects, endRects, t)) layoutKeys()
                 invalidate()
             }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    // Snap to the exact final layout (also covers mid-animation cancels).
+                    splitProgress = target
+                    layoutKeys()
+                    invalidate()
+                }
+            })
             start()
         }
     }
@@ -374,17 +397,32 @@ class KeyboardView(context: Context) : View(context) {
             return
         }
         oneHandedAnimator?.cancel()
-        oneHandedAnimator = ValueAnimator.ofFloat(oneHandedProgress, target).apply {
+        // Same endpoint-snapshot trick as setSplitAnimated: key positions are linear in
+        // oneHandedProgress (both the width fraction and the side offset scale linearly),
+        // so interpolated rects match a per-frame layoutKeys() pass at a fraction of
+        // the cost (the old per-frame relayout).
+        val startRects = snapshotKeyRects()
+        val startProgress = oneHandedProgress
+        oneHandedProgress = target
+        layoutKeys()
+        val endRects = snapshotKeyRects()
+        oneHandedAnimator = ValueAnimator.ofFloat(startProgress, target).apply {
             duration = ShadeMotion.MODE_CHANGE_MS
             interpolator = ShadeMotion.FAST_OUT_SLOW_IN
             addUpdateListener {
                 oneHandedProgress = it.animatedValue as Float
-                // TODO(perf): layoutKeys() runs every frame (~11 passes over ~40 keys).
-                // Acceptable for a one-time user-initiated toggle, but could precompute
-                // start/end layouts and interpolate offsets if this becomes hot.
-                layoutKeys()
+                val span = target - startProgress
+                val t = if (span == 0f) 1f else (oneHandedProgress - startProgress) / span
+                if (!applyInterpolatedRects(startRects, endRects, t)) layoutKeys()
                 invalidate()
             }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    oneHandedProgress = target
+                    layoutKeys()
+                    invalidate()
+                }
+            })
             start()
         }
     }
@@ -469,41 +507,17 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    private fun hit(x: Float, y: Float): Key? {
-        if (rows.isEmpty()) return null
-        // Find the row whose vertical span is closest to y — manual loop, no allocation.
-        var bestRow = -1
-        var bestRowDist = Float.MAX_VALUE
-        for (i in rows.indices) {
-            val k = rows[i][0]
-            val d = when {
-                y < k.top -> k.top - y
-                y > k.bottom -> y - k.bottom
-                else -> 0f
-            }
-            if (d < bestRowDist) {
-                bestRowDist = d
-                bestRow = i
-            }
-        }
-        if (bestRow < 0) return null
-        // Find the key in that row whose horizontal span is closest to x.
-        var bestKey: Key? = null
-        var bestKeyDist = Float.MAX_VALUE
-        for (k in rows[bestRow]) {
-            if (k.kind == KeyKind.SPACER) continue
-            val d = when {
-                x < k.left -> k.left - x
-                x > k.right -> x - k.right
-                else -> 0f
-            }
-            if (d < bestKeyDist) {
-                bestKeyDist = d
-                bestKey = k
-            }
-        }
-        return bestKey
-    }
+    /**
+     * Flat snapshot of every key's rect as [left, top, right, bottom, ...]. Capturing the
+     * start and end layouts once lets the split / one-handed animators blend key rects
+     * directly per frame instead of re-running the full layout pass on every frame.
+     */
+    private fun snapshotKeyRects(): FloatArray = KeyboardLayoutMath.snapshotRects(rows)
+
+    private fun applyInterpolatedRects(a: FloatArray, b: FloatArray, t: Float): Boolean =
+        KeyboardLayoutMath.blendRects(rows, a, b, t, dp(3f).toInt())
+
+    private fun hit(x: Float, y: Float): Key? = KeyboardLayoutMath.hitKey(rows, x, y)
 
     private fun display(s: String): String {
         if (shiftState > 0 && s.length == 1 && s[0].isLetter()) {
@@ -1050,7 +1064,7 @@ class KeyboardView(context: Context) : View(context) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 // Deliver touch events as they arrive instead of batching them to the
                 if (e.actionMasked == MotionEvent.ACTION_DOWN) {
-                    try { requestUnbufferedDispatch(e) } catch (_: Throwable) {}
+                    try { requestUnbufferedDispatch(e) } catch (t: Throwable) { Log.w("KeyboardView", "requestUnbufferedDispatch failed", t) }
                 }
                 val i = e.actionIndex
                 down(e.getPointerId(i), e.getX(i), e.getY(i))
@@ -1234,15 +1248,17 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun animateShiftTap() {
         shiftTapAnimator?.cancel()
+        // shiftTapProgress only affects the shift key's drawing: invalidate just its
+        // dirty rect each frame instead of the whole view (the old whole-view invalidate). The Key
+        // object stays valid across the animation — layoutKeys() refreshes its
+        // invalidateRect if the layout changes mid-animation.
+        val shift = findShiftKey()
         shiftTapAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = ShadeMotion.KEY_POPUP_IN_MS
             interpolator = ShadeMotion.FAST_OUT_SLOW_IN
-            // TODO(perf): shiftTapProgress only affects the shift key's drawing; the
-            // whole-view invalidate() here could be replaced with a dirty rect covering
-            // the shift key's invalidateRect. Skipped for now — animator is short.
             addUpdateListener {
                 shiftTapProgress = it.animatedValue as Float
-                invalidate()
+                invalidateShift(shift)
             }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
@@ -1251,14 +1267,30 @@ class KeyboardView(context: Context) : View(context) {
                         interpolator = ShadeMotion.FAST_OUT_LINEAR_IN
                         addUpdateListener {
                             shiftTapProgress = it.animatedValue as Float
-                            invalidate()
+                            invalidateShift(shift)
                         }
+                        addListener(object : android.animation.AnimatorListenerAdapter() {
+                            override fun onAnimationEnd(animation: android.animation.Animator) {
+                                invalidateShift(shift) // paint the exact resting state
+                            }
+                        })
                         start()
                     }
                 }
             })
             start()
         }
+    }
+
+    private fun findShiftKey(): Key? {
+        for (row in rows) for (k in row) {
+            if (k.kind == KeyKind.FUNC && k.code == Codes.SHIFT) return k
+        }
+        return null
+    }
+
+    private fun invalidateShift(k: Key?) {
+        if (k != null) invalidate(k) else invalidate()
     }
 
     private fun pressKey(p: Pointer) {
@@ -1399,7 +1431,7 @@ class KeyboardView(context: Context) : View(context) {
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             val dx = x - p.downX
             val now = android.os.SystemClock.uptimeMillis()
-            if (!deleteSlideActive && dx < -dp(16f)) {
+            if (slideDeleteEnabled && !deleteSlideActive && dx < -dp(16f)) {
                 deleteSlideActive = true
                 deleteSlideStartX = p.downX
                 deleteSlideWordCount = 0
@@ -1638,7 +1670,8 @@ class KeyboardView(context: Context) : View(context) {
         return try {
             v.vibrate(VibrationEffect.createPredefined(effect))
             true
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("KeyboardView", "predefined haptic failed", t, once = true)
             false
         }
     }
@@ -1649,7 +1682,7 @@ class KeyboardView(context: Context) : View(context) {
             try {
                 vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
                 return
-            } catch (_: Exception) {}
+            } catch (e: Exception) { Log.w("KeyboardView", "Vibration tick failed", e) }
         }
         performHapticFeedback(
             HapticFeedbackConstants.KEYBOARD_TAP,
@@ -1663,7 +1696,7 @@ class KeyboardView(context: Context) : View(context) {
             try {
                 vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
                 return
-            } catch (_: Exception) {}
+            } catch (e: Exception) { Log.w("KeyboardView", "Heavy vibration failed", e) }
         }
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     }

@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.res.Configuration
+import android.app.WallpaperManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
@@ -61,6 +62,7 @@ import com.noircipher.shade.engine.CandidateRanker
 import com.noircipher.shade.engine.NeuralSpellChecker
 import com.noircipher.shade.engine.TfliteCandidateRankingScorer
 import com.noircipher.shade.engine.TfliteContextEncoder
+import com.noircipher.shade.engine.TfliteNextWordScorer
 import com.noircipher.shade.engine.EmojiPredictor
 import com.noircipher.shade.engine.LanguageModelEngine
 import com.noircipher.shade.engine.UserWordMemory
@@ -68,6 +70,7 @@ import com.noircipher.shade.engine.AdaptiveWordMemory
 import com.noircipher.shade.engine.AppContextModel
 import com.noircipher.shade.engine.AutocorrectSuppressor
 import com.noircipher.shade.engine.ConfidenceCalibrator
+import com.noircipher.shade.engine.CorrectionConfidence
 import com.noircipher.shade.engine.OnlineRankerTrainer
 import com.noircipher.shade.engine.RankingFeatureExtractor
 import com.noircipher.shade.engine.RewriteModelManager
@@ -98,8 +101,8 @@ import java.util.ArrayDeque
 
 class ShadeService : InputMethodService(), KeyboardView.Listener {
 
-    private enum class Mode { LETTERS, SYM1, SYM2, NUMPAD }
-    private enum class Panel { NONE, EMOJI, CLIP }
+    internal enum class Mode { LETTERS, SYM1, SYM2, NUMPAD }
+    internal enum class Panel { NONE, EMOJI, CLIP }
 
     private class UndoEntry(
         val charsCommitted: Int,
@@ -118,13 +121,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val separatorDeleted: Boolean = false
     )
 
-    private val toolDefs = listOf(
+    internal val toolDefs = listOf(
         "clip" to "📋", "emoji" to "😀", "gif" to "GIF", "translate" to "🌐", "numpad" to "123", "left" to "◀", "right" to "▶",
         "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste",
         "undo" to "Undo", "incognito" to "🕶", "onehand" to "1-hand",
         "resize" to "Resize", "voice" to "🎤", "settings" to "⚙"
     )
-    private val toolIcons = mapOf(
+    internal val toolIcons = mapOf(
         "clip" to R.drawable.ic_tb_clip, "emoji" to R.drawable.ic_tb_emoji, "gif" to R.drawable.ic_tb_gif, "translate" to R.drawable.ic_tb_translate,
         "numpad" to R.drawable.ic_tb_numpad, "left" to R.drawable.ic_tb_left,
         "right" to R.drawable.ic_tb_right, "selectall" to R.drawable.ic_tb_selectall,
@@ -133,144 +136,166 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         "incognito" to R.drawable.ic_tb_incognito, "onehand" to R.drawable.ic_tb_onehand,
         "resize" to R.drawable.ic_tb_resize, "voice" to R.drawable.ic_tb_mic, "settings" to R.drawable.ic_tb_settings
     )
-    private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
-    private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+    internal val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
+    internal val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
 
-    private lateinit var prefs: SharedPreferences
-    private lateinit var dict: WordDictionary
-    private lateinit var clips: ClipboardStore
+    internal lateinit var prefs: SharedPreferences
+    internal lateinit var dict: WordDictionary
+    internal lateinit var clips: ClipboardStore
     private lateinit var cm: ClipboardManager
-    private lateinit var root: LinearLayout
+    internal lateinit var root: LinearLayout
     // Transparent, touch-through band above the keyboard. Long-press accent panels have two rows
     // and are taller than the suggestion strip, so on the top key row they need room above the
     // keyboard. The band is excluded from the insets (see onComputeInsets), so apps are not
     // resized for it and touches on it reach the app underneath.
-    private lateinit var headroom: View
+    internal lateinit var headroom: View
     // GIF picker (KLIPY): a compact bar above the keyboard. While it is open, keystrokes edit its
     // search query instead of the text field.
-    private lateinit var gifController: GifController
+    internal lateinit var gifController: GifController
     private var gifActive = false
     // Translator
     private var translatorActive = false
     private var translatorInput = StringBuilder()
     private var translatorTarget = "en"
-    private lateinit var strip: LinearLayout
-    private lateinit var toggle: TextView
+    internal lateinit var strip: LinearLayout
+    internal lateinit var toggle: TextView
     // floating drag handle above the keyboard. Dragging vertically
     // resizes the keyboard (adjusts key_height live). Long-pressing then
     // dragging moves the keyboard up from the bottom (floating offset).
     private lateinit var resizeHandle: View
     private lateinit var resizeOverlay: FrameLayout
-    private lateinit var autofillScroll: HorizontalScrollView
-    private lateinit var autofillRow: LinearLayout
-    private var autofillCount = 0
-    private var autofillGen = 0
-    private var autofillHiddenByTyping = false
-    private lateinit var slotFrame: FrameLayout
-    private lateinit var slotRow: LinearLayout
+    internal lateinit var autofillScroll: HorizontalScrollView
+    internal lateinit var autofillRow: LinearLayout
+    internal var autofillCount = 0
+    internal var autofillGen = 0
+    internal var autofillHiddenByTyping = false
+    internal lateinit var slotFrame: FrameLayout
+    internal lateinit var slotRow: LinearLayout
     private lateinit var slotOldRow: LinearLayout
-    private lateinit var slots: List<TextView>
-    private lateinit var slotOlds: List<TextView>
-    private lateinit var toolScroll: HorizontalScrollView
-    private lateinit var toolRow: LinearLayout
-    private lateinit var kb: KeyboardView
-    private lateinit var emoji: EmojiPanel
-    private lateinit var clipPanel: ClipboardPanel
+    internal lateinit var slots: List<TextView>
+    internal lateinit var slotOlds: List<TextView>
+    internal lateinit var toolScroll: HorizontalScrollView
+    internal lateinit var toolRow: LinearLayout
+    internal lateinit var kb: KeyboardView
+    internal lateinit var emoji: EmojiPanel
+    internal lateinit var clipPanel: ClipboardPanel
 
-    private var kbTheme: KbTheme = Themes.LIGHT
-    private var mode = Mode.LETTERS
+    internal var kbTheme: KbTheme = Themes.LIGHT
+    internal var mode = Mode.LETTERS
     private var panel = Panel.NONE
-    private var shiftState = 0
+    internal var shiftState = 0
     private var autoShifted = false
     private var lastShiftTime = 0L
-    private var lastSpaceTime = 0L
+    internal var lastSpaceTime = 0L
     // Tracks when the user has explicitly pressed shift to turn OFF auto-caps
     // (so smart-correction's sentence-end auto-capitalisation does not override
     // their choice). Cleared when sentence-ending punctuation is committed, so
     // auto-caps can apply again for the following sentence.
     private var userShiftOverride = false
-    private val composing = StringBuilder()
-    private var canCompose = true
-    private var suggestionsAllowed = true
-    private var suggestionsOn = true
-    private var neuralOn = true
+    internal val composing = StringBuilder()
+    internal var canCompose = true
+    internal var suggestionsAllowed = true
+    internal var suggestionsOn = true
+    internal var neuralOn = true
     @Volatile
-    private var neural: LanguageModelEngine? = null
+    internal var neural: LanguageModelEngine? = null
 
     // On-device neural spell checker (loaded off the main thread; null while loading or
     // on devices where the models failed to initialize).
     private var neuralSpell: NeuralSpellChecker? = null
+
+    // Neural next-word LM (#25, loaded off the main thread; null while loading or on
+    // devices where the model failed to initialize). Best-effort: the dictionary
+    // pipeline works without it.
+    internal var nextWordScorer: TfliteNextWordScorer? = null
     @Volatile
-    private var neuralLocale: String? = null
+    internal var neuralLocale: String? = null
     private val neuralLock = Any()
     private val failedNeuralLocales = HashMap<String, Long>()
-    private var configuredLocale: String? = null
+    internal var configuredLocale: String? = null
     private val localeAssetsMutex = Mutex()
+    /**
+     * Loaded for its side effect: EmojiPredictionEngine.load() populates the
+     * shared TFLite scorers that EmojiContextPredictor (#17 inline emoji hints
+     * in the suggestion strip) depends on. The panel's own emoji bar was
+     * replaced by the search header, so nothing queries this predictor directly.
+     */
     private var emojiPredictor: EmojiPredictor = EmojiPredictionEngine.builtIn()
     private var voice: VoiceInputController? = null
     private val slideDecoder: SlideDecoder by lazy { SlideDecoder(dict) }
-    private var rankingScorer: com.noircipher.shade.engine.CandidateRankingScorer? = null
-    private val userWordMemory: UserWordMemory by lazy { UserWordMemory(this) }
-    private val typingStatsStore: TypingStatsStore by lazy { LiveStores.get { TypingStatsStore(applicationContext) } }
-    private val adaptiveWordMemory: AdaptiveWordMemory by lazy { LiveStores.get { AdaptiveWordMemory(applicationContext) } }
-    private val appContextModel: AppContextModel by lazy { LiveStores.get { AppContextModel(applicationContext) } }
+    // PrefsApplier: extracted from this class in the v11 refactor; bodies run in with(svc).
+    internal val prefsApplier: PrefsApplier by lazy { PrefsApplier(this) }
+    // ToolbarController: extracted from this class in the v11 refactor; bodies run in with(svc).
+    internal val toolbarC: ToolbarController by lazy { ToolbarController(this) }
+    // SuggestionPipeline: extracted from this class in the v11 refactor; bodies run in with(svc).
+    internal val suggestPipeline: SuggestionPipeline by lazy { SuggestionPipeline(this) }
+    internal var rankingScorer: com.noircipher.shade.engine.CandidateRankingScorer? = null
+    internal val userWordMemory: UserWordMemory by lazy { UserWordMemory(this) }
+    internal val typingStatsStore: TypingStatsStore by lazy { LiveStores.get { TypingStatsStore(applicationContext) } }
+    internal val adaptiveWordMemory: AdaptiveWordMemory by lazy { LiveStores.get { AdaptiveWordMemory(applicationContext) } }
+    internal val appContextModel: AppContextModel by lazy { LiveStores.get { AppContextModel(applicationContext) } }
     private val autocorrectSuppressor: AutocorrectSuppressor by lazy { LiveStores.get { AutocorrectSuppressor(applicationContext) } }
-    private val confidenceCalibrator: ConfidenceCalibrator by lazy { LiveStores.get { ConfidenceCalibrator(applicationContext) } }
-    private val onlineRankerTrainer: OnlineRankerTrainer by lazy { LiveStores.get { OnlineRankerTrainer(applicationContext) } }
+    internal val confidenceCalibrator: ConfidenceCalibrator by lazy { LiveStores.get { ConfidenceCalibrator(applicationContext) } }
+    internal val onlineRankerTrainer: OnlineRankerTrainer by lazy { LiveStores.get { OnlineRankerTrainer(applicationContext) } }
     private val touchBiasModel: TouchBiasModel by lazy { LiveStores.get { TouchBiasModel(applicationContext) } }
-    private val sessionBigramBoost by lazy { com.noircipher.shade.engine.SessionBigramBoost() }
-    private val sentencePositionScorer by lazy { com.noircipher.shade.engine.SentencePositionScorer(this) }
-    private val rejectionTracker by lazy { com.noircipher.shade.engine.SuggestionRejectionTracker(this) }
-    private val acceptanceRateAdapter by lazy { com.noircipher.shade.engine.AcceptanceRateAdapter(this) }
-    private val perAppVocabSnapshot by lazy { com.noircipher.shade.engine.PerAppVocabularySnapshot(appContextModel) }
-    private var typingInsightsOn = false
+    private val correctionMemory by lazy { LiveStores.get { com.noircipher.shade.engine.CorrectionMemory(applicationContext) } }
+    internal val sessionBigramBoost by lazy { com.noircipher.shade.engine.SessionBigramBoost() }
+    internal val sentencePositionScorer by lazy { com.noircipher.shade.engine.SentencePositionScorer(this) }
+    internal val rejectionTracker by lazy { com.noircipher.shade.engine.SuggestionRejectionTracker(this) }
+    internal val acceptanceRateAdapter by lazy { com.noircipher.shade.engine.AcceptanceRateAdapter(this) }
+    internal val perAppVocabSnapshot by lazy { com.noircipher.shade.engine.PerAppVocabularySnapshot(appContextModel) }
+    internal var typingInsightsOn = false
     private val rewriteManager: RewriteModelManager by lazy { RewriteModelManager(this) }
     private var contextEncoder: com.noircipher.shade.engine.ContextEncoder? = null
     private val contextEncoderVocab: Map<String, Int> by lazy { loadContextEncoderVocab() }
-    private var learnOn = true
-    private var learningAdaptiveOn = true
-    private var learningAppCtxOn = true
-    private var learningSuppressorOn = true
-    private var learningCalibratorOn = true
-    private var learningRankerOn = true
-    private var autoCaps = true
-    private var doubleSpace = true
-    private var autocorrectOn = true
-    private var smartCorrectionOn = true
-    private var emojiSuggest = true
+    internal var learnOn = true
+    internal var learningAdaptiveOn = true
+    internal var learningAppCtxOn = true
+    internal var learningSuppressorOn = true
+    internal var learningCalibratorOn = true
+    internal var learningRankerOn = true
+    internal var learningCorrectionOn = true
+    internal var learningTouchOn = true
+    internal var autoCaps = true
+    internal var doubleSpace = true
+    internal var autocorrectOn = true
+    internal var blockOffensiveOn = true
+    internal var offensiveListLoaded = false
+    internal var smartCorrectionOn = true
+    internal var emojiSuggest = true
     // When false (default) the suggestion strip only ever shows single-word
     // candidates — multi-word phrase completions / smart responses / sentence
     // completions are suppressed, and any space-containing candidate coming out
     // of the neural / heuristic pipeline is filtered out. Matches the
-    private var phraseSuggestionsOn = false
-    private var incognito = false
-    private var fieldNoPersonalizedLearning = false
-    private var fieldSecureInput = false
-    private val lastRankedFeatures = java.util.concurrent.ConcurrentHashMap<String, FloatArray>()
-    private val lastRawRankerScores = java.util.concurrent.ConcurrentHashMap<String, Float>()
+    internal var phraseSuggestionsOn = false
+    internal var incognito = false
+    internal var fieldNoPersonalizedLearning = false
+    internal var fieldSecureInput = false
+    internal val lastRankedFeatures = java.util.concurrent.ConcurrentHashMap<String, FloatArray>()
+    internal val lastRawRankerScores = java.util.concurrent.ConcurrentHashMap<String, Float>()
     @Volatile
-    private var lastShownCandidates: List<String> = emptyList()
-    private var numberRow = false
-    private var toolbarOpen = false
-    private var layoutName = "qwerty"
+    internal var lastShownCandidates: List<String> = emptyList()
+    internal var numberRow = false
+    internal var toolbarOpen = false
+    internal var layoutName = "qwerty"
     // Vertical floating offset in pixels — how far the keyboard is lifted from
     // the bottom of the screen. 0 = docked to bottom (default). Positive
     // values float the keyboard up so the user can position it wherever is
     // comfortable, like a floating keyboard.
-    private var keyboardOffsetY = 0f
+    internal var keyboardOffsetY = 0f
     // Raw suggestions as produced by the engines (usually lowercase). What the user sees is
     // `shownWords`: the same list re-cased to match the keyboard state (see SuggestionCasing).
-    private var candidates: List<String> = emptyList()
-    private var shownWords: List<String> = emptyList()
+    internal var candidates: List<String> = emptyList()
+    internal var shownWords: List<String> = emptyList()
     private var info: EditorInfo? = null
-    private var bgBmp: Bitmap? = null
-    private var bgStamp = -1L
+    internal var bgBmp: Bitmap? = null
+    internal var bgStamp = -1L
     private var lastAppliedInputType = -1
 
     private var pendingDeleteWords = 0
     private var deletePreviewActive = false
 
-    private val touchTrace = TouchTrace(16)
+    internal val touchTrace = TouchTrace(16)
     private var lastWordTouches: List<FloatArray> = emptyList()
     // Touch geometry offsets for the word currently being typed
     private var currentTouchOffsets: List<TouchGeometry.KeyTouch> = emptyList()
@@ -278,7 +303,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private val undoStack = ArrayDeque<UndoEntry>(10)
     private var lastCorrectionEvent: CorrectionEvent? = null
 
-    private val tail = StringBuilder(16)
+    // Registered only while the active theme follows the wallpaper (Material
+    // You). Fires on wallpaper changes so the palette re-derives live.
+    private var wallpaperListener: WallpaperManager.OnColorsChangedListener? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    internal val tail = StringBuilder(16)
     private var cursorPos = -1
     private var selectionEnd = -1
     // Absolute end position of the composing region, as reported by the
@@ -287,23 +317,23 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // at the cursor instead of always chopping the last composing char and
     // snapping the cursor to the end).
     private var composingEnd = -1
-    private var tailValid = false
+    internal var tailValid = false
 
     private val serviceJob = SupervisorJob()
-    private val scope = CoroutineScope(Dispatchers.Main.immediate + serviceJob)
-    private var suggestJob: Job? = null
-    private var suggestDebounceJob: Job? = null
+    internal val scope = CoroutineScope(Dispatchers.Main.immediate + serviceJob)
+    internal var suggestJob: Job? = null
+    internal var suggestDebounceJob: Job? = null
     private var correctionJob: Job? = null
     /** Live preview decoding for glide typing (debounced; cancelled on commit/clear). */
     private var glidePreviewJob: Job? = null
-    private var slotAnimator: ValueAnimator? = null
+    internal var slotAnimator: ValueAnimator? = null
     private var panelSpring: SpringAnimation? = null
 
     private var lastOrientation = -1
 
     // 4b — Field-type classification for the current input field. Drives
     // gating decisions in updateSuggestions / endWord.
-    private var currentFieldType: FieldTypeDetector.FieldType = FieldTypeDetector.FieldType.NORMAL_TEXT
+    internal var currentFieldType: FieldTypeDetector.FieldType = FieldTypeDetector.FieldType.NORMAL_TEXT
 
     /**
      * Known messaging apps that get special treatment (more emoji suggestions,
@@ -332,15 +362,31 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
      * suggestions arrive, or when the user picks it. See [maybeShowClipboardChip]
      * and [setCandidates].
      */
-    private var lastClipText: String? = null
+    internal var lastClipText: String? = null
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
 
-    private fun dictIds(): String =
+
+    // v11 refactor: `this::x.isInitialized` is only legal when the backing
+    // field is reachable from the call site, so the extracted classes
+    // (PrefsApplier / ToolbarController / SuggestionPipeline) check readiness
+    // through these helpers instead of property references on svc.
+    internal fun kbReady() = this::kb.isInitialized
+    internal fun rootReady() = this::root.isInitialized
+    internal fun stripReady() = this::strip.isInitialized
+    internal fun headroomReady() = this::headroom.isInitialized
+    internal fun slotsReady() = this::slots.isInitialized
+    internal fun emojiReady() = this::emoji.isInitialized
+    internal fun clipPanelReady() = this::clipPanel.isInitialized
+    internal fun autofillScrollReady() = this::autofillScroll.isInitialized
+    internal fun autofillRowReady() = this::autofillRow.isInitialized
+    internal fun gifControllerReady() = this::gifController.isInitialized
+
+    internal fun dictIds(): String =
         (prefs.getStringSet("dictionaries", setOf("en")) ?: setOf("en"))
             .ifEmpty { setOf("en") }.sorted().joinToString(",")
 
-    private fun dp(v: Float) = v * resources.displayMetrics.density
+    internal fun dp(v: Float) = v * resources.displayMetrics.density
 
     // ------------------------------------------------------------------ lifecycle
 
@@ -352,14 +398,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         voice = VoiceInputController(this) { text -> commitVoiceText(text) }
         clips = ClipboardStore(this)
         cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        try { cm.addPrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
+        try { cm.addPrimaryClipChangedListener(clipListener) } catch (e: Exception) { Log.w("ShadeService", "Failed to register clipboard listener", e) }
 
         val locale = dictIds()
         // Heavy disk/Keystore work stays off the main thread so the keyboard can
         // appear immediately; until it finishes the features simply skip the model.
         scope.launch(Dispatchers.Default) {
-            try { dict.bigramModel = BigramModel(this@ShadeService) } catch (_: Throwable) {}
-            try { clips.cleanupExpired() } catch (_: Throwable) {}
+            try { dict.bigramModel = BigramModel(this@ShadeService) } catch (t: Throwable) { Log.w("ShadeService", "Failed to load bigram model", t) }
+            try { clips.cleanupExpired() } catch (t: Throwable) { Log.w("ShadeService", "Failed to clean up expired clips", t) }
         }
         scope.launch(Dispatchers.Default) {
             try { configureLocaleAssets(locale) } catch (t: Throwable) {
@@ -374,38 +420,53 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             try { neuralSpell = NeuralSpellChecker(this@ShadeService).also { it.warmUp() } }
             catch (t: Throwable) { Log.w("ShadeService", "neural spell checker unavailable", t) }
         }
+        scope.launch(Dispatchers.Default) {
+            // Neural next-word LM: 6.5 MB mmap + 30k vocab, no warm-up needed
+            // (first use is behind the suggestion debounce anyway).
+            try { nextWordScorer = TfliteNextWordScorer(this@ShadeService) }
+            catch (t: Throwable) { Log.w("ShadeService", "next-word LM unavailable", t) }
+        }
     }
 
     override fun onDestroy() {
-        try { cm.removePrimaryClipChangedListener(clipListener) } catch (_: Exception) {}
+        // Wallpaper color listener (Material You) must not outlive the service.
+        if (wallpaperListener != null && Build.VERSION.SDK_INT >= 27) {
+            runCatching {
+                WallpaperManager.getInstance(this).removeOnColorsChangedListener(wallpaperListener!!)
+            }
+            wallpaperListener = null
+        }
+        try { cm.removePrimaryClipChangedListener(clipListener) } catch (e: Exception) { Log.w("ShadeService", "Failed to unregister clipboard listener", e) }
         dict.shutdown() // flushes learned words + n-grams on a background thread
         SystemSpell.close() // close the system spell checker session
-        try { neuralSpell?.close() } catch (_: Throwable) {}
+        try { neuralSpell?.close() } catch (t: Throwable) { Log.w("ShadeService", "Failed to close neural spell checker", t) }
         neuralSpell = null
+        try { nextWordScorer?.close() } catch (t: Throwable) { Log.w("ShadeService", "Failed to close next-word scorer", t) }
+        nextWordScorer = null
         suggestJob?.cancel()
         suggestDebounceJob?.cancel()
         correctionJob?.cancel()
         slotAnimator?.cancel()
         panelSpring?.cancel()
-        try { neural?.close() } catch (_: Exception) {}
+        try { neural?.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close neural predictor", e) }
         neural = null
         neuralLocale = null
         synchronized(neuralLock) { failedNeuralLocales.clear() }
-        try { contextEncoder?.close() } catch (_: Exception) {}
+        try { contextEncoder?.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close context encoder", e) }
         contextEncoder = null
-        try { adaptiveWordMemory.shutdown() } catch (_: Exception) {}
-        try { appContextModel.shutdown() } catch (_: Exception) {}
-        try { rewriteManager.close() } catch (_: Exception) {}
-        try { rankingScorer?.close() } catch (_: Exception) {}
+        try { adaptiveWordMemory.shutdown() } catch (e: Exception) { Log.w("ShadeService", "Failed to shut down adaptive word memory", e) }
+        try { appContextModel.shutdown() } catch (e: Exception) { Log.w("ShadeService", "Failed to shut down app context model", e) }
+        try { rewriteManager.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close rewrite manager", e) }
+        try { rankingScorer?.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close ranking scorer", e) }
         rankingScorer = null
-        try { emojiPredictor.close() } catch (_: Exception) {}
-        try { voice?.cancel() } catch (_: Exception) {}
+        try { emojiPredictor.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close emoji predictor", e) }
+        try { voice?.cancel() } catch (e: Exception) { Log.w("ShadeService", "Failed to cancel voice input", e) }
         voice = null
         serviceJob.cancel()
 
         if (this::kb.isInitialized) kb.release()
         bgBmp = null
-        resetCandidates()
+        suggestPipeline.resetCandidates()
         composing.clear()
         undoStack.clear()
         tail.setLength(0)
@@ -432,8 +493,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             textSize = 22f
             setOnClickListener {
                 toolbarOpen = if (toolbarOpen) false else true
-                animateToggle()
-                refreshStrip()
+                toolbarC.animateToggle()
+                toolbarC.refreshStrip()
             }
         }
 
@@ -445,7 +506,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 tag = i
                 setPadding(dp(6f).toInt(), 0, dp(6f).toInt(), 0)
                 TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(this, 12, 19, 1, TypedValue.COMPLEX_UNIT_SP)
-                setOnClickListener { pickSuggestion(it.tag as Int) }
+                setOnClickListener { suggestPipeline.pickSuggestion(it.tag as Int) }
             }
         }
         slotOlds = List(3) {
@@ -516,6 +577,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             onBack = { transitionToPanel(Panel.NONE) },
             onDelete = { backspace() }
         )
+        // Emoji search: while the query box owns input, the real keyboard is drawn
+        // below the search header (which replaces the suggestion strip) and the
+        // emoji grid steps aside. The slide-on-delete gesture is disabled so
+        // deleting query characters can't start a selection in the app's field.
+        emoji.onSearchModeChanged = { active ->
+            if (panel == Panel.EMOJI) {
+                kb.visibility = if (active) View.VISIBLE else View.GONE
+                emoji.visibility = if (active) View.GONE else View.VISIBLE
+                kb.slideDeleteEnabled = !active
+            }
+        }
         clipPanel = ClipboardPanel(
             this, clips,
             onPaste = { clip ->
@@ -566,6 +638,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(strip, LinearLayout.LayoutParams(MATCH, dp(52f).toInt()))
+            // Emoji header: the search box (plus its live results bar) sits in the
+            // place of the suggestion strip whenever the emoji panel is open.
+            addView(emoji.header, LinearLayout.LayoutParams(MATCH, WRAP))
             addView(resizeHandle, LinearLayout.LayoutParams(MATCH, dp(22f).toInt()))
             addView(content, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
         }
@@ -598,7 +673,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
         registerInsetAnimationCallback()
 
-        applyPrefs()
+        prefsApplier.applyPrefs()
 
         if (kb.rows.isEmpty()) {
             kb.setRows(
@@ -733,7 +808,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         canCompose = isTextField && (passwordField == false) && (searchField == false) && (emailField == false)
         suggestionsAllowed = isTextField && (passwordField == false)
 
-        applyPrefs()
+        prefsApplier.applyPrefs()
 
         val m = when (cls) {
             InputType.TYPE_CLASS_NUMBER, InputType.TYPE_CLASS_PHONE -> Mode.NUMPAD
@@ -771,21 +846,21 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             action != EditorInfo.IME_ACTION_NONE &&
             action != EditorInfo.IME_ACTION_UNSPECIFIED
         updateShiftFromCaps()
-        maybeShowClipboardChip()
-        updateSuggestions()
+        toolbarC.maybeShowClipboardChip()
+        suggestPipeline.updateSuggestions()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
         closeGif()
         closeTranslator()
-        clearAutofillChips()
-        try { voice?.cancel() } catch (_: Exception) {} // a late result must not land in the next field
+        toolbarC.clearAutofillChips()
+        try { voice?.cancel() } catch (e: Exception) { Log.w("ShadeService", "Failed to cancel voice input", e) } // a late result must not land in the next field
         suggestJob?.cancel()
         suggestDebounceJob?.cancel()
         correctionJob?.cancel()
         info = null
-        resetCandidates()
+        suggestPipeline.resetCandidates()
         composing.clear()
         undoStack.clear()
         tail.setLength(0)
@@ -804,7 +879,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onFinishInput() {
         super.onFinishInput()
-        try { voice?.cancel() } catch (_: Exception) {}
+        try { voice?.cancel() } catch (e: Exception) { Log.w("ShadeService", "Failed to cancel voice input", e) }
         currentInputConnection?.finishComposingText()
         composing.clear()
         undoStack.clear()
@@ -824,8 +899,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         scope.launch(Dispatchers.IO) {
             try {
                 TrainingExport.autoExport(applicationContext)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // Silent. Auto-export is best-effort.
+                Log.w("ShadeService", "Training data auto-export failed", e)
             }
         }
     }
@@ -834,9 +910,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         super.onConfigurationChanged(newConfig)
         if (newConfig.orientation != lastOrientation) {
             lastOrientation = newConfig.orientation
-            applyPrefs()
+            prefsApplier.applyPrefs()
         } else {
-            root.post { applyOneHandedToStrip() }
+            root.post { prefsApplier.applyOneHandedToStrip() }
         }
     }
 
@@ -863,234 +939,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         ) {
             currentInputConnection?.finishComposingText()
             composing.clear()
-            updateSuggestions()
+            suggestPipeline.updateSuggestions()
         }
     }
 
     // ------------------------------------------------------------------ prefs / theme
 
-    private fun applyPrefs() {
-        if (this::kb.isInitialized == false) return
-        kbTheme = Themes.resolve(this, prefs)
-        numberRow = prefs.getBoolean("number_row", false)
-        suggestionsOn = prefs.getBoolean("suggestions", true)
-        typingInsightsOn = prefs.getBoolean("typing_insights", false)
-        neuralOn = prefs.getBoolean("neural_predictions", true)
-        neural?.enabled = neuralOn
-        learnOn = prefs.getBoolean("learn_words", true)
-        learningAdaptiveOn = prefs.getBoolean("learning_adaptive", true)
-        learningAppCtxOn = prefs.getBoolean("learning_appctx", true)
-        learningSuppressorOn = prefs.getBoolean("learning_suppressor", true)
-        learningCalibratorOn = prefs.getBoolean("learning_calibrator", true)
-        learningRankerOn = prefs.getBoolean("learning_ranker", true)
-        autoCaps = prefs.getBoolean("auto_caps", true)
-        doubleSpace = prefs.getBoolean("double_space", true)
-        autocorrectOn = prefs.getBoolean("autocorrect", true)
-        smartCorrectionOn = prefs.getBoolean("smart_correction", true)
-        emojiSuggest = prefs.getBoolean("emoji_suggestions", true)
-        phraseSuggestionsOn = prefs.getBoolean("phrase_suggestions", false)
-        incognito = prefs.getBoolean("incognito", false) || fieldNoPersonalizedLearning || fieldSecureInput
-        layoutName = prefs.getString("layout", "qwerty") ?: "qwerty"
-        kb.trackpadEnabled = prefs.getBoolean("trackpad_mode", true)
-        kb.glideEnabled = prefs.getBoolean("glide_typing", true) && !fieldSecureInput
-        kb.typingBurstEnabled = prefs.getBoolean("typing_burst", false)
-        kb.longPressMs = prefs.getInt("longpress_delay", 300).toLong()
-        kb.repeatDelayMs = prefs.getInt("repeat_delay", 350).toLong()
-        kb.repeatIntervalMs = prefs.getInt("repeat_interval", 40).toLong()
-
-        val locale = dictIds()
-        scope.launch(Dispatchers.Default) {
-            try { configureLocaleAssets(locale) } catch (t: Throwable) {
-                Log.w("ShadeService", "configureLocaleAssets failed", t)
-            }
-        }
-
-        val keyH = prefs.getInt("key_height", 50)
-        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val factor = if (landscape) 0.65f else 1f
-        val contentH = (dp(keyH.toFloat()) * (if (numberRow) 4.7f else 4f) * factor).toInt()
-        val split = when (prefs.getString("split_keyboard", "off")) {
-            "always" -> true
-            "landscape" -> landscape
-            else -> false
-        }
-        loadBackground()
-
-        kb.kbTheme = kbTheme
-        kb.contentHeightPx = contentH
-        kb.setSplitAnimated(split)
-        kb.keyBorders = prefs.getBoolean("key_borders", true)
-        kb.showHints = prefs.getBoolean("show_hints", true)
-        kb.haptic = prefs.getBoolean("haptic", true)
-        kb.hapticStrength = when (prefs.getString("haptic_strength", "medium")) {
-            "light" -> 0
-            "strong" -> 2
-            else -> 1
-        }
-        kb.sound = prefs.getBoolean("sound", false)
-        kb.showPreview = prefs.getBoolean("popup_preview", true)
-        kb.bgBitmap = bgBmp
-
-        val side = when (prefs.getString("one_handed", "off")) {
-            "left" -> 1; "right" -> 2; else -> 0
-        }
-        kb.setOneHandedAnimated(side)
-
-        (kb.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
-        (emoji.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
-        (clipPanel.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
-
-        emoji.setTheme(kbTheme)
-        clipPanel.setTheme(kbTheme)
-        if (this::gifController.isInitialized) gifController.bar.setTheme(kbTheme)
-
-        root.setBackgroundColor(kbTheme.bg)
-        toggle.setTextColor(kbTheme.hint)
-        for (tv in slots) tv.setTextColor(kbTheme.text)
-        for (tv in slotOlds) tv.setTextColor(kbTheme.text)
-        slotRow.showDividers = LinearLayout.SHOW_DIVIDER_MIDDLE
-        slotRow.dividerPadding = dp(14f).toInt()
-        slotRow.dividerDrawable = GradientDrawable().apply {
-            setSize(dp(1f).toInt(), 0)
-            setColor((kbTheme.hint and 0x00FFFFFF) or 0x55000000)
-        }
-        rebuildToolbar()
-        refreshStrip()
-        root.post { applyOneHandedToStrip() }
-
-        // Restore the saved floating offset (if the user previously undocked
-        // the keyboard). Called after layout so translationY is applied to
-        // the final measured view.
-        keyboardOffsetY = PrefsMigration.readOffsetY(prefs)
-        loadSideInsets()
-        root.post { applyKeyboardOffset() }
-
-        applyMode(mode, force = true)
-    }
-
-    private fun loadBackground() {
-        val f = File(filesDir, "bg.jpg")
-        if (f.exists() == false) { bgBmp = null; bgStamp = -1L; return }
-        if (f.lastModified() == bgStamp && bgBmp != null) return
-        try {
-            val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(f.path, o)
-            var sample = 1
-            while (o.outWidth / sample > 1400) sample *= 2
-            val o2 = BitmapFactory.Options().apply { inSampleSize = sample }
-            bgBmp = BitmapFactory.decodeFile(f.path, o2)
-            bgStamp = f.lastModified()
-        } catch (_: Exception) { bgBmp = null }
-    }
-
-    private fun rebuildToolbar() {
-        toolRow.removeAllViews()
-        val enabled = prefs.getStringSet("toolbar_keys", null) ?: toolDefs.map { it.first }.toSet()
-        for ((id, label) in toolDefs) {
-            if (enabled.contains(id) == false) continue
-            if (id == "gif" && !gifAvailable()) continue
-            val tv = ImageView(this).apply {
-                setImageResource(toolIcons[id] ?: R.drawable.ic_tb_settings)
-                setColorFilter(if (id == "incognito" && incognito) kbTheme.accent else kbTheme.text)
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                setPadding(dp(12f).toInt(), dp(14f).toInt(), dp(12f).toInt(), dp(14f).toInt())
-                contentDescription = label
-                isClickable = true
-                isFocusable = false
-                setOnTouchListener { v, event ->
-                    when (event.actionMasked) {
-                        MotionEvent.ACTION_DOWN -> {
-                            v.animate().cancel()
-                            v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(ShadeMotion.KEY_PRESS_DOWN_MS)
-                                .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
-                                .start()
-                            false
-                        }
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                            v.animate().cancel()
-                            v.animate()
-                                .scaleX(1f).scaleY(1f)
-                                .setDuration(ShadeMotion.KEY_PRESS_UP_MS)
-                                .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
-                                .start()
-                            false
-                        }
-                        else -> false
-                    }
-                }
-                setOnClickListener { onTool(id) }
-            }
-            if (id == "incognito" && incognito) {
-                tv.background = GradientDrawable().apply {
-                    cornerRadius = dp(10f)
-                    setColor(kbTheme.keyFn)
-                }
-            }
-            toolRow.addView(tv, LinearLayout.LayoutParams(WRAP, MATCH))
-        }
-    }
-
-    private fun animateToggle() {
-        toggle.animate().cancel()
-        toggle.animate()
-            .scaleX(1.3f).scaleY(1.3f)
-            .setDuration(ShadeMotion.UI_TOGGLE_IN_MS)
-                .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
-            .withEndAction {
-                toggle.animate()
-                    .scaleX(1f).scaleY(1f)
-                    .setDuration(ShadeMotion.UI_TOGGLE_OUT_MS)
-                    .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
-                    .start()
-            }
-            .start()
-    }
-
-    private fun refreshStrip() {
-        if (this::strip.isInitialized == false) return
-        val suggestionsActive = suggestionsOn && suggestionsAllowed
-        val showTools = toolbarOpen || (suggestionsActive == false)
-
-        slotFrame.visibility = if (showTools) View.GONE else View.VISIBLE
-        toolScroll.visibility = if (showTools) View.VISIBLE else View.GONE
-
-        slotFrame.alpha = 0f
-        toolScroll.alpha = 0f
-        val target = if (showTools) toolScroll else slotFrame
-        target.animate()
-            .alpha(1f)
-            .setDuration(ShadeMotion.CANDIDATE_SWAP_MS)
-            .setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN)
-            .start()
-
-        toggle.text = if (showTools) "‹" else "›"
-        toggle.visibility = if (suggestionsActive) View.VISIBLE else View.GONE
-        strip.visibility = View.VISIBLE
-    }
-
-    private fun applyOneHandedToStrip() {
-        if (this::strip.isInitialized == false) return
-        val w = root.width.toFloat()
-        if (w <= 0f) return
-        val availW = w * 0.75f
-        val lp = strip.layoutParams as? LinearLayout.LayoutParams ?: return
-        when (kb.oneHanded) {
-            1 -> {
-                lp.width = availW.toInt()
-                lp.gravity = Gravity.START
-            }
-            2 -> {
-                lp.width = availW.toInt()
-                lp.gravity = Gravity.END
-            }
-            else -> {
-                lp.width = ViewGroup.LayoutParams.MATCH_PARENT
-                lp.gravity = Gravity.START
-            }
-        }
-        strip.layoutParams = lp
-        strip.requestLayout()
-    }
 
     // ------------------------------------------------------------------ mode switching
 
@@ -1099,7 +953,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         applyMode(m)
     }
 
-    private fun applyMode(m: Mode, force: Boolean = false) {
+    internal fun applyMode(m: Mode, force: Boolean = false) {
         if (m == mode && !force && kb.rows.isNotEmpty()) return
         mode = m
 
@@ -1124,10 +978,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     // ------------------------------------------------------------------ panel transitions
 
+    /** True while the emoji search box owns keystrokes (keyboard visible under the header). */
+    private fun emojiSearchOwnsKeys(): Boolean =
+        panel == Panel.EMOJI && this::emoji.isInitialized && emoji.isSearching
+
     private fun transitionToPanel(p: Panel, animate: Boolean = true) {
         if (this::emoji.isInitialized == false) return
-        val currentComposing = composing.toString()
-        val emojiContext = if (currentComposing.isNotEmpty()) currentComposing else lastWord().orEmpty()
         if (p != Panel.NONE) endWord()
         if (p != Panel.NONE) closeGif()
         if (panel == p) return
@@ -1145,14 +1001,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
         panel = p
 
+        // Opening the emoji panel always starts fresh (search closed, list at the
+        // top); leaving it silently clears any active search so the keyboard can
+        // never come back wedged under the search header.
         if (p == Panel.EMOJI) {
-            scope.launch(Dispatchers.Default) {
-                val suggestions = safeSuggestion(emptyList()) {
-                    if (emojiSuggest) emojiPredictor.predictEmoji(emojiContext, 10) else emptyList()
-                }
-                withContext(Dispatchers.Main) { emoji.setSuggestions(suggestions) }
-            }
+            emoji.onShow()
+        } else {
+            emoji.resetSearch()
         }
+        // The header (search box + results bar) replaces the suggestion strip
+        // only while the emoji panel is open.
+        emoji.header.visibility = if (p == Panel.EMOJI) View.VISIBLE else View.GONE
 
         if (!animate) {
             outgoing?.visibility = View.GONE
@@ -1165,7 +1024,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             if (this::resizeHandle.isInitialized) {
                 resizeHandle.visibility = if (p == Panel.NONE && resizeModeActive) View.VISIBLE else View.GONE
             }
-            refreshStrip()
+            toolbarC.refreshStrip()
             return
         }
 
@@ -1208,12 +1067,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             resizeHandle.visibility = if (p == Panel.NONE && resizeModeActive) View.VISIBLE else View.GONE
         }
         if (p == Panel.CLIP) clipPanel.refresh()
-        refreshStrip()
+        toolbarC.refreshStrip()
     }
 
     // ------------------------------------------------------------------ GIFs (KLIPY)
 
-    private fun gifAvailable(): Boolean = KlipyConfig.isConfigured && prefs.getBoolean("gif_enabled", true)
+    internal fun gifAvailable(): Boolean = KlipyConfig.isConfigured && prefs.getBoolean("gif_enabled", true)
 
     private fun openGif() {
         if (!this::gifController.isInitialized || !gifAvailable()) return
@@ -1257,7 +1116,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     android.view.inputmethod.InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION,
                     null
                 ) == true
-            } catch (_: Exception) { false }
+            } catch (t: Exception) { ShadeLog.w("ShadeService", "gif commitContent failed", t, once = true); false }
             if (committed) {
                 Handler(Looper.getMainLooper()).postDelayed({ file.delete() }, 60_000L)
                 gifController.registerShare(item, query)
@@ -1322,7 +1181,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     // ------------------------------------------------------------------ toolbar
 
-    private fun onTool(id: String) {
+    internal fun onTool(id: String) {
         val ic = currentInputConnection
         when (id) {
             "clip" -> transitionToPanel(Panel.CLIP)
@@ -1352,7 +1211,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             "incognito" -> {
                 incognito = if (incognito) false else true
                 prefs.edit().putBoolean("incognito", incognito).apply()
-                rebuildToolbar()
+                toolbarC.rebuildToolbar()
             }
             "onehand" -> cycleOneHanded()
             "resize" -> setResizeMode(true)
@@ -1362,7 +1221,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             )
         }
         updateShiftFromCaps()
-        updateSuggestions()
+        suggestPipeline.updateSuggestions()
     }
 
     // ------------------------------------------------------------------ autofill chips
@@ -1389,7 +1248,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         autofillRow.removeAllViews()
         autofillCount = 0
         if (suggestions.isEmpty()) {
-            updateAutofillStrip()
+            toolbarC.updateAutofillStrip()
             return false
         }
         autofillHiddenByTyping = false
@@ -1409,27 +1268,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         })
                         autofillCount++
                     }
-                    updateAutofillStrip()
+                    toolbarC.updateAutofillStrip()
                 }
             }
         }
         return true
     }
 
-    private fun updateAutofillStrip() {
-        if (this::autofillScroll.isInitialized == false) return
-        val show = autofillCount > 0 && !autofillHiddenByTyping
-        if (show) autofillScroll.setBackgroundColor(kbTheme.bg)
-        autofillScroll.visibility = if (show) View.VISIBLE else View.GONE
-    }
-
-    private fun clearAutofillChips() {
-        autofillGen++
-        autofillCount = 0
-        autofillHiddenByTyping = false
-        if (this::autofillRow.isInitialized) autofillRow.removeAllViews()
-        updateAutofillStrip()
-    }
 
     private fun cycleOneHanded() {
         val next = when (prefs.getString("one_handed", "off")) {
@@ -1440,7 +1285,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         prefs.edit().putString("one_handed", next).apply()
         val side = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
         kb.setOneHandedAnimated(side)
-        applyOneHandedToStrip()
+        prefsApplier.applyOneHandedToStrip()
     }
 
     // ------------------------------------------------------------------ resize & float
@@ -1502,7 +1347,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         val maxOffset = resources.displayMetrics.heightPixels * 0.5f
                         val clamped = newOffset.coerceAtMost(maxOffset)
                         keyboardOffsetY = clamped
-                        applyKeyboardOffset()
+                        prefsApplier.applyKeyboardOffset()
                     } else {
                         // Resize: dragging UP (dy < 0) makes keyboard TALLER.
                         // Each dp of drag = ~0.5 dp of key height change.
@@ -1511,8 +1356,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                             .coerceIn(36, 80)
                         if (newHeight != prefs.getInt("key_height", 50)) {
                             prefs.edit().putInt("key_height", newHeight).apply()
-                            // Apply live without full applyPrefs() (which reloads locale assets)
-                            applyKeyHeight()
+                            // Apply live without full prefsApplier.applyPrefs() (which reloads locale assets)
+                            prefsApplier.applyKeyHeight()
                         }
                     }
                     return true
@@ -1538,40 +1383,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    /** Applies the current [keyboardOffsetY] as a translation on the root view. */
-    private fun applyKeyboardOffset() {
-        if (this::root.isInitialized == false) return
-        // Negative translationY moves the view UP, so we negate the offset.
-        root.translationY = -keyboardOffsetY
-        // A floating (offset) keyboard has no room-above semantics; drop the band so it can't
-        // end up covering the keyboard's touchable area.
-        if (this::headroom.isInitialized) {
-            val want = if (keyboardOffsetY == 0f) View.VISIBLE else View.GONE
-            if (headroom.visibility != want) headroom.visibility = want
-        }
-    }
-
-    /**
-     * Applies the current `key_height` preference to the keyboard, emoji panel,
-     * and clip panel — without the full locale-asset reload that applyPrefs()
-     * triggers. Called from the resize drag handler for live resizing.
-     */
-    private fun applyKeyHeight() {
-        if (this::kb.isInitialized == false) return
-        val keyH = prefs.getInt("key_height", 50)
-        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val factor = if (landscape) 0.65f else 1f
-        val contentH = (dp(keyH.toFloat()) * (if (numberRow) 4.7f else 4f) * factor).toInt()
-        kb.contentHeightPx = contentH
-        (kb.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
-        if (this::emoji.isInitialized) {
-            (emoji.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
-        }
-        if (this::clipPanel.isInitialized) {
-            (clipPanel.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
-        }
-        kb.requestLayout()
-    }
 
     /**
      * Toggles the keyboard's "resize mode" — as in standard floating-keyboard mode's resize settings.
@@ -1608,20 +1419,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var resizeModeActive = false
 
     // Side margins set with the left/right resize handles (they narrow the whole keyboard).
-    private var kbInsetLeftPx = 0
-    private var kbInsetRightPx = 0
-    private var navBarBottomPx = 0
+    internal var kbInsetLeftPx = 0
+    internal var kbInsetRightPx = 0
+    internal var navBarBottomPx = 0
 
-    private fun applySideInsets() {
-        if (this::root.isInitialized == false) return
-        root.setPadding(kbInsetLeftPx, 0, kbInsetRightPx, navBarBottomPx)
-    }
-
-    private fun loadSideInsets() {
-        kbInsetLeftPx = dp(prefs.getInt("kb_inset_left", 0).toFloat()).toInt()
-        kbInsetRightPx = dp(prefs.getInt("kb_inset_right", 0).toFloat()).toInt()
-        applySideInsets()
-    }
 
     /** Left/right edge handle: drag towards the middle to narrow the keyboard from that side. */
     private inner class SideHandleTouchListener(private val left: Boolean) : View.OnTouchListener {
@@ -1643,7 +1444,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     val wanted = (startInset + (if (left) dx else -dx)).toInt()
                     val clamped = wanted.coerceIn(0, (maxTotal - other).coerceAtLeast(0))
                     if (left) kbInsetLeftPx = clamped else kbInsetRightPx = clamped
-                    applySideInsets()
+                    prefsApplier.applySideInsets()
                     return true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -1667,11 +1468,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             .apply()
         kbInsetLeftPx = 0
         kbInsetRightPx = 0
-        applySideInsets()
-        applyKeyHeight()
+        prefsApplier.applySideInsets()
+        prefsApplier.applyKeyHeight()
         keyboardOffsetY = 0f
         PrefsMigration.writeOffsetY(prefs, 0f)
-        applyKeyboardOffset()
+        prefsApplier.applyKeyboardOffset()
     }
 
     private fun buildResizeOverlay(): FrameLayout {
@@ -1738,19 +1539,19 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     prefs.edit().putString("one_handed", next).apply()
                     val side = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
                     kb.setOneHandedAnimated(side)
-                    applyOneHandedToStrip()
+                    prefsApplier.applyOneHandedToStrip()
                 }
                 4 -> {
                     // Dock: reset the floating offset to 0
                     keyboardOffsetY = 0f
                     PrefsMigration.writeOffsetY(prefs, 0f)
-                    applyKeyboardOffset()
+                    prefsApplier.applyKeyboardOffset()
                     Toast.makeText(this, R.string.keyboard_docked, Toast.LENGTH_SHORT).show()
                 }
                 5 -> {
                     // Reset key height to default (50)
                     prefs.edit().putInt("key_height", 50).apply()
-                    applyKeyHeight()
+                    prefsApplier.applyKeyHeight()
                     Toast.makeText(this, R.string.keyboard_size_reset, Toast.LENGTH_SHORT).show()
                 }
             }
@@ -1782,36 +1583,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
 
             val t = item.coerceToText(this)?.toString() ?: return
-            if (t.isBlank() || t.length > 2000 || isLikelySensitiveText(t)) return
+            if (t.isBlank() || t.length > 2000 || SuggestionHeuristics.isLikelySensitiveText(t)) return
             clips.add(t)
-            maybeShowClipboardChip()
-        } catch (_: Exception) {}
+            toolbarC.maybeShowClipboardChip()
+        } catch (e: Exception) { Log.w("ShadeService", "Clipboard capture failed", e) }
     }
 
-    /**
-     * Refreshes [lastClipText] from the clipboard store. Called from [captureClip]
-     * after a new clip is added, and from [onStartInputView] so the chip is
-     * available when the keyboard appears. Only short text clips (< 30 chars)
-     * qualify; image clips and longer text are ignored for the chip.
-     */
-    private fun maybeShowClipboardChip() {
-        if (!prefs.getBoolean("clipboard_history", true) || incognito ||
-            fieldNoPersonalizedLearning || fieldSecureInput
-        ) {
-            lastClipText = null
-            return
-        }
-        try {
-            val clip = clips.load().firstOrNull()
-            if (clip != null && clip.text.isNotEmpty() && clip.text.length < 30) {
-                lastClipText = clip.text
-            } else {
-                lastClipText = null
-            }
-        } catch (_: Exception) {
-            lastClipText = null
-        }
-    }
 
     private fun readCapped(uri: android.net.Uri, maxBytes: Int): ByteArray? {
         return try {
@@ -1827,19 +1604,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 }
                 out.toByteArray()
             }
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("ShadeService", "capped uri read failed", t, once = true)
             null
         }
-    }
-
-    private val sensitiveKeyRegex = Regex("""(pass(word)?|pwd|token|secret|api[_-]?key|otp|pin)\s*[:=]""")
-
-    private fun isLikelySensitiveText(text: String): Boolean {
-        val lower = text.lowercase()
-        if (lower.startsWith("http://") || lower.startsWith("https://") || lower.contains("://")) return false
-        if (sensitiveKeyRegex.containsMatchIn(lower)) return true
-        if (!text.contains(" ") && text.length >= 10 && text.any { it.isLetter() } && text.any { it.isDigit() } && text.any { !it.isLetterOrDigit() }) return true
-        return false
     }
 
     // ------------------------------------------------------------------ undo stack
@@ -1905,6 +1673,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (suppressorLearningAllowed()) {
             autocorrectSuppressor.recordRejection(prevForSuppressor, event.original, event.corrected)
         }
+        // The revert is a veto of this exact pair: pull it back out of the
+        // personal correction memory so it can't pre-approve next time.
+        if (correctionLearningAllowed()) {
+            correctionMemory.unlearn(event.original, event.corrected)
+        }
         if (insightsAllowed()) typingStatsStore.recordAutocorrectRevert()
 
         ic.beginBatchEdit()
@@ -1919,7 +1692,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             ic.endBatchEdit()
         }
         updateShiftFromCaps()
-        updateSuggestions()
+        suggestPipeline.updateSuggestions()
         return true
     }
 
@@ -1954,7 +1727,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         android.view.inputmethod.InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION,
                         null
                     ) == true
-                } catch (_: Exception) {
+                } catch (t: Exception) {
+                    ShadeLog.w("ShadeService", "image commitContent failed", t, once = true)
                     false
                 }
                 if (committed) {
@@ -1973,20 +1747,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         afterText()
     }
 
-    private fun clearUndo() {
+    internal fun clearUndo() {
         undoStack.clear()
     }
 
     // ------------------------------------------------------------------ tail buffer
 
-    private fun appendTail(s: String) {
+    internal fun appendTail(s: String) {
         for (c in s) {
             tail.append(c)
             if (tail.length > 16) tail.deleteCharAt(0)
         }
     }
 
-    private fun popTail(n: Int) {
+    internal fun popTail(n: Int) {
         for (i in 0 until n) if (tail.isNotEmpty()) tail.deleteCharAt(tail.length - 1)
     }
 
@@ -2001,7 +1775,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return if (idx < 0) s else s.substring(idx + 1).takeIf { it.isNotEmpty() }
     }
 
-    private fun currentTypedWordFromField(): String {
+    internal fun currentTypedWordFromField(): String {
         val before = currentInputConnection?.getTextBeforeCursor(32, 0)?.toString() ?: return ""
         var i = before.length - 1
         while (i >= 0) {
@@ -2029,7 +1803,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onTouchSample(key: com.noircipher.shade.Key, x: Float, y: Float) {
         if (!insightsAllowed()) return
-        try { touchBiasModel.record(key, x, y) } catch (_: Exception) {}
+        try { touchBiasModel.record(key, x, y) } catch (e: Exception) { Log.w("ShadeService", "Touch bias record failed", e) }
     }
 
     /** Receive per-character touch offsets from KeyboardView when a word is committed. */
@@ -2052,6 +1826,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
      * outright by [onSwipePath] (commit) and by [onGlidePreview] with null (clear).
      */
     override fun onGlidePreviewPath(path: List<FloatArray>) {
+        if (emojiSearchOwnsKeys()) return
         if (gifActive || translatorActive) return
         if (path.size < 4) return
         val layout = kbKeyLayout() ?: return
@@ -2083,6 +1858,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     /** Glide typing: live preview while the finger is still moving. */
     override fun onGlidePreview(word: String?) {
+        if (emojiSearchOwnsKeys()) return
         if (gifActive || translatorActive) return
         if (word.isNullOrEmpty()) {
             // Cancel any in-flight preview decode so it can't revive the composing
@@ -2104,6 +1880,23 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onSwipePath(path: List<FloatArray>): Boolean {
+        // Glide in emoji search: decode the swipe and feed the word into the query.
+        if (emojiSearchOwnsKeys()) {
+            if (path.size < 4) return false
+            val layout = kbKeyLayout() ?: return false
+            val ctxJob = glideContext() // the editor is read here, on Main
+            suggestJob?.cancel()
+            suggestJob = scope.launch {
+                val decoded = withContext(Dispatchers.Default) {
+                    slideDecoder.decode(path, layout, ctxJob.await())
+                }
+                if (!isActive) return@launch
+                if (!decoded.isNullOrEmpty() && emojiSearchOwnsKeys()) {
+                    emoji.typeIntoSearch("$decoded ")
+                }
+            }
+            return true
+        }
         if (gifActive || translatorActive) return false
         if (path.size < 4) return false
         val layout = kbKeyLayout() ?: return false
@@ -2154,6 +1947,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             onTranslatorKey(code, null)
             return
         }
+        // Emoji search: the keyboard is drawn below the search header and every
+        // key feeds the query instead of the app's text field.
+        if (emojiSearchOwnsKeys()) {
+            when (code) {
+                Codes.DELETE -> { emoji.searchBackspace(); return }
+                Codes.SPACE -> { emoji.typeIntoSearch(" "); return }
+                Codes.ENTER -> { emoji.exitSearch(); return }
+                Codes.EMOJI -> { transitionToPanel(Panel.NONE); return }
+                else -> Unit // SHIFT / ?123 switch layouts; typing keeps flowing below
+            }
+        }
         when (code) {
             Codes.SHIFT -> onShift()
             Codes.DELETE -> backspace()
@@ -2198,6 +2002,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var delSlideChars = 0
 
     override fun onDeleteSlideStart() {
+        if (emojiSearchOwnsKeys()) return
         val ic = currentInputConnection ?: return
         ic.finishComposingText()
         composing.clear()
@@ -2270,6 +2075,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onDeleteWords(count: Int) {
+        if (emojiSearchOwnsKeys()) return
         val ic = currentInputConnection ?: return
         if (count <= 0) return
         val chars = wordDeleteRange(count)
@@ -2298,6 +2104,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             if (shiftState == 1) { shiftState = 0; autoShifted = false; kb.shiftState = 0 }
             return
         }
+        // Emoji search: typed characters feed the query, not the app's field.
+        if (emojiSearchOwnsKeys()) {
+            emoji.typeIntoSearch(text)
+            if (shiftState == 1) { shiftState = 0; autoShifted = false; kb.shiftState = 0 }
+            return
+        }
         // Clear touch offsets when starting a new composing word
         if (this::kb.isInitialized) kb.clearTouchOffsets()
         currentTouchOffsets = emptyList()
@@ -2310,7 +2122,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (text != " ") clearUndo()
         if (autofillCount > 0 && !autofillHiddenByTyping) {
             autofillHiddenByTyping = true // typing dismisses the autofill chips
-            updateAutofillStrip()
+            toolbarC.updateAutofillStrip()
         }
 
         val isWordChar = canCompose && mode == Mode.LETTERS && text.length == 1 &&
@@ -2395,7 +2207,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         )
     }
 
-    private fun kbKeyLayout(): Map<Char, Key>? {
+    internal fun kbKeyLayout(): Map<Char, Key>? {
         if (this::kb.isInitialized == false) return null
         val rows = kb.rows
         if (rows.isEmpty()) return null
@@ -2436,7 +2248,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             // composite is used as the context bonus in SlideDecoder.stage1().
             val features = try {
                 engine?.contextFeatures(before) ?: emptyMap()
-            } catch (_: Throwable) { emptyMap() }
+            } catch (t: Throwable) { ShadeLog.w("ShadeService", "neural context features failed", t, once = true); emptyMap() }
 
             val merged = HashMap<String, Float>(features.size + bigram.size)
 
@@ -2498,16 +2310,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onCursor(delta: Int) {
+        if (emojiSearchOwnsKeys()) return
         endWord()
         val key = if (delta < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
         sendDownUpKeyEvents(key)
         clearUndo()
         tailValid = false
         updateShiftFromCaps()
-        updateSuggestions()
+        suggestPipeline.updateSuggestions()
     }
 
     override fun onCursorMove(dx: Int, dy: Int) {
+        if (emojiSearchOwnsKeys()) return
         val ic = currentInputConnection ?: return
         ic.beginBatchEdit()
         try {
@@ -2526,10 +2340,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         clearUndo()
         tailValid = false
         updateShiftFromCaps()
-        updateSuggestions()
+        suggestPipeline.updateSuggestions()
     }
 
     override fun onTrackpadEnter() {
+        if (emojiSearchOwnsKeys()) return
         kb.haptic = prefs.getBoolean("haptic", true)
         kb.hapticStrength = when (prefs.getString("haptic_strength", "medium")) {
             "light" -> 0
@@ -2540,7 +2355,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onTrackpadExit() {
         updateShiftFromCaps()
-        updateSuggestions()
+        suggestPipeline.updateSuggestions()
     }
 
     override fun onLongPressSpecial() {
@@ -2569,7 +2384,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // (single or caps-lock) clears the override.
         if (shiftState == 0 && prev != 0) userShiftOverride = true
         else if (shiftState != 0) userShiftOverride = false
-        refreshCandidateCase()
+        suggestPipeline.refreshCandidateCase()
     }
 
     private fun backspace() {
@@ -2608,7 +2423,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     ic.endBatchEdit()
                 }
                 updateShiftFromCaps()
-                updateSuggestions()
+                suggestPipeline.updateSuggestions()
                 return
             }
         }
@@ -2637,7 +2452,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
         lastSpaceTime = 0L
         updateShiftFromCaps()
-        updateSuggestions()
+        suggestPipeline.updateSuggestions()
     }
 
     private fun space() {
@@ -2715,8 +2530,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         w = rewritten
                         recordCorrectionEvent(originalWord, rewritten, sep)
                     }
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // Keep the user's original text if rewrite fails.
+                    Log.w("ShadeService", "Grammar rewrite failed", e)
                 }
             }
 
@@ -2765,16 +2581,30 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 else -> {
                     // Flush touch offsets from KeyboardView before correction
                     if (this::kb.isInitialized) kb.flushTouchOffsets()
-                    val touches = currentTouchOffsets
-                    var candidate = try { dict.correction(w, isEnglishLocale(), touches) } catch (_: Exception) { null }
+                    val rawTouches = currentTouchOffsets
+                    // Personalized touch model: re-center each offset by the
+                    // user's learned per-key landing bias before the spatial
+                    // scorer sees it (opt-out via learning_touch).
+                    val touches = if (learningTouchOn && personalLearningAllowed()) {
+                        touchBiasModel.remapAll(w, rawTouches)
+                    } else rawTouches
+                    var candidate: String? = null
+                    var detail: WordDictionary.CorrectionResult? = try {
+                        dict.correctionDetailed(w, isEnglishLocale(), touches)
+                    } catch (t: Exception) { ShadeLog.w("ShadeService", "dictionary correction failed", t, once = true); null }
+                    if (detail != null) candidate = detail.word
 
                     // Feature 1b: Neural spell checker — on-device seq2seq over WPM pieces.
                     // Runs only when the dictionary had no correction at all (rare), stays
                     // under a latency budget, and returns nothing when it has no candidate
                     // better than what the user typed.
+                    var neuralCandidate: String? = null
                     if (candidate == null && w.length >= 3) {
-                        val neural = try { neuralSpell?.correct(w) } catch (_: Throwable) { null }
-                        if (!neural.isNullOrEmpty()) candidate = neural.first()
+                        val neural = try { neuralSpell?.correct(w) } catch (t: Throwable) { ShadeLog.w("ShadeService", "neural spell correct failed", t, once = true); null }
+                        if (!neural.isNullOrEmpty()) {
+                            neuralCandidate = neural.first()
+                            candidate = neuralCandidate
+                        }
                     }
 
                     // Feature 1: System Spell Checker — merge with Android's
@@ -2792,22 +2622,67 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     }
 
                     if (candidate == null) null else {
-                        // 4f — autocorrect confidence gate (#31 + A7 + #21).
-                        val effectiveRaw = lastRawRankerScores[candidate] ?: 0f
+                        // ── Autocorrect precision gate ─────────────────────────
+                        // Evidence sources, best first:
+                        //  1. Learned pair in the personal correction memory
+                        //     (the user has accepted this exact fix before).
+                        //  2. The online ranker's calibrated score when the
+                        //     candidate surfaced in the suggestion pool.
+                        //  3. Standalone geometric/frequentist confidence
+                        //     (CorrectionConfidence) — fixes the old default-0
+                        //     hole where non-pool candidates were ALWAYS blocked.
+                        val suppressorHit = autocorrectSuppressor.shouldSuppress(prev1, w, candidate)
+                        val memoryHit = if (!suppressorHit && learningCorrectionOn && personalLearningAllowed()) {
+                            correctionMemory.recall(w)?.takeIf { it.corrected == candidate.lowercase() }
+                        } else null
+
                         val speedAdjustment = com.noircipher.shade.engine.TypingSpeedAdapter.confidenceThresholdAdjustment()
                         val effectiveThreshold = (AUTOCORRECT_CONFIDENCE_THRESHOLD + speedAdjustment)
                             .coerceIn(0.5f, 0.99f)
-                        if (autocorrectSuppressor.shouldSuppress(prev1, w, candidate)) null
-                        else if (confidenceCalibrator.calibrated(effectiveRaw) >= effectiveThreshold) candidate
-                        else null
+
+                        val rankerConf = lastRawRankerScores[candidate]?.let { confidenceCalibrator.calibrated(it) }
+                        val d = detail
+                        val standaloneConf = when {
+                            d != null && !d.alwaysAllowed -> CorrectionConfidence.score(
+                                editCost = d.editCost,
+                                wordLen = w.length,
+                                rank = d.rank,
+                                margin = d.margin,
+                                touchAvg = d.touchAvg,
+                                touchDiff = d.touchDiff,
+                                isKnownWord = false
+                            )
+                            d?.alwaysAllowed == true -> 1f  // deterministic contraction fixes
+                            neuralCandidate != null -> CorrectionConfidence.fallback(CorrectionConfidence.Kind.NEURAL, w.length)
+                            else -> CorrectionConfidence.fallback(CorrectionConfidence.Kind.SYSTEM_SPELL, w.length)
+                        }
+                        val confidence = maxOf(standaloneConf, rankerConf ?: 0f)
+
+                        when {
+                            suppressorHit -> null
+                            memoryHit != null -> candidate
+                            detail?.alwaysAllowed == true -> candidate
+                            confidence >= effectiveThreshold -> candidate
+                            else -> null
+                        }
                     }
                 }
             }
-            val finalWord = corrected ?: w
+            // Offensive-word gate: when the block toggle is on, autocorrect
+            // never forces a profanity the user didn't type — their own word
+            // commits as-is (ProfanityFilter never alters user-typed text).
+            val accepted = if (blockOffensiveOn && corrected != null && corrected != w &&
+                com.noircipher.shade.engine.ProfanityFilter.isOffensive(corrected)
+            ) null else corrected
+            val finalWord = accepted ?: w
 
-            if (corrected != null && corrected != w) {
-                recordCorrectionEvent(w, corrected, sep)
-                userWordMemory.bump(corrected)
+            if (accepted != null && accepted != w) {
+                recordCorrectionEvent(w, accepted, sep)
+                userWordMemory.bump(accepted)
+                // Personal correction memory: this pair just earned a vote.
+                if (correctionLearningAllowed()) {
+                    correctionMemory.record(w, accepted)
+                }
             }
 
             popTail(originalWord.length)
@@ -2818,7 +2693,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             // Confusable pairs that depend on the FOLLOWING word ("your welcome", "to late"):
             // now that this word is complete, fix the word before it. Skipped when this word was
             // itself autocorrected so there is only ever one correction to undo.
-            if (corrected == null && smartCorrectionOn && canCompose && prev1 != null && isEnglishLocale()) {
+            if (accepted == null && smartCorrectionOn && canCompose && prev1 != null && isEnglishLocale()) {
                 fixPreviousConfusable(prev1, prev2, finalWord, sep)
             }
 
@@ -2828,6 +2703,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 lastShownCandidates.take(3).forEach { suggested ->
                     if (suggested.isNotEmpty() && !suggested.equals(finalWord, ignoreCase = true)) {
                         rejectionTracker.recordRejection(suggested)
+                    }
+                }
+                // Rejection-based ranker personalization: the top candidate was
+                // shown and the user typed a different word instead. Only when
+                // the user's own word won — a just-applied autocorrect is not a
+                // rejection of the bar. A single ignore is weak evidence, so
+                // the negative update runs at a fraction of the learning rate.
+                if (accepted == null && rankerLearningAllowed() && personalLearningAllowed()) {
+                    val ignoredTop = lastShownCandidates.firstOrNull()
+                    if (!ignoredTop.isNullOrEmpty() &&
+                        !ignoredTop.equals(finalWord, ignoreCase = true) &&
+                        ignoredTop != lastCorrectionEvent?.corrected
+                    ) {
+                        lastRankedFeatures[ignoredTop]?.let { negFeatures ->
+                            onlineRankerTrainer.adaptNegative(negFeatures)
+                        }
                     }
                 }
             }
@@ -2882,16 +2773,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         tailValid = false
     }
 
-    private fun afterText() {
+    internal fun afterText() {
         if (shiftState == 1) { shiftState = 0; autoShifted = false }
         updateShiftFromCaps()
-        updateSuggestions()
+        suggestPipeline.updateSuggestions()
     }
 
-    private fun isEnglishLocale(): Boolean =
+    internal fun isEnglishLocale(): Boolean =
         dictIds().split(',').firstOrNull()?.trim()?.equals("en", ignoreCase = true) == true
 
-    private fun atSentenceEndBeforeCursor(): Boolean {
+    internal fun atSentenceEndBeforeCursor(): Boolean {
         val before: String = if (tailValid) {
             tail.toString()
         } else {
@@ -2942,33 +2833,33 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
         }
         kb.shiftState = shiftState
-        refreshCandidateCase()
+        suggestPipeline.refreshCandidateCase()
     }
 
     // ------------------------------------------------------------------ suggestions (cascade)
 
-    private suspend fun configureLocaleAssets(locale: String) {
+    internal suspend fun configureLocaleAssets(locale: String) {
         localeAssetsMutex.withLock {
             if (configuredLocale == locale) return@withLock
             configuredLocale = locale
 
             dict.configure(locale)
             // Build the glide lexicon now so the first swipe of the session is not slow.
-            scope.launch(Dispatchers.Default) { try { dict.warmGlide() } catch (_: Exception) {} }
+            scope.launch(Dispatchers.Default) { try { dict.warmGlide() } catch (e: Exception) { Log.w("ShadeService", "Glide lexicon warm-up failed", e) } }
             val oldEmojiPredictor = emojiPredictor
             emojiPredictor = EmojiPredictionEngine.load(this@ShadeService, locale)
-            try { oldEmojiPredictor.close() } catch (_: Exception) {}
+            try { oldEmojiPredictor.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close old emoji predictor", e) }
 
             try {
                 rankingScorer?.close()
-            } catch (_: Exception) {}
+            } catch (e: Exception) { Log.w("ShadeService", "Failed to close old ranking scorer", e) }
             // Throwable (not Exception): a failed TFLite/ONNX native load is an Error and must
             // disable the model, not crash the IME process on the background loader thread.
-            rankingScorer = try { TfliteCandidateRankingScorer(this@ShadeService) } catch (_: Throwable) { null }
+            rankingScorer = try { TfliteCandidateRankingScorer(this@ShadeService) } catch (t: Throwable) { ShadeLog.w("ShadeService", "ranking scorer construction failed", t, once = true); null }
 
-            try { contextEncoder?.close() } catch (_: Exception) {}
+            try { contextEncoder?.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close old context encoder", e) }
             contextEncoder = if (locale.contains("hi") || locale.contains("hg") || locale.contains("hinglish")) {
-                try { TfliteContextEncoder(this@ShadeService, "ranking/context_encoder_hi_xa.tflite") } catch (_: Throwable) { null }
+                try { TfliteContextEncoder(this@ShadeService, "ranking/context_encoder.tflite") } catch (t: Throwable) { ShadeLog.w("ShadeService", "context encoder construction failed", t, once = true); null }
             } else {
                 null
             }
@@ -2978,16 +2869,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         warmUpNeuralEngines()
         // Build per-app helper objects now (background) so the first keyboard open
         // doesn't pay for loading them on the main thread.
-        try { appContextModel; perAppVocabSnapshot } catch (_: Throwable) {}
+        try { appContextModel; perAppVocabSnapshot } catch (t: Throwable) { Log.w("ShadeService", "Per-app context model init failed", t) }
     }
 
     private fun warmUpNeuralEngines() {
-        try { neural?.predictNext("", null, 1) } catch (_: Throwable) {}
-        try { rankingScorer?.score(FloatArray(83)) } catch (_: Throwable) {}
-        try { contextEncoder?.encode(0) } catch (_: Throwable) {}
+        try { neural?.predictNext("", null, 1) } catch (t: Throwable) { Log.w("ShadeService", "Neural warm-up (predictNext) failed", t) }
+        try { rankingScorer?.score(FloatArray(83)) } catch (t: Throwable) { Log.w("ShadeService", "Neural warm-up (ranker score) failed", t) }
+        try { contextEncoder?.encode(0) } catch (t: Throwable) { Log.w("ShadeService", "Neural warm-up (context encode) failed", t) }
     }
 
-    private fun desiredNeuralLocale(contextWords: List<String>, localeList: String = dictIds()): String {
+    internal fun desiredNeuralLocale(contextWords: List<String>, localeList: String = dictIds()): String {
         val available = localeList.split(',')
             .map { it.trim() }
             .filter { it.isNotEmpty() }
@@ -3000,7 +2891,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return available.firstOrNull() ?: "en"
     }
 
-    private fun reloadNeuralEngine(locale: String) {
+    internal fun reloadNeuralEngine(locale: String) {
         synchronized(neuralLock) {
             if (neuralLocale == locale && neural != null) return
             val failedAt = failedNeuralLocales[locale]
@@ -3010,11 +2901,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             val old = neural
             neural = null
             neuralLocale = null
-            try { old?.close() } catch (_: Exception) {}
+            try { old?.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close old neural engine", e) }
 
             val created = try {
                 NeuralPredictionEngine.create(this@ShadeService, locale)
-            } catch (_: Exception) {
+            } catch (t: Exception) {
+                ShadeLog.w("ShadeService", "neural engine creation failed", t, once = true)
                 null
             }
             if (created != null) {
@@ -3029,7 +2921,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    private fun neuralContext(typedWord: String): String {
+    internal fun neuralContext(typedWord: String): String {
         val raw = currentInputConnection
             ?.getTextBeforeCursor(400, 0)
             ?.toString()
@@ -3096,7 +2988,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
 
-    private fun contextWordsExcluding(typedWord: String): List<String> {
+    internal fun contextWordsExcluding(typedWord: String): List<String> {
         val raw = currentInputConnection
             ?.getTextBeforeCursor(400, 0)
             ?.toString()
@@ -3115,110 +3007,30 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             .toList()
     }
 
-    private fun loadContextEncoderVocab(): Map<String, Int> {
-        val map = HashMap<String, Int>()
-        try {
-            assets.open("languages/hi/vocab_hi.tsv").bufferedReader().useLines { lines ->
-                var id = 0
-                for (line in lines) {
-                    if (id >= 32252) break
-                    val parts = line.split('\t')
-                    val token = parts.getOrNull(2)?.lowercase()
-                    if (!token.isNullOrEmpty()) map[token] = id
-                    id++
-                }
+    private fun loadContextEncoderVocab(): Map<String, Int> =
+        com.noircipher.shade.engine.AssetTsv.use(
+            this@ShadeService, "languages/hi/vocab_hi.tsv", "ShadeService", emptyMap(),
+            failureMessage = "Failed to load context encoder vocab"
+        ) { lines ->
+            val map = HashMap<String, Int>()
+            var id = 0
+            for (line in lines) {
+                if (id >= 32252) break
+                val parts = line.split('\t')
+                val token = parts.getOrNull(2)?.lowercase()
+                if (!token.isNullOrEmpty()) map[token] = id
+                id++
             }
-        } catch (_: Exception) {
-            // Keep empty fallback.
+            map
         }
-        return map
-    }
 
-    private fun contextEmbeddingForCurrentLocale(contextWords: List<String>): FloatArray? {
+    internal fun contextEmbeddingForCurrentLocale(contextWords: List<String>): FloatArray? {
         val encoder = contextEncoder ?: return null
         val last = contextWords.lastOrNull()?.lowercase() ?: return null
         val idx = contextEncoderVocab[last] ?: return null
-        return try { encoder.encode(idx) } catch (_: Exception) { null }
+        return try { encoder.encode(idx) } catch (t: Exception) { ShadeLog.w("ShadeService", "context encode failed", t, once = true); null }
     }
 
-    private fun learnedRankCandidates(
-        candidates: List<String>,
-        typedPrefix: String,
-        touches: List<FloatArray>,
-        layout: Map<Char, Key>?,
-        contextWords: List<String>
-    ): List<String> {
-        val scorer = rankingScorer ?: return candidates
-        if (candidates.size <= 1) return candidates
-
-        val embedding = contextEmbeddingForCurrentLocale(contextWords)
-        val contextText = contextWords.joinToString(" ")
-        val neuralScores = neural
-            ?.predictNext(contextText, typedPrefix, 12)
-            ?.associate { it.first.lowercase() to it.second }
-            .orEmpty()
-        val prev1 = contextWords.lastOrNull()
-        val prev2 = contextWords.dropLast(1).lastOrNull()
-        val userBigramScores = dict.bigramModel
-            ?.predict(prev2, prev1, 32)
-            ?.associate { it.first.lowercase() to it.second }
-            .orEmpty()
-        val modelWeight = if (dictIds().split(',').firstOrNull()?.trim()?.equals("en", ignoreCase = true) == true) 0.32f else 0.12f
-
-        val ranked = candidates.take(8).mapIndexed { index, candidate ->
-            val base = 1f / (index + 1)
-            val neural = neuralScores[candidate.lowercase()] ?: (base * 0.25f)
-            val spatial = if (layout != null) SpatialScorer.score(candidate, touches, layout) else 0f
-            val features = RankingFeatureExtractor.extract(
-                candidate = candidate,
-                typedPrefix = typedPrefix,
-                baseRankScore = base,
-                neuralScore = neural,
-                spatialScore = spatial,
-                touches = touches,
-                layout = layout ?: emptyMap(),
-                contextEmbedding = embedding,
-                userUnigramScore = userWordMemory.score(candidate),
-                userBigramScore = userBigramScores[candidate.lowercase()] ?: 0f
-            )
-            val modelScore = 0f
-            candidate to (base to features)
-        }
-
-        val batchScores = runCatching {
-            scorer.scoreBatch(ranked.map { it.second.second })
-        }.getOrElse {
-            FloatArray(ranked.size) { idx -> runCatching { scorer.score(ranked[idx].second.second) }.getOrDefault(0f) }
-        }
-
-        val newRankedFeatures = HashMap<String, FloatArray>(ranked.size)
-        val newRawScores = HashMap<String, Float>(ranked.size)
-        val rescored = ranked.mapIndexed { index, item ->
-            val candidate = item.first
-            val features = item.second.second
-            val base = item.second.first
-            val learnedBoost = adaptiveWordMemory.score(candidate) * 0.10f + appContextModel.score(candidate) * 0.08f
-            // 4l — session bigram boost: tiny boost for candidates the user has
-            // already used in this IME session, and for candidates that follow
-            // the last context word in the session bigram.
-            val sessionBoost = sessionBigramBoost.score(candidate) * 0.06f +
-                sessionBigramBoost.bigramScore(contextWords.lastOrNull(), candidate) * 0.04f
-            val adapted = onlineRankerTrainer.score(features)
-            val raw = batchScores.getOrElse(index) { 0f }
-            val calibrated = confidenceCalibrator.calibrated(raw)
-            val modelScore = calibrated * 0.7f + adapted * 0.3f
-            newRankedFeatures[candidate] = features
-            newRawScores[candidate] = raw
-            val combined = (1f - modelWeight) * base + modelWeight * modelScore + learnedBoost + sessionBoost
-            candidate to combined
-        }
-        // Snapshot-then-putAll so readers see either old or new state,
-        // never half-mutated maps.
-        lastRankedFeatures.apply { clear(); putAll(newRankedFeatures) }
-        lastRawRankerScores.apply { clear(); putAll(newRawScores) }
-        lastShownCandidates = rescored.map { it.first }
-        return rescored.sortedByDescending { it.second }.map { it.first } + candidates.drop(8)
-    }
 
     private fun isSecureInputType(inputType: Int): Boolean {
         val variation = inputType and EditorInfo.TYPE_MASK_VARIATION
@@ -3231,598 +3043,69 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    private inline fun <T> safeSuggestion(fallback: T, block: () -> T): T {
+    internal inline fun <T> safeSuggestion(fallback: T, block: () -> T): T {
         return try {
             block()
         } catch (c: CancellationException) {
             throw c
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            ShadeLog.w("ShadeService", "suggestion pipeline guard tripped", t, once = true)
             fallback
         }
     }
 
-    private fun personalLearningAllowed(): Boolean =
+    internal fun personalLearningAllowed(): Boolean =
         !incognito && !fieldNoPersonalizedLearning && !fieldSecureInput
 
-    private fun adaptiveLearningAllowed(): Boolean =
+    internal fun adaptiveLearningAllowed(): Boolean =
         personalLearningAllowed() && learningAdaptiveOn
-    private fun appContextLearningAllowed(): Boolean =
+    internal fun appContextLearningAllowed(): Boolean =
         personalLearningAllowed() && learningAppCtxOn
     private fun suppressorLearningAllowed(): Boolean =
         personalLearningAllowed() && learningSuppressorOn
-    private fun calibratorLearningAllowed(): Boolean =
+    internal fun calibratorLearningAllowed(): Boolean =
         personalLearningAllowed() && learningCalibratorOn
-    private fun rankerLearningAllowed(): Boolean =
+    internal fun rankerLearningAllowed(): Boolean =
         personalLearningAllowed() && learningRankerOn
-
-    private fun insightsAllowed(): Boolean =
-        typingInsightsOn && !incognito && !fieldNoPersonalizedLearning
-
-    private fun updateSuggestions() {
-        if (this::slots.isInitialized == false) return
-        suggestJob?.cancel()
-        suggestDebounceJob?.cancel()
-        if (suggestionsOn == false || suggestionsAllowed == false) {
-            setCandidates(emptyList())
-            return
-        }
-        // 4e — field-type gate: passwords, numbers, phone, datetime, and
-        // explicitly-marked "no suggestions" fields suppress the bar entirely.
-        if (!FieldTypeDetector.shouldShowSuggestions(currentFieldType)) {
-            setCandidates(emptyList())
-            return
-        }
-
-        val typedWord: String
-        val composingActive = composing.isNotEmpty()
-        if (composingActive) {
-            typedWord = composing.toString()
-        } else if (canCompose == false && suggestionsAllowed) {
-            typedWord = currentTypedWordFromField()
-        } else {
-            typedWord = ""
-        }
-
-        // 4e — URL / email / phone detection. If the user is mid-typing an
-        // email or URL, suppress suggestions to avoid interrupting the flow.
-        val beforeCursor = currentInputConnection?.getTextBeforeCursor(50, 0)?.toString() ?: ""
-        val urlDetection = UrlEmailDetector.detect(typedWord, beforeCursor)
-        if (UrlEmailDetector.suppressSuggestions(urlDetection)) {
-            setCandidates(emptyList())
-            return
-        }
-
-        if (typedWord.isEmpty()) {
-            val contextWords = contextWordsExcluding("")
-            val desiredLocale = desiredNeuralLocale(contextWords)
-            if (neuralLocale != desiredLocale) {
-                scope.launch(Dispatchers.Default) { reloadNeuralEngine(desiredLocale) }
-            }
-            val prev1 = contextWords.lastOrNull()
-            val prev2 = contextWords.dropLast(1).lastOrNull()
-            val context = neuralContext("")
-
-            suggestDebounceJob = scope.launch {
-                delay(SUGGEST_DEBOUNCE_MS)
-                if (!isActive) return@launch
-                suggestJob = scope.launch(Dispatchers.Default) {
-                    val neuralNext = withContext(Dispatchers.Default) {
-                        // Neural improvement #3 — use beam search for phrase
-                        // suggestions when the user has multi-word suggestions
-                        // enabled. Beam search produces 2-word continuations
-                        // ("are you", "to see") that greedy single-token
-                        // prediction misses. Falls back to greedy for
-                        // word-by-word mode (faster, single-word results).
-                        if (phraseSuggestionsOn) {
-                            (neural as? NeuralPredictionEngine)
-                                ?.predictNextBeam(context, null, 8)
-                                ?.map { it.first }
-                                .orEmpty()
-                        } else {
-                            neural
-                                ?.predictNext(context, null, 6)
-                                ?.map { it.first }
-                                .orEmpty()
-                        }
-                    }
-                    val dictionaryNext = prev1
-                        ?.let { dict.predictNext(prev2, it, 8) }
-                        .orEmpty()
-                    val smartNext = HeuristicSuggestionEngine.smart(contextWords, null, 12)
-                    val trigramNext = HeuristicSuggestionEngine.trigram(contextWords, null, 8)
-                    val phraseNext = HeuristicSuggestionEngine.phrase(prev1, 6)
-                    val grammarNext = GrammarEngine.predictNext(contextWords, 6)
-                    val merged = CandidateRanker.mergeNextWord(
-                        neural = smartNext + trigramNext + neuralNext + grammarNext + phraseNext,
-                        dictionary = dictionaryNext,
-                        limit = 3
-                    )
-
-                    val learned = safeSuggestion(merged) {
-                        withContext(Dispatchers.Default) {
-                            learnedRankCandidates(
-                                candidates = merged,
-                                typedPrefix = "",
-                                touches = emptyList(),
-                                layout = null,
-                                contextWords = contextWords
-                            )
-                        }
-                    }
-                    val finalMerged = learned.ifEmpty { merged }
-                    val list: List<String> = when {
-                        finalMerged.isNotEmpty() -> centerBest(finalMerged)
-                        atSentenceEndBeforeCursor() && isEnglishLocale() -> listOf("The", "I", "I'm")
-                        else -> emptyList()
-                    }
-                    withContext(Dispatchers.Main.immediate) { setCandidates(list) }
-                }
-            }
-            return
-        }
-
-        val prefix = typedWord
-        val contextWords = contextWordsExcluding(typedWord)
-        val desiredLocale = desiredNeuralLocale(contextWords)
-        if (neuralLocale != desiredLocale) {
-            scope.launch(Dispatchers.Default) { reloadNeuralEngine(desiredLocale) }
-        }
-        val prev1 = contextWords.lastOrNull()
-        val prev2 = contextWords.dropLast(1).lastOrNull()
-        val touches = if (composingActive) touchTrace.last(touchTrace.size()) else emptyList()
-        val layout = kbKeyLayout()
-        val neuralCtx = neuralContext(typedWord)
-
-        suggestDebounceJob = scope.launch {
-            delay(SUGGEST_DEBOUNCE_MS)
-            if (!isActive) return@launch
-            suggestJob = scope.launch(Dispatchers.Default) {
-                // #11 — short-circuit on SuggestionCache hit when (prev2, prev1, prefix)
-                // match a recently-computed result. Skips the whole pipeline.
-                com.noircipher.shade.engine.SuggestionCache.salt = "$configuredLocale|$incognito"
-                com.noircipher.shade.engine.SuggestionCache.get(prev2, prev1, prefix)?.let { cached ->
-                    withContext(Dispatchers.Main.immediate) { setCandidates(cached) }
-                    return@launch
-                }
-                val known = dict.contains(prefix)
-                val stage1 = LinkedHashSet<String>()
-                // Strict prefix rule: every suggestion must match every typed alphabet
-                // after the last space.
-                val effectivePrefix = prefix
-                // 4k — keep the raw predictions (with scores) so we can inject
-                // user vocabulary before flattening to strings.
-                val rawPredictions = withContext(Dispatchers.Default) {
-                    neural?.predictNext(neuralCtx, effectivePrefix, 24).orEmpty()
-                }
-                val neuralPrefixCandidates = if (effectivePrefix.isNotEmpty() && personalLearningAllowed()) {
-                    val userWords = userWordMemory.snapshot()
-                        .filterKeys { it.startsWith(effectivePrefix, ignoreCase = true) }
-                    com.noircipher.shade.engine.UserVocabularyInjector.inject(
-                        rawPredictions, userWords, effectivePrefix, 24
-                    ).map { it.first }
-                } else {
-                    rawPredictions.map { it.first }
-                }
-                stage1.addAll(neuralPrefixCandidates)
-                val grammarCandidates = GrammarEngine.suggest(contextWords, prefix, 6)
-                val grammarTop = grammarCandidates.firstOrNull()
-                val smartCandidates = HeuristicSuggestionEngine.smart(contextWords, effectivePrefix, 16)
-                val trigramCandidates = HeuristicSuggestionEngine.trigram(contextWords, effectivePrefix, 12)
-                val phraseCandidates = HeuristicSuggestionEngine.phrase(prev1, effectivePrefix, 12)
-                val contextCandidates = prev1
-                    ?.let { dict.predictNext(prev2, it, 48) }
-                    .orEmpty()
-                    .filter { it.startsWith(effectivePrefix, ignoreCase = true) }
-                stage1.addAll(grammarCandidates)
-                stage1.addAll(smartCandidates)
-                stage1.addAll(trigramCandidates)
-                stage1.addAll(phraseCandidates)
-                stage1.addAll(contextCandidates)
-                stage1.addAll(dict.suggestAsync(prefix, 48))
-
-                // Enforce strict prefix matching even if a source injected a correction
-                // or unrelated candidate.
-                val strictStage1 = stage1.filter { it.startsWith(prefix, ignoreCase = true) }
-                stage1.clear()
-                stage1.addAll(strictStage1)
-
-                val stage2 = if (prev1 != null) {
-                    dict.rerankWithContext(null, prev1, stage1.toList())
-                } else stage1.toList()
-
-                val stage3 = if (stage2.size >= 2 && layout != null && touches.isNotEmpty()) {
-                    val a = stage2[0]
-                    val b = stage2[1]
-                    if (a.length == b.length && a.take(2) == b.take(2)) {
-                        SpatialScorer.tiebreak(stage2, touches, layout)
-                    } else stage2
-                } else stage2
-
-                var ranked = withContext(Dispatchers.Default) {
-                    // Neural improvement #5 — pass bigram scores into the neural
-                    // reranker so it can do log-linear interpolation instead of
-                    // independent ranking. The bigram model catches user-specific
-                    // phrases and rare words the neural model misses.
-                    val bigramScores = dict.bigramModel
-                        ?.predict(prev2, prev1, stage3.size * 2)
-                        ?.associate { it.first.lowercase() to it.second }
-                        .orEmpty()
-                    (neural as? NeuralPredictionEngine)
-                        ?.rerankPrefix(neuralCtx, effectivePrefix, stage3, bigramScores)
-                        ?: neural?.rerankPrefix(neuralCtx, effectivePrefix, stage3)
-                } ?: stage3
-                ranked = safeSuggestion(ranked) {
-                    withContext(Dispatchers.Default) {
-                        learnedRankCandidates(
-                            candidates = ranked,
-                            typedPrefix = prefix,
-                            touches = touches,
-                            layout = layout,
-                            contextWords = contextWords
-                        )
-                    }
-                }
-
-                // 4j — typed-word pipeline injections.
-                // #1 — Multi-word phrase completion (good→morning, thank→you, ...).
-                // Gated behind phraseSuggestionsOn: the bigram table contains
-                // single-word completions (good→morning) AND multi-word ones
-                // (good→"to see"); in word-by-word mode we still want the
-                // single-word continuations, so we keep the source but filter
-                // out space-containing entries.
-                if (phraseSuggestionsOn) {
-                    val phraseCompletions = com.noircipher.shade.engine.PhraseCompletion
-                        .suggestPhraseCompletions(contextWords, prefix, limit = 3)
-                    if (phraseCompletions.isNotEmpty()) {
-                        ranked = (phraseCompletions + ranked).distinct()
-                    }
-                } else {
-                    val phraseCompletions = com.noircipher.shade.engine.PhraseCompletion
-                        .suggestPhraseCompletions(contextWords, prefix, limit = 3)
-                        .filter { !it.contains(' ') }
-                    if (phraseCompletions.isNotEmpty()) {
-                        ranked = (phraseCompletions + ranked).distinct()
-                    }
-                }
-                // #15 — Smart compose for common responses (ok → ok sounds good, ...).
-                // These templates are inherently multi-word, so the whole source
-                // is skipped in word-by-word mode.
-                if (phraseSuggestionsOn && FieldTypeDetector.shouldSmartCompose(currentFieldType)) {
-                    val smartResponses = com.noircipher.shade.engine.SmartResponseComposer.suggest(prefix, limit = 2)
-                    if (smartResponses.isNotEmpty()) {
-                        ranked = (smartResponses + ranked).distinct()
-                    }
-                }
-                // #6+#7 — Cross-sentence context + sentence starters.
-                val extendedContext = com.noircipher.shade.engine.CrossSentenceContext.extendContext(contextWords)
-                val rawBeforeForSentence = currentInputConnection?.getTextBeforeCursor(40, 0)?.toString().orEmpty()
-                    .let { if (prefix.isNotEmpty() && it.endsWith(prefix, ignoreCase = true)) it.dropLast(prefix.length) else it }
-                if (com.noircipher.shade.engine.CrossSentenceContext.isSentenceStart(extendedContext) ||
-                    com.noircipher.shade.engine.CrossSentenceContext.endsWithSentenceTerminator(rawBeforeForSentence)) {
-                    val starters = com.noircipher.shade.engine.CrossSentenceContext.sentenceStarters(prefix, limit = 2)
-                    // In word-by-word mode drop multi-word starters ("let me",
-                    // "thank you", "it would") and keep single-word ones ("the",
-                    // "I", "how", ...).
-                    val filteredStarters = if (phraseSuggestionsOn) starters
-                        else starters.filter { !it.contains(' ') }
-                    if (filteredStarters.isNotEmpty()) {
-                        ranked = (filteredStarters + ranked).distinct()
-                    }
-                }
-                // #18 — Greeting/time-aware bias.
-                val timeWords = com.noircipher.shade.engine.GreetingTimeBias.timeAwareWords(prefix)
-                if (timeWords.isNotEmpty()) {
-                    ranked = (timeWords + ranked).distinct()
-                }
-                // #9 — Smart number prediction (after "in", "costs", "at", ...).
-                val numberSuggestions = suggestNumbersForContext(extendedContext, prefix)
-                if (numberSuggestions.isNotEmpty()) {
-                    ranked = (numberSuggestions + ranked).distinct()
-                }
-                // #17 — Emoji context prediction (after "love", "happy", ...).
-                val emojiSuggestions = com.noircipher.shade.engine.EmojiContextPredictor.suggest(prev1, limit = 2)
-                if (emojiSuggestions.isNotEmpty()) {
-                    ranked = (emojiSuggestions + ranked).distinct()
-                }
-                // #14 — Rejection-pattern learning: drop recently-rejected candidates.
-                ranked = rejectionTracker.filter(ranked)
-                // #5 — Prediction diversity (morphological): keep one variant per stem.
-                ranked = com.noircipher.shade.engine.MorphologicalDiversity.deduplicate(ranked, limit = 6)
-                // #20 — Per-app vocabulary snapshot.
-                val appWords = perAppVocabSnapshot.wordsForPrefix(prefix, limit = 2)
-                if (appWords.isNotEmpty()) {
-                    ranked = (appWords + ranked).distinct()
-                }
-                // #22 — Confusable-pairs correction (their/there/they're, etc.).
-                // Surface the context-corrected form when it isn't already ranked.
-                com.noircipher.shade.engine.ConfusablePairs.correct(prefix, prev1)?.let { conf ->
-                    if (ranked.none { it.equals(conf, ignoreCase = true) }) {
-                        ranked = (listOf(conf) + ranked).distinct()
-                    }
-                }
-                // #23 — Phonetic-match suggestions (for typo class that isn't a
-                // keyboard slip but a pronunciation-based misspelling).
-                if (ranked.size < 3) {
-                    val phonetic = com.noircipher.shade.engine.PhoneticMatcher
-                        .findPhoneticMatches(prefix, dict.suggest(prefix, 32), limit = 2)
-                    if (phonetic.isNotEmpty()) {
-                        ranked = (ranked + phonetic).distinct()
-                    }
-                }
-                // #24 — Punctuation predictor: append a hint punctuation candidate
-                // when the user has typed a recognized sentence ender.
-                com.noircipher.shade.engine.PunctuationPredictor
-                    .suggestPunctuation(contextWords)?.let { punct ->
-                        if (ranked.none { it == punct }) {
-                            ranked = (ranked + listOf(punct)).distinct().take(6)
-                        }
-                    }
-                // #21 — Multi-word sentence completion ("How are you" → "doing today?").
-                // Skipped entirely in word-by-word mode; in phrase mode keep only
-                // the single-word completions ("soon", "later", "tomorrow", ...).
-                run {
-                    val sentenceCompletions = com.noircipher.shade.engine.SentenceCompleter
-                        .suggest(contextWords, limit = 2)
-                    val kept = if (phraseSuggestionsOn) sentenceCompletions
-                        else sentenceCompletions.filter { !it.contains(' ') }
-                    if (kept.isNotEmpty()) {
-                        ranked = (kept + ranked).distinct()
-                    }
-                }
-                // #11 — Suggestion cache: nothing to inject here, but record the
-                // final ranked list so subsequent keystrokes can hit the cache.
-                // #32 — Multi-armed bandit exploration: occasionally swap top-2
-                // to learn whether the runner-up would have been accepted.
-                if (onlineRankerTrainer.shouldExplore() && ranked.size > 2) {
-                    val mutable = ranked.toMutableList()
-                    val tmp = mutable[0]
-                    mutable[0] = mutable[1]
-                    mutable[1] = tmp
-                    ranked = mutable
-                }
-
-                val shown = com.noircipher.shade.engine.SuggestionFinalizer.finalize(
-                    prefix = prefix,
-                    known = known,
-                    grammarTop = grammarTop,
-                    ranked = ranked,
-                    phraseSuggestionsOn = phraseSuggestionsOn
-                )
-                // Cache the final list (after typo/grammar handling) so a cache hit
-                // shows exactly what the full pipeline would.
-                com.noircipher.shade.engine.SuggestionCache.put(prev2, prev1, prefix, shown)
-                withContext(Dispatchers.Main.immediate) { setCandidates(shown) }
-            }
-        }
-    }
-
-    private fun centerBest(l: List<String>): List<String> =
-        com.noircipher.shade.engine.SuggestionFinalizer.centerBest(l)
+    private fun correctionLearningAllowed(): Boolean =
+        personalLearningAllowed() && learningCorrectionOn
 
     /**
-     * 4m — Smart number prediction. Surfaces short numeric completions after
-     * words that commonly precede a quantity (in / costs / at / number / ...).
-     *
-     * Returns at most 2 candidates, all matching the typed prefix.
+     * Registers or unregisters the wallpaper color listener depending on
+     * whether the active theme follows the wallpaper (Material You). Kept
+     * idempotent: safe to call from every prefsApplier.applyPrefs().
      */
-    private fun suggestNumbersForContext(contextWords: List<String>, prefix: String): List<String> {
-        if (prefix.isNotEmpty() && !prefix.all { it.isDigit() }) return emptyList()
-        val last = contextWords.lastOrNull()?.lowercase() ?: return emptyList()
-        return when (last) {
-            "in" -> listOf("5", "10", "15", "20", "30").filter { it.startsWith(prefix) }.take(2)
-            "costs", "cost", "price", "pay", "paid" -> if (prefix.isEmpty()) listOf("$") else emptyList()
-            "at", "around", "about" -> listOf("5", "10", "20", "50").filter { it.startsWith(prefix) }.take(2)
-            "number", "no." -> listOf("1", "2", "3").filter { it.startsWith(prefix) }.take(2)
-            else -> emptyList()
-        }
-    }
-
-    /** Case the suggestion bar should use right now (see [SuggestionCasing.styleFor]). */
-    private fun currentSuggestionStyle(): SuggestionCasing.Style {
-        val typed = when {
-            composing.isNotEmpty() -> composing.toString()
-            !canCompose -> currentTypedWordFromField()
-            else -> ""
-        }
-        return SuggestionCasing.styleFor(mode == Mode.LETTERS, shiftState, typed)
-    }
-
-    private fun casedCandidates(raw: List<String>): List<String> {
-        if (raw.isEmpty()) return raw
-        val style = currentSuggestionStyle() // computed once per update, not per suggestion
-        return raw.map { SuggestionCasing.apply(it, style, lastClipText) }
-    }
-
-    /** Re-cases the visible suggestions after Shift / Caps Lock changed, without recomputing them. */
-    private fun refreshCandidateCase() {
-        if (!this::slots.isInitialized || candidates.isEmpty()) return
-        val display = casedCandidates(candidates)
-        if (display == shownWords) return
-        shownWords = display
-        for (i in 0 until 3) {
-            val w = display.getOrNull(i) ?: ""
-            if (slots[i].text.toString() != w) slots[i].text = w
-        }
-    }
-
-    /** Empties both the candidate lists and the three slots (stale words must not survive a field change). */
-    private fun resetCandidates() {
-        candidates = emptyList()
-        shownWords = emptyList()
-        if (!this::slots.isInitialized) return
-        slotAnimator?.cancel()
-        for (i in 0 until 3) {
-            slots[i].text = ""
-            slotOlds[i].text = ""
-            slotOlds[i].alpha = 0f
-            slotOlds[i].visibility = View.GONE
-        }
-    }
-
-    private fun setCandidates(list: List<String>) {
-        // Clear the clipboard chip whenever real suggestions arrive, so it
-        // doesn't reappear after the user starts typing. When the list is empty
-        // and a chip is available, show the chip as the only candidate.
-        if (list.isNotEmpty()) {
-            lastClipText = null
-        }
-        val effective: List<String> =
-            if (list.isEmpty() && lastClipText != null && !incognito &&
-                !fieldNoPersonalizedLearning && !fieldSecureInput
-            ) {
-                listOf(lastClipText!!)
-            } else {
-                list
-            }
-        // Re-case for the current keyboard state (Shift / Caps Lock / typed capital).
-        val display = casedCandidates(effective)
-        val rawChanged = effective != candidates
-        if (!rawChanged && display == shownWords) return
-        if (rawChanged) {
-            if (insightsAllowed() && effective.isNotEmpty()) typingStatsStore.recordSuggestionShown()
-            // 4h — track global shown-count for the acceptance-rate adapter.
-            if (personalLearningAllowed() && effective.isNotEmpty()) {
-                acceptanceRateAdapter.recordShown()
-            }
-            if (calibratorLearningAllowed()) {
-                effective.take(3).filter { it.isNotEmpty() }.forEach { w ->
-                    lastRawRankerScores[w]?.let { raw -> confidenceCalibrator.recordShown(raw) }
-                }
-            }
-        }
-        val old = shownWords
-        candidates = effective
-        shownWords = display
-        slotAnimator?.cancel()
-
-        var anyChanged = false
-        for (i in 0 until 3) {
-            val newWord = display.getOrNull(i) ?: ""
-            val oldWord = old.getOrNull(i) ?: ""
-            if (newWord == oldWord) continue
-            anyChanged = true
-
-            slotOlds[i].text = oldWord
-            slotOlds[i].alpha = 1f
-            slotOlds[i].visibility = if (oldWord.isEmpty()) View.GONE else View.VISIBLE
-
-            slots[i].text = newWord
-            slots[i].alpha = 0f
-            slots[i].scaleX = if (i == 1) 0.95f else 1f
-            slots[i].scaleY = if (i == 1) 0.95f else 1f
-            slots[i].setTypeface(null, if (i == 1) Typeface.BOLD else Typeface.NORMAL)
-        }
-        if (!anyChanged) return
-
-        slotAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = ShadeMotion.CANDIDATE_SWAP_MS
-            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
-            addUpdateListener {
-                val t = it.animatedValue as Float
-                for (i in 0 until 3) {
-                    slotOlds[i].alpha = 1f - t
-                    slots[i].alpha = t
-                    if (i == 1) {
-                        val s = 0.95f + 0.05f * t
-                        slots[i].scaleX = s
-                        slots[i].scaleY = s
+    internal fun updateWallpaperListener() {
+        if (Build.VERSION.SDK_INT < 27) return
+        val wm = runCatching { WallpaperManager.getInstance(this) }.getOrNull() ?: return
+        val wanted = Themes.usesWallpaper(prefs)
+        if (wanted && wallpaperListener == null) {
+            val listener = WallpaperManager.OnColorsChangedListener { _, _ ->
+                // Wallpaper changed: re-derive the palette and repaint if the
+                // theme is wallpaper-driven. Rare event — full applyPrefs is fine.
+                mainHandler.post {
+                    if (this::kb.isInitialized && Themes.usesWallpaper(prefs)) {
+                        prefsApplier.applyPrefs()
                     }
                 }
             }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    for (i in 0 until 3) {
-                        slotOlds[i].alpha = 0f
-                        slotOlds[i].visibility = View.GONE
-                        slots[i].alpha = 1f
-                        slots[i].scaleX = 1f
-                        slots[i].scaleY = 1f
-                    }
-                }
-            })
-            start()
+            wallpaperListener = listener
+            runCatching { wm.addOnColorsChangedListener(listener, mainHandler) }
+                .onFailure { wallpaperListener = null }
+        } else if (!wanted && wallpaperListener != null) {
+            runCatching { wallpaperListener?.let { wm.removeOnColorsChangedListener(it) } }
+            wallpaperListener = null
         }
     }
 
-    private fun pickSuggestion(i: Int) {
-        val w = candidates.getOrNull(i) ?: return
-        if (w.isEmpty()) return
-        // `w` (raw) is used for all learning/statistics; `shown` is what the user tapped and what is committed.
-        val shown = shownWords.getOrNull(i)?.takeIf { it.isNotEmpty() } ?: w
-        // If the picked candidate was the clipboard chip, clear it so it
-        // doesn't reappear after the text is committed.
-        if (lastClipText != null && w == lastClipText) lastClipText = null
-        if (insightsAllowed()) typingStatsStore.recordSuggestionAccepted()
-        // 4i — record acceptance for the acceptance-rate adapter + propagate
-        // learning-rate multiplier to the online ranker; observe session
-        // bigram; record sentence-position acceptance.
-        if (personalLearningAllowed()) {
-            acceptanceRateAdapter.recordAccepted()
-            onlineRankerTrainer.setLearningRateMultiplier(acceptanceRateAdapter.learningRateMultiplier())
-        }
-        sessionBigramBoost.observeBigram(contextWordsExcluding(w).lastOrNull(), w)
-        val pos = sentencePositionScorer.currentPosition(contextWordsExcluding(w))
-        if (personalLearningAllowed()) {
-            sentencePositionScorer.recordAcceptance(pos)
-        }
-        val prevWords = contextWordsExcluding(w)
-        val prev1 = prevWords.lastOrNull()
-        val prev2 = prevWords.dropLast(1).lastOrNull()
-        val typed = composing.toString().ifEmpty { currentTypedWordFromField() }
+    internal fun insightsAllowed(): Boolean =
+        typingInsightsOn && !incognito && !fieldNoPersonalizedLearning
 
-        if (learnOn && personalLearningAllowed()) {
-            userWordMemory.bump(w)
-        }
-        if (adaptiveLearningAllowed()) {
-            adaptiveWordMemory.record(w)
-        }
-        if (appContextLearningAllowed()) {
-            appContextModel.recordWord(w)
-        }
-        if (rankerLearningAllowed() || calibratorLearningAllowed()) {
-            lastRankedFeatures[w]?.let { positive ->
-                if (rankerLearningAllowed()) {
-                    val negatives = lastShownCandidates
-                        .filterNot { it.equals(w, ignoreCase = true) }
-                        .mapNotNull { lastRankedFeatures[it] }
-                    onlineRankerTrainer.adapt(positive, negatives)
-                }
-                if (calibratorLearningAllowed()) {
-                    lastRawRankerScores[w]?.let { raw -> confidenceCalibrator.recordAcceptance(raw) }
-                }
-            }
-        }
 
-        val ic = currentInputConnection ?: return
-        clearUndo()
-        ic.beginBatchEdit()
-        try {
-            if (composing.isNotEmpty()) {
-                composing.clear()
-                ic.commitText(shown, 1)
-            } else {
-                if (typed.isNotEmpty()) ic.deleteSurroundingText(typed.length, 0)
-                ic.commitText(shown, 1)
-            }
-            if (typed.isNotEmpty() && tailValid && tail.endsWith(typed, ignoreCase = true)) {
-                popTail(typed.length)
-            }
-            appendTail(shown)
-            if (shown.isNotEmpty() && shown[0].isLetter()) {
-                ic.commitText(" ", 1)
-                appendTail(" ")
-            }
-        } finally {
-            ic.endBatchEdit()
-        }
-        if (w.isNotEmpty() && w[0].isLetter()) {
-            if (learnOn && personalLearningAllowed() && canCompose) {
-                dict.learn(w, prev2 = prev2, prev1 = prev1)
-            }
-        }
-        lastSpaceTime = 0L
-        afterText()
-    }
+    /**
+     * 4m — Smart number prediction lives in [SuggestionHeuristics.numbersForContext].
+     */
+
 
     companion object {
         private const val MAX_UNDO = 10
@@ -3838,7 +3121,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // Height of the transparent band above the keyboard that accent panels may extend into.
         private const val ACCENT_HEADROOM_DP = 64f
         private const val NEURAL_FAILURE_TTL_MS = 5L * 60L * 1000L
-        private const val SUGGEST_DEBOUNCE_MS = 32L
+        internal const val SUGGEST_DEBOUNCE_MS = 32L
         // 4o — autocorrect confidence threshold. Combined with the typing-speed
         // adjustment in [endWord] to gate aggressive autocorrects.
         private const val AUTOCORRECT_CONFIDENCE_THRESHOLD = 0.85f

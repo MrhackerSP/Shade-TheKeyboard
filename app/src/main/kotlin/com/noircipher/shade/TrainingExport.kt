@@ -44,7 +44,8 @@ object TrainingExport {
         ctx.contentResolver.openOutputStream(uri)?.use { out ->
             writeZip(ctx, out)
         } != null
-    } catch (_: Exception) {
+    } catch (t: Exception) {
+        ShadeLog.w("TrainingExport", "training export failed", t, once = true)
         false
     }
 
@@ -75,7 +76,8 @@ object TrainingExport {
             prefs.edit().putLong(PREF_LAST_EXPORT, now).apply()
             pruneOldExports(dir)
             out
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("TrainingExport", "training auto-export failed", t, once = true)
             out.delete()
             null
         }

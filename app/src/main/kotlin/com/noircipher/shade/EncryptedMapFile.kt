@@ -31,7 +31,7 @@ class EncryptedMapFile(ctx: Context, name: String, private val alias: String) {
             UserWordCodec.decode(plain)
         } catch (e: Exception) {
             Log.w("EncryptedMapFile", "Cannot read ${file.name}; quarantining", e)
-            try { file.renameTo(File(file.parentFile, file.name + ".bad")) } catch (_: Exception) {}
+            try { file.renameTo(File(file.parentFile, file.name + ".bad")) } catch (e: Exception) { Log.w("EncryptedMapFile", "Failed to rename corrupt encrypted map to .bad", e) }
             null
         }
     }
@@ -47,14 +47,15 @@ class EncryptedMapFile(ctx: Context, name: String, private val alias: String) {
                 tmp.delete()
             }
             true
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("EncryptedMapFile", "encrypted map save failed", t, once = true)
             false
         }
     }
 
     fun delete() {
-        try { file.delete() } catch (_: Exception) {}
-        try { File(file.parentFile, file.name + ".bad").delete() } catch (_: Exception) {}
+        try { file.delete() } catch (e: Exception) { Log.w("EncryptedMapFile", "Failed to delete encrypted map file", e) }
+        try { File(file.parentFile, file.name + ".bad").delete() } catch (e: Exception) { Log.w("EncryptedMapFile", "Failed to delete encrypted map .bad file", e) }
     }
 }
 

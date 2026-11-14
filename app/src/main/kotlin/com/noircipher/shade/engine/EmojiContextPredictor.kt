@@ -1,5 +1,7 @@
 package com.noircipher.shade.engine
 
+import android.util.Log
+
 /**
  * #17 — Emoji context predictor.
  *
@@ -7,12 +9,15 @@ package com.noircipher.shade.engine
  * typed a word and is now picking the next — we surface a relevant emoji
  * in the suggestion bar.
  *
- * Two layers:
- *  1. when [neuralScorer] is plugged in (a [TfliteExpressionScorer] running the
- *     transformer_expression model, whose tokenizer vocabulary was recovered
+ * Three layers:
+ *  1. when [conceptScorer] is plugged in (a [TfliteConceptScorer] running the
+ *     curated concept rules, optionally backed by the concept model), typed
+ *     trigger words and phrases contribute emojis first;
+ *  2. when [neuralScorer] is plugged in (a [TfliteExpressionScorer] running the
+ *     emoji_suggester model, whose tokenizer vocabulary was recovered
  *     from its token.csym container), the model scores the last context word
- *     against its 4,522 expression queries and contributes emojis first;
- *  2. the small hardcoded word -> emoji map below fills any remaining slots
+ *     against its 4,522 expression queries and contributes emojis next;
+ *  3. the small hardcoded word -> emoji map below fills any remaining slots
  *     (always available, zero cost).
  */
 object EmojiContextPredictor {
@@ -20,6 +25,10 @@ object EmojiContextPredictor {
     /** Shared with [com.noircipher.shade.emoji.EmojiPredictionEngine]; cleared on close. */
     @Volatile
     var neuralScorer: ExpressionScorer? = null
+
+    /** Concept rules scorer, shared with [com.noircipher.shade.emoji.EmojiPredictionEngine]; cleared on close. */
+    @Volatile
+    var conceptScorer: ExpressionScorer? = null
 
     private val wordToEmoji: Map<String, List<String>> = mapOf(
         "love" to listOf("❤️", "😍", "💕"),
@@ -163,11 +172,20 @@ object EmojiContextPredictor {
         val w = prevWord.trim().lowercase().trimEnd('.', ',', '!', '?')
 
         val out = LinkedHashSet<String>()
+        conceptScorer?.takeIf { it.isAvailable }?.let { scorer ->
+            try {
+                out.addAll(scorer.suggestEmojis(w, limit))
+            } catch (t: Throwable) {
+                // Concept rules are best-effort; the layers below still apply.
+                Log.w("EmojiContextPredictor", "Concept suggestion failed", t)
+            }
+        }
         neuralScorer?.takeIf { it.isAvailable }?.let { scorer ->
             try {
                 out.addAll(scorer.suggestEmojis(w, limit))
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
                 // Neural scoring is best-effort; the map below still applies.
+                Log.w("EmojiContextPredictor", "Emoji suggestion failed", t)
             }
         }
         if (out.size >= limit) return out.toList().take(limit)

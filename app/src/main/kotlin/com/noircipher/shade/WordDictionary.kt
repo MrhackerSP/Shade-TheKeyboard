@@ -1,5 +1,6 @@
 package com.noircipher.shade
 
+import android.util.Log
 import com.noircipher.shade.slide.GlideLexicon
 import android.content.Context
 import android.content.SharedPreferences
@@ -74,8 +75,9 @@ class WordDictionary(private val ctx: Context) {
             for (id in localeId.split(',').map { it.trim() }.filter { it.isNotEmpty() }) {
                 try {
                     readWordList(id, w)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // missing list: skip it
+                    Log.w("WordDictionary", "Failed to read bundled word list", e)
                 }
             }
             val top = if (w.size > MAX_WORDS) {
@@ -291,7 +293,7 @@ class WordDictionary(private val ctx: Context) {
     fun shutdown() {
         userSaver.shutdown()
         val bm = bigramModel ?: return
-        Thread { try { bm.save() } catch (_: Exception) {} }.apply { isDaemon = true; start() }
+        Thread { try { bm.save() } catch (e: Exception) { Log.w("WordDictionary", "Failed to save bigram model on shutdown", e) } }.apply { isDaemon = true; start() }
     }
 
     @Synchronized
@@ -350,8 +352,9 @@ class WordDictionary(private val ctx: Context) {
                 }
                 personalWords = words
                 personalShortcuts = shortcuts
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // Personal dictionary not available — silently skip
+                Log.w("WordDictionary", "Failed to load personal (user) dictionary", e)
             }
         }.apply { isDaemon = true; start() }
     }
@@ -521,20 +524,54 @@ class WordDictionary(private val ctx: Context) {
         return out
     }
 
+    /**
+     * Rich correction result for the precision pipeline.
+     *
+     * [margin] is the score gap between the best candidate and the runner-up:
+     * a small margin means the choice is a coin flip, which is exactly when
+     * an autocorrect should stay silent. [alwaysAllowed] marks deterministic
+     * fixes (contraction maps) that may bypass the learned confidence gate —
+     * the revert path (backspace) still un-does them, so nothing is forced.
+     */
+    data class CorrectionResult(
+        val word: String,
+        val editCost: Float,
+        val margin: Float,
+        val rank: Int,
+        val touchAvg: Float,
+        val touchDiff: Int,
+        val alwaysAllowed: Boolean = false
+    )
+
+    /** Gap below which the best candidate is considered ambiguous and rejected. */
+    val AMBIGUOUS_MARGIN = 0.35f
+
+    /** Pseudo-margin when only one candidate exists (no competitor to lose to). */
+    val UNCONTESTED_MARGIN = 10f
+
     @Synchronized
     fun correction(word: String, isEnglishLocale: Boolean = true): String? {
         return correction(word, isEnglishLocale, emptyList())
     }
 
+    @Synchronized
+    fun correction(word: String, isEnglishLocale: Boolean = true, touches: List<TouchGeometry.KeyTouch> = emptyList()): String? {
+        return correctionDetailed(word, isEnglishLocale, touches)?.word
+    }
+
     /**
-     * Autocorrect with touch geometry.
+     * Autocorrect with touch geometry AND an ambiguity guard.
      * [touches] is a list of per-character KeyTouch offsets. When available,
      * candidates are rescored by how well their letter positions match the
      * actual finger positions — edge hits correct confidently, center hits
      * resist correction.
+     *
+     * Returns null when there is no fix OR when the best two candidates are
+     * statistically indistinguishable (margin < [AMBIGUOUS_MARGIN]) — refusing
+     * to guess is the single highest-precision change an autocorrecter can make.
      */
     @Synchronized
-    fun correction(word: String, isEnglishLocale: Boolean = true, touches: List<TouchGeometry.KeyTouch> = emptyList()): String? {
+    fun correctionDetailed(word: String, isEnglishLocale: Boolean = true, touches: List<TouchGeometry.KeyTouch> = emptyList()): CorrectionResult? {
         val w = word.lowercase()
 
         // English-only (Hinglish "id" must stay "id"), and never rewrite a genuine dictionary word
@@ -542,7 +579,16 @@ class WordDictionary(private val ctx: Context) {
         if (isEnglishLocale) {
             contractions[w]?.let {
                 if (!contains(w) || w in com.noircipher.shade.engine.MultiWordCorrector.SAFE_CONTRACTIONS) {
-                    return match(word, it, isEnglishLocale)
+                    val fixed = match(word, it, isEnglishLocale)
+                    return CorrectionResult(
+                        word = fixed,
+                        editCost = 0.4f,
+                        margin = UNCONTESTED_MARGIN,
+                        rank = maxOf(rankOf(it.lowercase()), 0),
+                        touchAvg = 0f,
+                        touchDiff = 0,
+                        alwaysAllowed = true
+                    )
                 }
             }
         }
@@ -563,6 +609,11 @@ class WordDictionary(private val ctx: Context) {
                 val keyPositions = if (touches.isNotEmpty()) buildKeyPositions() else null
                 var best: String? = null
                 var bestScore = -1000f
+                var secondScore = -1000f
+                var bestEdit = 0f
+                var bestRank = -1
+                var bestTouchSum = 0f
+                var bestTouchDiff = 0
                 for (idx in candidates) {
                     val cand = ss.wordAt(idx)
                     if (cand == w) continue
@@ -575,25 +626,39 @@ class WordDictionary(private val ctx: Context) {
                     // rescore by how well the candidate's letters match the
                     // actual touch positions. A candidate whose letters are
                     // closer to where the finger landed gets a boost.
+                    var touchSum = 0f
+                    var touchDiff = 0
                     if (touches.isNotEmpty() && keyPositions != null) {
-                        var touchBonus = 0f
                         val n = minOf(touches.size, cand.length, w.length)
                         for (i in 0 until n) {
                             if (w[i] != cand[i] && i < touches.size) {
                                 val subCost = TouchGeometry.subCost(w[i], cand[i], touches[i], keyPositions)
                                 // Lower subCost = candidate letter is closer to finger = better
-                                touchBonus += (5f - subCost).coerceIn(-2f, 5f)
+                                touchSum += (5f - subCost).coerceIn(-2f, 5f)
+                                touchDiff++
                             }
                         }
-                        score += touchBonus * 0.3f
+                        score += touchSum * 0.3f
                     }
 
                     if (score > bestScore) {
-                        best = cand
+                        secondScore = bestScore
                         bestScore = score
+                        best = cand
+                        bestEdit = editCost
+                        bestRank = ss.rankOf(idx)
+                        bestTouchSum = touchSum
+                        bestTouchDiff = touchDiff
+                    } else if (score > secondScore) {
+                        secondScore = score
                     }
                 }
-                return best?.let { match(word, it, isEnglishLocale) }
+                val winner = best ?: return null
+                val margin = if (secondScore > -1000f) bestScore - secondScore else UNCONTESTED_MARGIN
+                if (margin < AMBIGUOUS_MARGIN) return null  // ambiguous: refuse to guess
+                val fixed = match(word, winner, isEnglishLocale)
+                val touchAvg = if (bestTouchDiff > 0) bestTouchSum / bestTouchDiff else 0f
+                return CorrectionResult(fixed, bestEdit, margin, bestRank, touchAvg, bestTouchDiff)
             }
         }
 
@@ -604,16 +669,23 @@ class WordDictionary(private val ctx: Context) {
 
         var best: String? = null
         var bestScore = -1000f
+        var secondScore = -1000f
+        var bestEdit = 0f
         val d = Array(24) { FloatArray(24) }
 
         for (cand in ownBucket) {
             if (cand.length !in (w.length - 1)..(w.length + 1)) continue
             val freq = words[cand] ?: continue
             if (!within1(w, cand)) continue
-            val score = kotlin.math.ln(freq.toDouble()).toFloat() - 3f * editCost(w, cand, d)
+            val cost = editCost(w, cand, d)
+            val score = kotlin.math.ln(freq.toDouble()).toFloat() - 3f * cost
             if (score > bestScore) {
-                best = cand
+                secondScore = bestScore
                 bestScore = score
+                best = cand
+                bestEdit = cost
+            } else if (score > secondScore) {
+                secondScore = score
             }
         }
         for (bucket in neighborBuckets) {
@@ -621,14 +693,29 @@ class WordDictionary(private val ctx: Context) {
                 if (cand.length !in (w.length - 1)..(w.length + 1)) continue
                 val freq = words[cand] ?: continue
                 if (!within1(w, cand)) continue
-                val score = kotlin.math.ln(freq.toDouble()).toFloat() - 3f * editCost(w, cand, d) - 0.5f
+                val cost = editCost(w, cand, d)
+                val score = kotlin.math.ln(freq.toDouble()).toFloat() - 3f * cost - 0.5f
                 if (score > bestScore) {
-                    best = cand
+                    secondScore = bestScore
                     bestScore = score
+                    best = cand
+                    bestEdit = cost
+                } else if (score > secondScore) {
+                    secondScore = score
                 }
             }
         }
-        return best?.let { match(word, it, isEnglishLocale) }
+        val winner = best ?: return null
+        val margin = if (secondScore > -1000f) bestScore - secondScore else UNCONTESTED_MARGIN
+        if (margin < AMBIGUOUS_MARGIN) return null
+        return CorrectionResult(
+            word = match(word, winner, isEnglishLocale),
+            editCost = bestEdit,
+            margin = margin,
+            rank = rankOf(winner),
+            touchAvg = 0f,
+            touchDiff = 0
+        )
     }
 
     private fun within1(a: String, b: String): Boolean {

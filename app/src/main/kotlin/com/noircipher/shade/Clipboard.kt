@@ -9,6 +9,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.text.TextUtils
 import android.util.Base64
+import android.util.Log
 import android.util.LruCache
 import android.view.Gravity
 import android.view.View
@@ -54,7 +55,7 @@ class ClipboardStore(private val ctx: Context) {
         return if (value.startsWith("id:")) {
             readImageFile(value.removePrefix("id:"))
         } else {
-            try { Base64.decode(value, Base64.NO_WRAP) } catch (_: Exception) { null }
+            try { Base64.decode(value, Base64.NO_WRAP) } catch (t: Exception) { ShadeLog.w("Clipboard", "clipboard history decode failed", t, once = true); null }
         }
     }
 
@@ -96,7 +97,8 @@ class ClipboardStore(private val ctx: Context) {
             val iv = cipher.iv
             val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
             Base64.encodeToString(iv + encrypted, Base64.NO_WRAP)
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("Clipboard", "clipboard encrypt failed", t, once = true)
             cachedKey = null
             null
         }
@@ -110,7 +112,8 @@ class ClipboardStore(private val ctx: Context) {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, iv))
             String(cipher.doFinal(payload), Charsets.UTF_8)
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("Clipboard", "clipboard decrypt failed", t, once = true)
             cachedKey = null
             null
         }
@@ -145,7 +148,8 @@ class ClipboardStore(private val ctx: Context) {
 
     private fun parseAll(raw: String): List<Clip>? = try {
         parseItems(raw)
-    } catch (_: Exception) {
+    } catch (t: Exception) {
+        ShadeLog.w("Clipboard", "clipboard history parse failed", t, once = true)
         null
     }
 
@@ -154,9 +158,9 @@ class ClipboardStore(private val ctx: Context) {
         try {
             val arr = JSONArray(raw)
             for (i in 0 until arr.length()) {
-                try { out.add(parseOne(arr.getJSONObject(i))) } catch (_: Exception) { /* skip just this entry, keep the rest */ }
+                try { out.add(parseOne(arr.getJSONObject(i))) } catch (e: Exception) { /* skip just this entry, keep the rest */ Log.w("Clipboard", "Clipboard entry skipped (lenient parse)", e) }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) { Log.w("Clipboard", "Clipboard history parse failed (lenient)", e) }
         return out
     }
 
@@ -241,7 +245,8 @@ class ClipboardStore(private val ctx: Context) {
             val stored = encrypt(Base64.encodeToString(bytes, Base64.NO_WRAP)) ?: return null
             File(imageDir, "$id.enc").writeText(stored)
             id
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("Clipboard", "clipboard image write failed", t, once = true)
             null
         }
     }
@@ -260,7 +265,8 @@ class ClipboardStore(private val ctx: Context) {
             val stored = File(imageDir, "$id.enc").readText()
             val decoded = decrypt(stored) ?: return null
             Base64.decode(decoded, Base64.NO_WRAP)
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("Clipboard", "clipboard image read failed", t, once = true)
             null
         }
     }
@@ -288,7 +294,8 @@ class ClipboardStore(private val ctx: Context) {
             val file = File(imageDir, "clip_${System.currentTimeMillis()}.$ext")
             file.writeBytes(bytes)
             file
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("Clipboard", "clipboard temp image write failed", t, once = true)
             null
         }
     }
@@ -463,7 +470,8 @@ private fun decodeThumbnail(bytes: ByteArray): android.graphics.Bitmap? {
         }
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-    } catch (_: Exception) {
+    } catch (t: Exception) {
+        ShadeLog.w("Clipboard", "clipboard thumbnail decode failed", t, once = true)
         null
     }
 }

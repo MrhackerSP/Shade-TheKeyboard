@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 
 /**
  * Transparent helper that asks for the microphone permission. A keyboard (InputMethodService)
@@ -39,7 +40,7 @@ class VoicePermissionActivity : Activity() {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         }
                     )
-                } catch (_: Exception) {}
+                } catch (e: Exception) { Log.w("VoicePermissionActivity", "Failed to open app settings", e) }
             }
         }
         finish()

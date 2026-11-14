@@ -68,7 +68,7 @@ object Backup {
         out.write(iv)
         out.write(encrypted)
         out.toByteArray()
-    } catch (_: Exception) { null }
+    } catch (t: Exception) { ShadeLog.w("Backup", "backup encrypt failed", t, once = true); null }
 
     /** Returns null for a wrong passphrase or a damaged file (GCM tag mismatch). */
     private fun decrypt(data: ByteArray, passphrase: String): String? = try {
@@ -80,7 +80,7 @@ object Backup {
             cipher.init(Cipher.DECRYPT_MODE, deriveKey(passphrase, salt), GCMParameterSpec(128, iv))
             String(cipher.doFinal(encrypted), Charsets.UTF_8)
         }
-    } catch (_: Exception) { null }
+    } catch (t: Exception) { ShadeLog.w("Backup", "backup decrypt failed", t, once = true); null }
 
     /** True when the file at [uri] is an encrypted Shade backup. */
     fun isEncrypted(ctx: Context, uri: Uri): Boolean = try {
@@ -94,7 +94,7 @@ object Backup {
             }
             read == 4 && String(head, Charsets.US_ASCII) == MAGIC
         } ?: false
-    } catch (_: Exception) { false }
+    } catch (t: Exception) { ShadeLog.w("Backup", "backup magic probe failed", t, once = true); false }
 
     fun export(ctx: Context, uri: Uri, passphrase: String): Boolean {
         return try {
@@ -145,7 +145,8 @@ object Backup {
                 .put("adaptive", adaptive)
             val data = encrypt(root.toString(2), passphrase) ?: return false
             ctx.contentResolver.openOutputStream(uri)?.use { it.write(data) } != null
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("Backup", "backup export failed", t, once = true)
             false
         }
     }
@@ -221,7 +222,8 @@ object Backup {
             }
             edit.apply()
             true
-        } catch (_: Exception) {
+        } catch (t: Exception) {
+            ShadeLog.w("Backup", "backup import failed", t, once = true)
             false
         }
     }

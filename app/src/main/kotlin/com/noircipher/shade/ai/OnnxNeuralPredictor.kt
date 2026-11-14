@@ -94,7 +94,7 @@ class OnnxNeuralPredictor(
         val result = try {
             session.run(mapOf(inputName to input))
         } catch (t: Throwable) {
-            try { input.close() } catch (_: Exception) {}
+            try { input.close() } catch (e: Exception) { Log.w("OnnxNeuralPredictor", "Failed to close ONNX input tensor", e) }
             throw t
         }
         try {
@@ -117,8 +117,8 @@ class OnnxNeuralPredictor(
             }
             return logits
         } finally {
-            try { result.close() } catch (_: Exception) {}
-            try { input.close() } catch (_: Exception) {}
+            try { result.close() } catch (e: Exception) { Log.w("OnnxNeuralPredictor", "Failed to close ONNX result tensor", e) }
+            try { input.close() } catch (e: Exception) { Log.w("OnnxNeuralPredictor", "Failed to close ONNX input tensor", e) }
         }
     }
 

@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Color picker sheet (bottom-anchored dialog, monochrome chrome):
+  preview bar with hex readout, HSV square + hue rail, preset grid,
+  hex field, and Reset / Cancel / Apply actions.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_noir_sheet"
+    android:paddingStart="20dp"
+    android:paddingEnd="20dp"
+    android:paddingTop="20dp"
+    android:paddingBottom="24dp">
+
+    <TextView
+        android:id="@+id/picker_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/noir_text"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <FrameLayout
+        android:id="@+id/picker_preview"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginTop="14dp">
+
+        <TextView
+            android:id="@+id/picker_preview_hex"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+    </FrameLayout>
+
+    <com.noircipher.shade.ColorPickerView
+        android:id="@+id/color_picker_view"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp" />
+
+    <EditText
+        android:id="@+id/picker_hex"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_noir_hex"
+        android:paddingHorizontal="14dp"
+        android:hint="@string/color_hex_hint"
+        android:textColorHint="@color/noir_text_tertiary"
+        android:textColor="@color/noir_text"
+        android:textSize="14sp"
+        android:inputType="textNoSuggestions"
+        android:maxLength="9"
+        android:maxLines="1"
+        android:singleLine="true"
+        android:importantForAutofill="no" />
+
+    <GridLayout
+        android:id="@+id/picker_presets"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:columnCount="8" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/picker_reset"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="12dp"
+            android:background="?attr/selectableItemBackground"
+            android:text="@string/color_reset_to_auto"
+            android:textColor="@color/noir_text_secondary"
+            android:textSize="14sp" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/picker_cancel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="12dp"
+            android:background="?attr/selectableItemBackground"
+            android:text="@android:string/cancel"
+            android:textColor="@color/noir_text"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/picker_apply"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:background="@drawable/bg_noir_button"
+            android:paddingHorizontal="22dp"
+            android:paddingVertical="12dp"
+            android:text="@string/color_apply"
+            android:textColor="@color/noir_on_button"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+</LinearLayout>

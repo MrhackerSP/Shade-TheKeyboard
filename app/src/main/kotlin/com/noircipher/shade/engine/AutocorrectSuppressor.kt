@@ -84,6 +84,13 @@ class AutocorrectSuppressor(context: Context) {
         prefs.edit().clear().apply()
     }
 
+    /** Re-reads from disk after a backup restore replaced the underlying file. */
+    @Synchronized
+    fun reload() {
+        cache.clear()
+        load()
+    }
+
     companion object {
         private const val TAG = "AutocorrectSuppressor"
         private const val SUPPRESS_THRESHOLD = 2

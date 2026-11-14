@@ -12,7 +12,7 @@ import org.robolectric.annotation.Config
 
 /**
  * Exercises the neural spell checker's pure logic against the real bundled
- * `wpm.vocab`, and verifies graceful degradation: on the JVM the TFLite
+ * `spell_vocab.vocab`, and verifies graceful degradation: on the JVM the TFLite
  * native library is unavailable, so the engine must report unavailable and
  * return no corrections instead of crashing.
  */

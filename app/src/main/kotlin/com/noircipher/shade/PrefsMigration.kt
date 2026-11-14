@@ -1,6 +1,7 @@
 package com.noircipher.shade
 
 import android.content.SharedPreferences
+import android.util.Log
 
 /**
  * Keeps SharedPreferences value types consistent between the settings screen and the keyboard.
@@ -20,16 +21,18 @@ object PrefsMigration {
             if (v !is Int) {
                 prefs.edit().putInt(KEY_OFFSET_Y, (v as? Number)?.toInt() ?: 0).apply()
             }
-        } catch (_: Exception) {
-            try { prefs.edit().remove(KEY_OFFSET_Y).apply() } catch (_: Exception) {}
+        } catch (e: Exception) {
+            ShadeLog.w("PrefsMigration", "prefs migration (offset) failed", e, once = true)
+            try { prefs.edit().remove(KEY_OFFSET_Y).apply() } catch (e: Exception) { Log.w("PrefsMigration", "Prefs migration (offset cleanup) failed", e) }
         }
     }
 
     /** Reads the floating-keyboard offset whatever type an older build stored it as. */
     fun readOffsetY(prefs: SharedPreferences): Float = try {
         prefs.getInt(KEY_OFFSET_Y, 0).toFloat()
-    } catch (_: ClassCastException) {
-        try { prefs.getFloat(KEY_OFFSET_Y, 0f) } catch (_: ClassCastException) { 0f }
+    } catch (e: ClassCastException) {
+        ShadeLog.w("PrefsMigration", "legacy offset stored as non-Int", e, once = true)
+        try { prefs.getFloat(KEY_OFFSET_Y, 0f) } catch (t: ClassCastException) { ShadeLog.w("PrefsMigration", "legacy offset unreadable; using 0", t, once = true); 0f }
     }
 
     fun writeOffsetY(prefs: SharedPreferences, value: Float) {

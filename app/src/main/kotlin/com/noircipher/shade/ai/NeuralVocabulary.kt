@@ -1,6 +1,7 @@
 package com.noircipher.shade.ai
 
 import android.content.Context
+import android.util.Log
 import com.noircipher.shade.GlideLMFeatures
 
 class NeuralVocabulary private constructor(
@@ -296,8 +297,9 @@ class NeuralVocabulary private constructor(
                         }
                         return NeuralVocabulary(tokens, tokenToId)
                     }
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // Try the next format.
+                    Log.w("NeuralVocabulary", "Failed to load neural vocabulary", e)
                 }
             }
             return null
