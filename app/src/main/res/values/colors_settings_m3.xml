@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Material 3 light color tokens for the Shade settings UI.
+  Light palette — derived from the same #3B6FD4 seed, light mode variant.
+  The dark counterpart lives in values-night/colors_settings.xml; every
+  token here must exist so day-config lookups never hit a missing resource.
+-->
+<resources>
+    <!-- Primary -->
+    <color name="m3_primary">#3B6FD4</color>
+    <color name="m3_on_primary">#FFFFFF</color>
+    <color name="m3_primary_container">#D7E3FF</color>
+    <color name="m3_on_primary_container">#00205C</color>
+
+    <!-- Secondary -->
+    <color name="m3_secondary">#7E5300</color>
+    <color name="m3_on_secondary">#FFFFFF</color>
+    <color name="m3_secondary_container">#FFDDB3</color>
+    <color name="m3_on_secondary_container">#3F2100</color>
+
+    <!-- Tertiary -->
+    <color name="m3_tertiary">#6B4100</color>
+    <color name="m3_on_tertiary">#FFFFFF</color>
+    <color name="m3_tertiary_container">#FFDEA0</color>
+    <color name="m3_on_tertiary_container">#442B00</color>
+
+    <!-- Error -->
+    <color name="m3_error">#BA1A1A</color>
+    <color name="m3_on_error">#FFFFFF</color>
+    <color name="m3_error_container">#FFDAD6</color>
+    <color name="m3_on_error_container">#410002</color>
+
+    <!-- Surfaces -->
+    <color name="m3_background">#F8F9FF</color>
+    <color name="m3_on_background">#191C20</color>
+    <color name="m3_surface">#F8F9FF</color>
+    <color name="m3_on_surface">#191C20</color>
+    <color name="m3_surface_variant">#E0E2EC</color>
+    <color name="m3_on_surface_variant">#44474F</color>
+
+    <!-- Outline -->
+    <color name="m3_outline">#74777F</color>
+    <color name="m3_outline_variant">#C4C6D0</color>
+
+    <!-- Inverse -->
+
+    <!-- Category icon badge colors -->
+
+    <!-- Search pill -->
+
+    <!-- Section card -->
+</resources>

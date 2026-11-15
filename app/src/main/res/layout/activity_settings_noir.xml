@@ -5,7 +5,8 @@
   top and one flat RecyclerView below: hero title, collapsible section headers
   and setting rows. No cards, no icons, no page navigation.
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- Explicit background: keeps the noir surface color behind translucent system bars. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools" tools:ignore="Overdraw"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -31,8 +32,7 @@
         android:imeOptions="actionSearch"
         android:maxLines="1"
         android:singleLine="true"
-        android:importantForAutofill="no"
-        android:contentDescription="@string/settings_search_hint" />
+        android:importantForAutofill="no" />
 
     <View
         android:layout_width="match_parent"

@@ -1,5 +1,7 @@
 package com.shade.keyboard
 
+import androidx.core.widget.TextViewCompat
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
@@ -36,6 +38,8 @@ import androidx.recyclerview.widget.RecyclerView
  * records it in the Recent section immediately, so the recently used emojis at
  * the top of the list stay up to date in real time.
  */
+// Built programmatically with its dependencies; never inflated from XML.
+@SuppressLint("ViewConstructor")
 class EmojiPanel(
     context: Context,
     private val onEmoji: (String) -> Unit,
@@ -536,7 +540,7 @@ class EmojiPanel(
             cornerRadius = dp(12f).toFloat()
             setColor(t.keyFn)
         }
-        searchField.compoundDrawableTintList = ColorStateList.valueOf(t.hint)
+        TextViewCompat.setCompoundDrawableTintList(searchField, ColorStateList.valueOf(t.hint))
         searchClear.setTextColor(t.hint)
         abc.setTextColor(t.text)
         del.setColorFilter(t.text)
@@ -561,6 +565,8 @@ class EmojiPanel(
 
     // ── Skin tone popup ───────────────────────────────────────────────────
 
+    // Interceptor only watches for touches outside the popup to dismiss it.
+    @SuppressLint("ClickableViewAccessibility")
     private fun showSkinTonePopup(anchor: View, base: String) {
         val container = LinearLayout(context).apply {
             orientation = HORIZONTAL

@@ -1,5 +1,6 @@
 package com.shade.keyboard.analytics
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -10,6 +11,8 @@ import com.shade.keyboard.Layouts
 import kotlin.math.max
 import kotlin.math.min
 
+// Built programmatically with its dependencies; never inflated from XML.
+@SuppressLint("ViewConstructor")
 class TypingHeatmapView(context: Context, private val model: TouchBiasModel) : View(context) {
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE

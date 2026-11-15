@@ -165,7 +165,8 @@ object Updater {
      */
     suspend fun downloadAndInstall(context: Context, info: UpdateInfo) {
         if (progress != null) return
-        if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
+        // canRequestPackageInstalls() is API 26+, exactly our minSdk: no guard needed.
+        if (!context.packageManager.canRequestPackageInstalls()) {
             error = "Allow update installation in settings, then try again"
             runCatching {
                 context.startActivity(

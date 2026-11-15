@@ -45,6 +45,9 @@ class OnlineRankerTrainer(context: Context) {
      * Implemented as a deterministic PRNG seeded by uptime — no privacy
      * implications, no persistent state.
      */
+    // Thread.id is the documented entropy source here; threadId() does not
+    // exist on the minimum API level, so the deprecation is intentional.
+    @Suppress("DEPRECATION")
     fun shouldExplore(): Boolean {
         // XOR with current thread id + uptime as entropy source.
         val seed = System.nanoTime() xor Thread.currentThread().id xor 0x2545F4914F6CDD1DL

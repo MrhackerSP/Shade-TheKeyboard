@@ -1,5 +1,6 @@
 package com.shade.keyboard.gif
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Outline
 import android.graphics.Typeface
@@ -24,6 +25,8 @@ import com.shade.keyboard.Themes
  * Compact GIF picker that sits above the normal keyboard: a query line (typed on the keyboard
  * below, see [GifController]) and a horizontally scrolling strip of animated thumbnails.
  */
+// Built programmatically with its dependencies; never inflated from XML.
+@SuppressLint("ViewConstructor")
 class GifBar(
     context: Context,
     private val loader: GifImageLoader,

@@ -1,5 +1,6 @@
 package com.shade.keyboard
 
+import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.Context
 import android.content.Intent
@@ -225,6 +226,8 @@ class SettingsActivity : AppCompatActivity() {
      * colors only take effect when the theme is "custom", so picking a color
      * also switches the theme (with a toast) instead of silently doing nothing.
      */
+    // Dialog content is detached from any root; null root is the dialog idiom.
+    @SuppressLint("InflateParams")
     internal fun showColorPicker(key: String, titleRes: Int, autoColor: Int) {
         val view = LayoutInflater.from(this).inflate(R.layout.dialog_color_picker, null)
         val preview = view.findViewById<View>(R.id.picker_preview)

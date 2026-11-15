@@ -1,5 +1,6 @@
 package com.shade.keyboard
 
+import android.annotation.SuppressLint
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
@@ -107,6 +108,8 @@ import java.util.ArrayDeque
  * ShadeService - locals shadow identically and `with` being inline
  * preserves bare-return control flow. Behavior is unchanged.
  */
+// Toolbar icons handle raw touches for press feedback by design.
+@SuppressLint("ClickableViewAccessibility")
 internal class ToolbarController(private val svc: ShadeService) {
 
     internal fun rebuildToolbar() { with(svc) {

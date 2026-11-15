@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Deliberate severity tuning for checks that do not apply to this codebase. -->
+<lint>
+    <!-- Style preference: the imperative SharedPreferences/edit style is used
+         consistently across the codebase and is kept on purpose. -->
+    <issue id="UseKtx" severity="ignore" />
+    <!-- Dependency / Gradle upgrades are deliberate, tested decisions; the
+         pinned versions are known-good together (AGP 9.x built-in Kotlin). -->
+    <issue id="GradleDependency" severity="ignore" />
+    <issue id="NewerVersionAvailable" severity="ignore" />
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+    <!-- arm64-v8a-only APK is a deliberate size and compatibility decision. -->
+    <issue id="ChromeOsAbiSupport" severity="ignore" />
+    <!-- The settings adapter rebuilds its rows wholesale by design; the row
+         set changes shape with search/collapse, so granular notifications
+         would be strictly more code for no visible benefit. -->
+    <issue id="NotifyDataSetChanged" severity="ignore" />
+    <!-- IME method.xml attributes are inert below their API level by design;
+         the platform simply ignores them on older releases. -->
+    <issue id="UnusedAttribute" severity="ignore" />
+    <!-- The launcher adaptive-icon folder must keep its -v26 qualifier: AGP 9
+         normalizes the version-less mipmap-anydpi to anydpi-v4 and then strips
+         that config as below minSdk, which removes the icon from the merged
+         resources entirely (aapt2: "resource mipmap/ic_launcher not found").
+         Lint's suggestion to drop the qualifier is a false positive here. -->
+    <issue id="ObsoleteSdkInt" severity="ignore" />
+</lint>

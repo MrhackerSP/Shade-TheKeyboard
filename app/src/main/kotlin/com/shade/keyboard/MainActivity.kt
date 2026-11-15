@@ -25,6 +25,9 @@ class MainActivity : AppCompatActivity() {
     private var btnSettings: Button? = null
     private var testField: EditText? = null
 
+    // statusBarColor/navigationBarColor and SHOW_IMPLICIT are deprecated in
+    // favor of edge-to-edge; migration is a separate design task.
+    @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -84,6 +87,9 @@ class MainActivity : AppCompatActivity() {
      * appears. If Shade is not the current default IME, we additionally open
      * the system picker so the user can switch to Shade before typing.
      */
+    // SHOW_IMPLICIT is the documented soft-request flag; the replacement API
+    // is not available at our minSdk level.
+    @Suppress("DEPRECATION")
     private fun onTryKeyboard(view: View) {
         val tf = testField
         if (tf != null) {

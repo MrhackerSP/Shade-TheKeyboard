@@ -1,5 +1,6 @@
 package com.shade.keyboard
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -307,6 +308,8 @@ class ClipboardStore(private val ctx: Context) {
     }
 }
 
+// Built programmatically with its dependencies; never inflated from XML.
+@SuppressLint("ViewConstructor")
 class ClipboardPanel(
     context: Context,
     private val store: ClipboardStore,

@@ -18,150 +18,69 @@
     <string name="next">Next</string>
     <string name="done">Done</string>
     <string name="abc">ABC</string>
-    <string name="yes">Yes</string>
-    <string name="no">No</string>
-    <string name="done_toast">Done</string>
 
     <string name="clip_empty">Nothing copied yet</string>
     <string name="clip_clear">Clear unpinned</string>
 
     <!-- Settings: screens -->
-    <string name="scr_layouts">Languages &amp; layouts</string>
-    <string name="scr_layouts_sum">Layout, custom layout, dictionaries</string>
-    <string name="scr_appearance">Appearance</string>
-    <string name="scr_appearance_sum">Theme, size, split and one-handed mode, background</string>
-    <string name="scr_colors">Custom colors</string>
-    <string name="scr_colors_sum">Pick your own colors (use theme “Custom”)</string>
-    <string name="scr_typing">Text correction</string>
-    <string name="scr_typing_sum">Suggestions, autocorrect, smart correction, learning, incognito</string>
-    <string name="scr_toolbar">Toolbar &amp; clipboard</string>
-    <string name="scr_toolbar_sum">Toolbar keys and clipboard history</string>
-    <string name="scr_feedback">Feedback</string>
-    <string name="scr_feedback_sum">Vibration, sound, long-press delay, animations</string>
 
     <!-- IME subtypes -->
     <string name="subtype_en_US">English (US)</string>
     <string name="subtype_hi">हिन्दी (Hindi)</string>
     <string name="subtype_hinglish">Hinglish</string>
-    <string name="scr_backup">Backup &amp; restore</string>
-    <string name="scr_backup_sum">Export or import settings, learned words, and training data</string>
-    <string name="scr_learning">Adaptive learning</string>
-    <string name="scr_learning_sum">Recency, autocorrect-undo, app context, calibration, online ranker</string>
 
     <!-- Layouts -->
-    <string name="pref_layout">Layout</string>
-    <string name="pref_custom_layout">Custom layout</string>
-    <string name="pref_custom_layout_sum">Used when layout is “Custom”. One row per line (2–4 rows), keys separated by spaces, alternates after |, e.g. a|àáâ</string>
     <string name="pref_number_row">Number row</string>
-    <string name="pref_number_row_sum">Show a dedicated row of digits above the letters</string>
-    <string name="pref_dicts">Active dictionaries</string>
-    <string name="pref_dicts_sum">Enable several for multilingual typing</string>
-    <string name="pref_import_dict">Import dictionary</string>
-    <string name="pref_import_dict_sum">Plain text word list, one word per line (optionally “word&#9;frequency”)</string>
-    <string name="pref_delete_dict">Delete imported dictionary</string>
-    <string name="dict_imported">Dictionary imported and enabled</string>
-    <string name="dict_import_failed">Could not read that file</string>
-    <string name="dict_none">No imported dictionaries</string>
-    <string name="layout_invalid">Invalid custom layout, QWERTY will be used</string>
 
     <!-- Appearance -->
     <string name="pref_theme">Theme</string>
     <string name="pref_key_height">Key height</string>
-    <string name="pref_resize_keyboard">Resize keyboard</string>
-    <string name="pref_resize_keyboard_sum">Show a drag handle above the keyboard to resize it live (floating-keyboard style). The handle disappears when you finish.</string>
     <string name="pref_key_borders">Key borders</string>
-    <string name="pref_hints">Show number hints</string>
-    <string name="pref_popup">Key preview popup</string>
-    <string name="pref_popup_sum">Show a popup of the character above the key as you press it</string>
     <string name="pref_one_handed">One-handed mode</string>
-    <string name="pref_split">Split keyboard</string>
-    <string name="pref_float_offset">Floating position</string>
-    <string name="pref_float_offset_sum">Lift the keyboard up from the bottom of the screen (0 = docked). Drag the handle above the keyboard for live control.</string>
     <string name="keyboard_docked">Keyboard docked to bottom</string>
     <string name="keyboard_size_reset">Keyboard size reset to default</string>
-    <string name="keyboard_resized">Keyboard resized</string>
     <string name="resize_handle_hint">Drag the handles to resize. Tap Done to finish.</string>
     <string name="resize_done">Done</string>
     <string name="pref_autofill_chips">Autofill suggestions</string>
     <string name="pref_autofill_chips_sum">Show saved passwords, addresses and cards from your autofill service above the keys (Android 11+)</string>
     <string name="resize_reset">Reset</string>
-    <string name="pref_bg_pick">Background image</string>
-    <string name="pref_bg_sum">Choose a picture to show behind the keys</string>
-    <string name="pref_bg_clear">Remove background image</string>
 
     <!-- Colors -->
-    <string name="pref_colors_info">Enter colors as #RRGGBB. Select the theme “Custom” in Appearance to use them.</string>
-    <string name="pref_color_bg">Background</string>
-    <string name="pref_color_key">Keys</string>
-    <string name="pref_color_keyfn">Function keys</string>
-    <string name="pref_color_text">Text</string>
-    <string name="pref_color_accent">Accent</string>
 
     <!-- Typing -->
     <string name="pref_suggestions">Word suggestions</string>
-    <string name="pref_suggestions_sum">Offline suggestions while you type</string>
     <string name="pref_autocorrect">Autocorrect</string>
-    <string name="pref_autocorrect_sum">Fix typos in words when you press space. Backspace right after undoes it.</string>
     <string name="pref_block_offensive">Block offensive words</string>
     <string name="pref_block_offensive_sum">Hide profanity from suggestions and autocorrect. What you type yourself is never changed.</string>
     <string name="pref_smart_correction">Smart correction</string>
-    <string name="pref_smart_correction_sum">Auto-space after punctuation, capitalize new sentences, fix “i” to “I”, and double-space for period</string>
-    <string name="pref_emoji_sugg">Emoji suggestions</string>
-    <string name="pref_emoji_sugg_sum">Suggest an emoji for words like “love” or “pizza”</string>
     <string name="pref_phrase_sugg">Multi-word suggestions</string>
     <string name="pref_phrase_sugg_sum">Suggest whole phrases (e.g. “good morning”, “how are you”). Turn off for word-by-word suggestions.</string>
-    <string name="pref_learn">Learn new words</string>
-    <string name="pref_learn_sum">Stored only on this device</string>
-    <string name="pref_clear">Clear learned words</string>
-    <string name="pref_clear_confirm">Delete all words Shade has learned?</string>
     <string name="pref_incognito">Incognito mode</string>
-    <string name="pref_incognito_sum">Do not learn words or save clipboard entries</string>
     <string name="pref_auto_caps">Auto-capitalize</string>
     <string name="pref_double_space">Double-space for period</string>
 
     <!-- Toolbar -->
-    <string name="pref_toolbar_keys">Toolbar keys</string>
     <string name="pref_toolbar_open">Open toolbar by default</string>
-    <string name="pref_clip">Clipboard history</string>
-    <string name="pref_clip_sum">Keep recent copied text in the clipboard panel</string>
-    <string name="pref_clear_clip">Clear clipboard history</string>
 
     <!-- Feedback -->
     <string name="pref_haptic">Vibrate on keypress</string>
     <string name="pref_haptic_strength">Haptic strength</string>
     <string name="pref_sound">Sound on keypress</string>
-    <string name="pref_longpress">Long-press delay (ms)</string>
     <string name="pref_typing_burst">Typing burst animation</string>
-    <string name="pref_typing_burst_sum">Show a subtle animation when typing rapidly</string>
     <string name="pref_trackpad">Trackpad mode</string>
-    <string name="pref_trackpad_sum">Long-press spacebar to move the cursor in any direction</string>
-    <string name="pref_glide">Glide typing</string>
-    <string name="pref_glide_sum">Swipe across letters to type a word without lifting your finger</string>
     <string name="pref_repeat_delay">Key repeat delay</string>
-    <string name="pref_repeat_delay_sum">Time before backspace starts repeating (ms)</string>
     <string name="pref_repeat_interval">Key repeat interval</string>
-    <string name="pref_repeat_interval_sum">Interval between backspace repeats (ms)</string>
 
     <!-- Backup -->
-    <string name="pref_backup_export">Back up</string>
-    <string name="pref_backup_sum">Saves settings and learned words to a passphrase-encrypted file you choose</string>
-    <string name="pref_backup_import">Restore</string>
     <string name="backup_done">Backup saved</string>
-    <string name="restore_done">Restored. Reopen the keyboard to apply.</string>
     <string name="backup_failed">That did not work</string>
-    <string name="backup_not_supported">Not a Shade encrypted backup (.shdbak). Older plain JSON backups are no longer supported.</string>
-    <string name="backup_wrong_passphrase">Wrong passphrase or damaged backup file</string>
     <string name="backup_pass_title_export">Encrypt backup</string>
     <string name="backup_pass_title_import">Backup passphrase</string>
     <string name="backup_pass_warning">Choose a passphrase of at least 8 characters. Keep it safe: without it this backup cannot be restored.</string>
     <string name="backup_pass_hint">Passphrase</string>
-    <string name="backup_pass_confirm_hint">Confirm passphrase</string>
     <string name="backup_pass_short">Enter a passphrase of at least 8 characters</string>
-    <string name="backup_pass_mismatch">Passphrases do not match</string>
 
     <!-- Adaptive learning -->
-    <string name="pref_learning_master">Adaptive learning</string>
-    <string name="pref_learning_master_sum">Allow the keyboard to learn from what you type. Disabled automatically in incognito mode and password fields.</string>
     <string name="pref_learning_adaptive">Recency-weighted words</string>
     <string name="pref_learning_adaptive_sum">Recently-typed words surface faster; stale ones fade</string>
     <string name="pref_learning_appctx">Per-app vocabulary</string>
@@ -176,192 +95,30 @@
     <string name="pref_learning_correction_sum">Remember the fixes you keep and apply them faster next time; reverting one removes it</string>
     <string name="pref_learning_touch">Adaptive touch model</string>
     <string name="pref_learning_touch_sum">Learn where your fingers land on each key to judge typos more accurately</string>
-    <string name="pref_learning_clear_all">Clear all adaptive learning data</string>
-    <string name="pref_learning_clear_all_confirm">Delete all adaptive learning data? This includes recency scores, app-context vocabularies, autocorrect suppressions, calibration history, and online-ranker weights.</string>
-    <string name="pref_learning_clear_adaptive">Clear recency-weighted words</string>
-    <string name="pref_learning_clear_appctx">Clear per-app vocabulary</string>
-    <string name="pref_learning_clear_suppressor">Clear autocorrect suppressions</string>
-    <string name="pref_learning_clear_calibrator">Clear calibration history</string>
-    <string name="pref_learning_clear_ranker">Reset ranker weights</string>
-    <string name="pref_learning_cleared">Adaptive learning data cleared</string>
 
     <!-- Training data contribution -->
-    <string name="pref_contribute">Keep local learning snapshots</string>
-    <string name="pref_contribute_sum">Once a day Shade saves a snapshot of your learned words and word-pair counts in the app\'s private storage, so you can export it later. Nothing is ever uploaded: Shade has no internet permission. Snapshots can reveal what you type, so treat exports as personal data. Turn off to stop and delete snapshots.</string>
-    <string name="pref_export_training">Export training data now</string>
-    <string name="pref_export_training_sum">Write your learned words and n-gram counts to a file you choose</string>
-    <string name="pref_clear_training">Delete saved training data</string>
-    <string name="pref_clear_training_sum">Remove all auto-saved training exports from this device</string>
-    <string name="export_training_done">Training data exported</string>
-    <string name="export_training_failed">Could not export training data</string>
-    <string name="export_training_none">No training data to export yet</string>
-    <string name="export_training_confirm">Export learned words and n-gram counts?</string>
-    <string name="export_training_confirm_msg">This file contains only aggregated statistics: word frequencies and word-pair counts. No sentences, no clipboard, no personal identifiers.</string>
-    <string name="clear_training_confirm">Delete all saved training data?</string>
-    <string name="clear_training_done">Saved training data deleted</string>
 
-    <string name="about_title">About Shade</string>
-    <string name="about_sum">Version 1.0, no internet permission</string>
-    <string name="about_text">Original open-source keyboard. Long-press keys for accents, swipe the space bar to move the cursor, tap › on the suggestion bar for the toolbar.</string>
     <string name="pref_auto_update">Auto-check for updates</string>
-    <string name="pref_auto_update_sum">Check for new versions when the app starts</string>
-    <string name="pref_check_updates">Check for updates now</string>
-    <string name="pref_check_updates_sum">Manually check if a new version is available</string>
     <string name="update_available">Shade %1$s is available</string>
     <string name="update_download">Download and install</string>
-    <string name="update_downloading">Downloading… %1$d%%</string>
     <string name="update_uptodate">You are running the latest version</string>
     <string name="update_failed">Could not download the update</string>
-    <string name="update_install_perm">Allow update installation in settings, then try again</string>
 
-    <string-array name="theme_entries">
-        <item>Follow system</item>
-        <item>Light</item>
-        <item>Dark</item>
-        <item>Black (AMOLED)</item>
-        <item>Dynamic (Android 12+)</item>
-        <item>Custom</item>
-    </string-array>
-    <string-array name="theme_values">
-        <item>system</item>
-        <item>light</item>
-        <item>dark</item>
-        <item>amoled</item>
-        <item>dynamic</item>
-        <item>custom</item>
-    </string-array>
-    <string-array name="one_hand_entries">
-        <item>Off</item>
-        <item>Left</item>
-        <item>Right</item>
-    </string-array>
-    <string-array name="one_hand_values">
-        <item>off</item>
-        <item>left</item>
-        <item>right</item>
-    </string-array>
-    <string-array name="split_entries">
-        <item>Off</item>
-        <item>Landscape only</item>
-        <item>Always</item>
-    </string-array>
-    <string-array name="split_values">
-        <item>off</item>
-        <item>landscape</item>
-        <item>always</item>
-    </string-array>
-    <string-array name="layout_entries">
-        <item>QWERTY</item>
-        <item>QWERTZ</item>
-        <item>AZERTY</item>
-        <item>Dvorak</item>
-        <item>Colemak</item>
-        <item>Custom</item>
-    </string-array>
-    <string-array name="layout_values">
-        <item>qwerty</item>
-        <item>qwertz</item>
-        <item>azerty</item>
-        <item>dvorak</item>
-        <item>colemak</item>
-        <item>custom</item>
-    </string-array>
-    <string-array name="dict_entries">
-        <item>English</item>
-        <item>हिन्दी (Hindi)</item>
-        <item>Hinglish</item>
-    </string-array>
-    <string-array name="dict_values">
-        <item>en</item>
-        <item>hi</item>
-        <item>hinglish</item>
-    </string-array>
-    <string-array name="dict_default">
-        <item>en</item>
-    </string-array>
-    <string-array name="tool_entries">
-        <item>Clipboard</item>
-        <item>Emoji</item>
-        <item>GIF</item>
-        <item>Translate</item>
-        <item>Number pad</item>
-        <item>Cursor left</item>
-        <item>Cursor right</item>
-        <item>Select all</item>
-        <item>Copy</item>
-        <item>Cut</item>
-        <item>Paste</item>
-        <item>Undo</item>
-        <item>Incognito</item>
-        <item>One-handed</item>
-        <item>Resize keyboard</item>
-        <item>Voice</item>
-        <item>Settings</item>
-    </string-array>
-    <string-array name="tool_values">
-        <item>clip</item>
-        <item>emoji</item>
-        <item>gif</item>
-        <item>translate</item>
-        <item>numpad</item>
-        <item>left</item>
-        <item>right</item>
-        <item>selectall</item>
-        <item>copy</item>
-        <item>cut</item>
-        <item>paste</item>
-        <item>undo</item>
-        <item>incognito</item>
-        <item>onehand</item>
-        <item>resize</item>
-        <item>voice</item>
-        <item>settings</item>
-    </string-array>
 
-    <string name="settings_header_title">Shade</string>
-    <string name="settings_header_subtitle">Keyboard settings</string>
     <string name="settings_search_hint">Search settings…</string>
-    <string name="settings_section_general">General</string>
-    <string name="settings_section_typing">Typing</string>
-    <string name="settings_section_advanced">Advanced</string>
-    <string name="settings_languages_subtitle">Languages, layouts and models</string>
-    <string name="settings_preferences_subtitle">Keys, toolbar and behavior</string>
-    <string name="settings_theme_subtitle">Colors, backgrounds and key styles</string>
-    <string name="settings_corrections_subtitle">Autocorrect, prediction and learning</string>
-    <string name="settings_voice_subtitle">Dictation and voice input</string>
-    <string name="settings_emoji_subtitle">Emoji, stickers and GIFs</string>
-    <string name="settings_clipboard_subtitle">Saved clips and pinned items</string>
-    <string name="settings_backup_subtitle">Export and restore settings</string>
-    <string name="settings_about_subtitle">Version, license and project details</string>
-    <string name="pref_languages">Languages</string>
-    <string name="pref_preferences">Preferences</string>
-    <string name="pref_corrections">Corrections &amp; suggestions</string>
-    <string name="pref_voice">Voice typing</string>
-    <string name="pref_clipboard">Clipboard</string>
-    <string name="pref_about">About</string>
-    <string name="pref_emoji">Emoji &amp; GIFs</string>
-    <string name="pref_backup">Backup &amp; restore</string>
-    <string name="settings_coming_soon">Coming soon</string>
     <string name="pref_voice_input">Voice typing</string>
-    <string name="pref_voice_input_sum">Tap the mic to dictate. Audio is handled by your phone\'s speech recognizer, which may send it to its provider\'s servers if no offline model is installed. Shade itself never sends audio anywhere.</string>
     <string name="voice_input_unavailable">Voice input unavailable on this device</string>
-    <string name="voice_input_perm_denied">Microphone permission denied. Enable it in Android Settings to use voice typing.</string>
-    <string name="pref_neural_predictions">Neural predictions</string>
-    <string name="pref_neural_predictions_sum">Use an on-device ONNX model for smarter suggestions</string>
 
     <string name="open_input_settings">Open input settings</string>
     <string name="choose_keyboard">Choose Shade</string>
     <string name="clip_image">Image</string>
     <string name="settings_typing">Typing insights</string>
-    <string name="settings_typing_subtitle">Stats, heatmap, and typing-position learning</string>
     <string name="typing_stats_title">Typing insights</string>
     <string name="typing_stats_toggle">Enable typing insights</string>
     <string name="typing_stats_clear">Clear typing data</string>
 
     <!-- Emoji panel -->
     <string name="emoji_search_hint">Search emoji</string>
-    <string name="emoji_recent">Recent</string>
-    <string name="emoji_no_results">No matching emoji</string>
 
     <!-- GIF picker (online) -->
     <string name="gif_search_hint">Search GIFs</string>
@@ -379,14 +136,9 @@
 
     <!-- Translator -->
     <string name="translator_hint">Type to translate</string>
-    <string name="translator_loading">Translating…</string>
     <string name="translator_error">Translation failed — check your connection</string>
-    <string name="translator_target">Target language</string>
-    <string name="translator_auto">Auto</string>
     <string name="pref_translator">Translator</string>
-    <string name="pref_translator_sum">Show a translate button in the toolbar</string>
     <string name="pref_gif">GIF search (online)</string>
-    <string name="pref_gif_sum">Show the GIF button in the toolbar. Searches are sent to the GIF provider after you accept the notice.</string>
 
     <!-- Onboarding -->
     <string name="try_keyboard">Try the keyboard</string>
@@ -396,19 +148,8 @@
 
     <!-- Top-level -->
     <string name="settings_subtitle">Keyboard settings</string>
-    <string name="settings_back">Back</string>
 
     <!-- Category titles + subtitles (home page cards) -->
-    <string name="cat_appearance">Appearance</string>
-    <string name="cat_appearance_sub">Theme, colors, key style, size, layout</string>
-    <string name="cat_typing">Typing</string>
-    <string name="cat_typing_sub">Autocorrect, suggestions, glide, haptics, sound</string>
-    <string name="cat_languages">Languages</string>
-    <string name="cat_languages_sub">Dictionaries, emoji, GIF, voice, learning</string>
-    <string name="cat_backup">Backup &amp; data</string>
-    <string name="cat_backup_sub">Export, import, clipboard, clear data</string>
-    <string name="cat_about">About &amp; updates</string>
-    <string name="cat_about_sub">Version, update checker, typing stats</string>
 
     <!-- Section headers (inside detail pages) -->
     <string name="section_appearance">Appearance</string>
@@ -417,17 +158,6 @@
     <string name="section_backup">Backup</string>
     <string name="section_about">About</string>
 
-    <string name="section_theme">Theme</string>
-    <string name="section_colors">Colors</string>
-    <string name="section_keys">Keys</string>
-    <string name="section_correction">Text correction</string>
-    <string name="section_glide">Glide &amp; gestures</string>
-    <string name="section_feedback">Feedback</string>
-    <string name="section_dictionaries">Dictionaries &amp; media</string>
-    <string name="section_learning">Adaptive learning</string>
-    <string name="section_backup_data">Backup &amp; data</string>
-    <string name="section_about_app">About Shade</string>
-    <string name="section_search_results">Search results</string>
 
     <!-- Theme options -->
     <string name="theme_system">System</string>

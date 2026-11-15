@@ -1,5 +1,6 @@
 package com.shade.keyboard
 
+import android.annotation.SuppressLint
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
@@ -1304,6 +1305,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
      * The mode is determined by whether the user long-pressed (≥400ms)
      * before moving, or started moving immediately.
      */
+    // Raw drag handling for the keyboard resize handle; no click semantics.
+    @SuppressLint("ClickableViewAccessibility")
     private inner class ResizeHandleTouchListener : View.OnTouchListener {
         private var downY = 0f
         private var downTime = 0L
@@ -1394,6 +1397,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
      * Called from SettingsActivity via the "Resize keyboard" preference, which
      * sends an intent that the IME picks up.
      */
+    // IME-internal re-show path: showSoftInputFromInputMethod is the only API
+    // that takes the IME window token directly; no non-deprecated equivalent
+    // exists for services at our target level.
+    @Suppress("DEPRECATION")
     fun setResizeMode(active: Boolean) {
         if (this::resizeHandle.isInitialized == false) return
         resizeModeActive = active
@@ -1425,6 +1432,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
 
     /** Left/right edge handle: drag towards the middle to narrow the keyboard from that side. */
+    // Raw drag handling for the edge-narrowing handles; no click semantics.
+    @SuppressLint("ClickableViewAccessibility")
     private inner class SideHandleTouchListener(private val left: Boolean) : View.OnTouchListener {
         private var downX = 0f
         private var startInset = 0

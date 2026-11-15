@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Slider row: title + live value, thin monochrome track below. -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- Row ripple over the card background is intentional layering. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools" tools:ignore="Overdraw"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"

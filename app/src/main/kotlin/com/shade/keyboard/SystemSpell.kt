@@ -205,7 +205,7 @@ object SystemSpell {
             runCatching {
                 if (results.isNullOrEmpty()) return deliver(null)
                 for (s in results) {
-                    if (s == null || s.suggestionsCount <= 0) {
+                    if (s.suggestionsCount <= 0) {
                         deliver(null)
                         continue
                     }

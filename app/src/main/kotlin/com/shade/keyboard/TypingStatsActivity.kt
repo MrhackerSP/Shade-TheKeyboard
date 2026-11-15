@@ -1,5 +1,6 @@
 package com.shade.keyboard
 
+import androidx.appcompat.widget.SwitchCompat
 import android.graphics.Color
 import android.os.Bundle
 import androidx.preference.PreferenceManager
@@ -19,6 +20,9 @@ class TypingStatsActivity : AppCompatActivity() {
     private lateinit var stats: TypingStatsStore
     private lateinit var touch: TouchBiasModel
 
+    // statusBarColor is set explicitly for the translucent-bar look; the
+    // edge-to-edge migration is a separate design task.
+    @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         stats = LiveStores.get { com.shade.keyboard.analytics.TypingStatsStore(applicationContext) }
@@ -36,7 +40,8 @@ class TypingStatsActivity : AppCompatActivity() {
         setContentView(scroll)
 
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
-        val toggle = Switch(this).apply {
+        // SwitchCompat: the activity theme is AppCompat, not Material3.
+        val toggle = SwitchCompat(this).apply {
             text = getString(R.string.typing_stats_toggle)
             isChecked = prefs.getBoolean("typing_insights", false)
             setOnCheckedChangeListener { _, checked ->

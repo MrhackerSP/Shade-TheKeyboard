@@ -69,6 +69,8 @@ class ColorPickerView @JvmOverloads constructor(
     private val clipPath = Path()
     private val railPath = Path()
     private val svRect = RectF()
+    private var svShaderX: LinearGradient? = null
+    private var svShaderY: LinearGradient? = null
     private val railRect = RectF()
 
     init {
@@ -97,6 +99,15 @@ class ColorPickerView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         svRect.set(0f, paddingTop.toFloat(), w.toFloat(), paddingTop + svHeight)
+        // Cache the saturation/brightness gradients; they only change with the rect.
+        svShaderX = LinearGradient(
+            svRect.left, 0f, svRect.right, 0f,
+            Color.WHITE, Color.TRANSPARENT, Shader.TileMode.CLAMP
+        )
+        svShaderY = LinearGradient(
+            0f, svRect.top, 0f, svRect.bottom,
+            Color.TRANSPARENT, Color.BLACK, Shader.TileMode.CLAMP
+        )
         railRect.set(
             0f, paddingTop + svHeight + gap,
             w.toFloat(), paddingTop + svHeight + gap + hueRailHeight
@@ -132,15 +143,9 @@ class ColorPickerView @JvmOverloads constructor(
         val base = canvas.save()
         canvas.clipPath(clipPath)
         canvas.drawRect(svRect, svPaint.apply { color = hueColor })
-        svPaint.shader = LinearGradient(
-            svRect.left, 0f, svRect.right, 0f,
-            Color.WHITE, Color.TRANSPARENT, Shader.TileMode.CLAMP
-        )
+        svPaint.shader = svShaderX
         canvas.drawRect(svRect, svPaint)
-        svPaint.shader = LinearGradient(
-            0f, svRect.top, 0f, svRect.bottom,
-            Color.TRANSPARENT, Color.BLACK, Shader.TileMode.CLAMP
-        )
+        svPaint.shader = svShaderY
         canvas.drawRect(svRect, svPaint)
         canvas.restoreToCount(base)
 

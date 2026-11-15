@@ -1,5 +1,6 @@
 package com.shade.keyboard
 
+import android.annotation.SuppressLint
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
@@ -40,6 +41,8 @@ private const val DELETE_FAST_DP_PER_MS = 0.55f
  */
 private const val GLIDE_START_KEY_WIDTHS = 0.75f
 
+// Full-screen IME surface: touches are consumed by onTouchEvent by design.
+@SuppressLint("ClickableViewAccessibility")
 class KeyboardView(context: Context) : View(context) {
 
     interface Listener {
@@ -1058,6 +1061,9 @@ class KeyboardView(context: Context) : View(context) {
 
     // ------------------------------------------------------------------ touch
 
+    /** Accessibility entry point; the IME consumes all touches via onTouchEvent. */
+    override fun performClick(): Boolean = super.performClick()
+
     override fun onTouchEvent(e: MotionEvent): Boolean {
         if (trackpadActive) return handleTrackpad(e)
         when (e.actionMasked) {
@@ -1570,6 +1576,8 @@ class KeyboardView(context: Context) : View(context) {
         stopPressAnimation() // lets the released key fade out, even while another finger is down
     }
 
+    // Region invalidate is a deliberate redraw optimization.
+    @Suppress("DEPRECATION")
     private fun invalidate(k: Key) {
         val r = k.invalidateRect
         if (r != null) invalidate(r) else invalidate()
@@ -1651,12 +1659,18 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun hapticModern() {
-        val played = when (hapticStrength) {
-            0 -> playPredefinedHaptic(VibrationEffect.EFFECT_TICK)
-            2 -> playPredefinedHaptic(VibrationEffect.EFFECT_CLICK)
-            else -> false
-        }
+        // Predefined-effect constants are API 29+; guard them so the inlined
+        // constants are provably unreachable below Q. The fallback below still
+        // runs on older releases, matching the previous behavior exactly.
+        val played = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            when (hapticStrength) {
+                0 -> playPredefinedHaptic(VibrationEffect.EFFECT_TICK)
+                2 -> playPredefinedHaptic(VibrationEffect.EFFECT_CLICK)
+                else -> false
+            }
+        } else false
         if (played) return
         performHapticFeedback(
             HapticFeedbackConstants.KEYBOARD_TAP,
@@ -1676,6 +1690,7 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun hapticTick() {
         if (!haptic) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
