@@ -1,0 +1,1773 @@
+package com.shade.keyboard
+
+import android.animation.ValueAnimator
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Rect
+import android.graphics.RectF
+import android.media.AudioManager
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.util.Log
+import android.util.SparseArray
+import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
+import android.view.View
+import androidx.core.graphics.ColorUtils
+import com.shade.keyboard.motion.ShadeMotion
+import java.util.ArrayDeque
+import kotlin.math.abs
+import kotlin.math.min
+import kotlin.math.sqrt
+
+/** Finger speed (dp per ms) above which a slide on delete selects word by word instead of character by character. */
+private const val DELETE_FAST_DP_PER_MS = 0.55f
+
+/**
+ * Distance (in key widths) the finger must travel from the down point before we treat
+ * the stroke as a glide rather than a tap. Glide start threshold:
+ * `max(slop * 1.5f, iw * 0.75f)`. Below this the finger is still "on" the original key
+ * (with normal rollover to neighbours); above it the pointer enters glide mode and
+ * key rollover / preview popups are suppressed.
+ */
+private const val GLIDE_START_KEY_WIDTHS = 0.75f
+
+class KeyboardView(context: Context) : View(context) {
+
+    interface Listener {
+        fun onKey(code: Int)
+        fun onText(text: String)
+        /**
+         * Accent variant selected from a long-press popup.
+         *
+         * @param base   the displayed label of the key that was long-pressed (already case-shifted
+         *               for the current shift state). This is what the IME should compare against
+         *               the trailing char of the composing region to decide whether to swap
+         *               (atomic replaceLast) or append.
+         * @param accent the chosen accented character (already case-shifted).
+         *
+         * Default impl falls back to [onText] for listeners that don’t care about the swap.
+         */
+        fun onAccent(base: String, accent: String) { onText(accent) }
+        fun onCursor(delta: Int)
+        fun onCursorMove(dx: Int, dy: Int)
+        fun onLongPressSpecial()
+        fun onEnterLongPress()
+        fun onTrackpadEnter()
+        fun onTrackpadExit()
+        fun onDeleteWords(count: Int)
+        /** A slide on the delete key has begun: remember the caret and start selecting backwards. */
+        fun onDeleteSlideStart()
+        /**
+         * Move the selection edge by [units] steps (positive = further left, negative = back
+         * towards the caret). A step is one word when [byWord] (fast slide) and one character
+         * otherwise (slow slide). Returns the number of characters now selected.
+         */
+        fun onDeleteSlideStep(units: Int, byWord: Boolean): Int
+        fun onDeleteCommit()
+        fun onDeleteCancel()
+        fun onSwipePath(path: List<FloatArray>): Boolean = false
+        fun onTouchSample(key: Key, x: Float, y: Float) {}
+        /**
+         * Glide typing live preview — called while the finger is still moving, with the
+         * gesture engine's sampled path (NOT the raw touch points). The listener should
+         * decode it asynchronously and surface the result as composing text.
+         *
+         * Replaces the old [onGlidePreview] (which took a quick raw-crossing guess). The
+         * service still gets [onGlidePreview] with `null` on finger-up to clear the
+         * composing region.
+         */
+        fun onGlidePreviewPath(path: List<FloatArray>) {}
+        /** Glide typing live preview — used by the view only to clear the composing text on up. */
+        fun onGlidePreview(word: String?) {}
+        /** Glide typing final commit — called on finger up. */
+        fun onGlideCommit(word: String) {}
+        /** Called when a word is committed (space/punct) with per-character touch offsets. */
+        fun onTouchOffsets(offsets: List<TouchGeometry.KeyTouch>) {}
+    }
+
+    var listener: Listener? = null
+    var kbTheme: KbTheme = Themes.LIGHT
+        set(v) { field = v; invalidate() }
+    var rows: List<List<Key>> = emptyList()
+        private set
+    var contentHeightPx = 0
+    /**
+     * Emoji search mode owns the delete key (backspaces the query). The service
+     * turns the slide-on-delete gesture off so a leftward drag while deleting
+     * cannot start a selection in the app's text field underneath.
+     */
+    var slideDeleteEnabled = true
+    var oneHanded = 0
+        private set
+    var oneHandedWidth = 0.75f
+        set(v) { field = v.coerceIn(0.5f, 0.95f); invalidate() }
+    var haptic = true
+    /** 0 = light, 1 = medium (default, system keyboard tap), 2 = strong. */
+    var hapticStrength = 1
+    var sound = false
+    var showPreview = true
+    var shiftState = 0
+        set(v) { field = v; invalidate() }
+    var enterLabel = ""
+        set(v) { field = v; invalidate() }
+    var enterIsPrimary = false
+        set(v) { field = v; invalidate() }
+    var keyBorders = true
+    var splitKeyboard = false
+    var splitGapDp = 0f
+        set(v) { field = v.coerceIn(0f, 120f); invalidate() }
+    var showHints = true
+
+    var longPressMs = 300L
+    var repeatDelayMs = 350L
+    var repeatIntervalMs = 40L
+
+    var typingBurstEnabled = false
+
+    var bgBitmap: Bitmap? = null
+        set(v) {
+            // The owner (ShadeService) is the only one that recycles; the view just drops the reference.
+            field = v
+            invalidate()
+        }
+
+    var trackpadEnabled = true
+    /** Glide (swipe) typing: when off, swipes behave like plain taps. */
+    var glideEnabled = true
+    private var trackpadActive = false
+    private var trackpadStartX = 0f
+    private var trackpadStartY = 0f
+    private var trackpadLastSentX = 0f
+    private var trackpadLastSentY = 0f
+    private val trackpadStep by lazy { dp(7f) }  // ~22 px on xxhdpi, density-aware
+
+    private var deleteSlideActive = false
+    private var deleteSlideStartX = 0f
+    private var deleteSlideWordCount = 0 // characters currently selected by the slide
+    private var deleteSlideLastX = 0f
+    private var deleteSlideLastT = 0L
+    private var deleteSlideAccum = 0f
+    private var deleteSlideSpeed = 0f // smoothed finger speed in dp per millisecond
+
+    private var splitProgress = if (splitKeyboard) 1f else 0f
+    private var splitAnimator: ValueAnimator? = null
+
+    private var oneHandedProgress = 1f
+    private var oneHandedAnimator: ValueAnimator? = null
+
+    private var layoutAlpha = 1f
+    private var layoutAnimator: ValueAnimator? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        isSubpixelText = true
+    }
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x18000000
+    }
+
+    private val rect = RectF()
+    private val dst = RectF()
+    private val path = Path()
+    private val clipBounds = Rect()
+    private val pressedKeys = HashSet<Key>(16)
+    private val cancelIds = IntArray(20)
+    private var cancelCount = 0
+    private val pointerPool = ArrayDeque<Pointer>(8)
+    private var rowHeight = 0f
+
+    private var pressProgress = 1f
+    private var pressAnimator: ValueAnimator? = null
+
+    private var shiftTapProgress = 0f
+    private var shiftTapAnimator: ValueAnimator? = null
+
+    private var previewKey: Key? = null
+    private var previewProgress = 0f
+    private var previewAnimator: ValueAnimator? = null
+    private val previewBg = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val previewHue = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val previewText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val previewShadow = Paint(Paint.ANTI_ALIAS_FLAG)
+    // Shared popup layer: every key preview and accent grid (all rows) is drawn here, above the whole
+    // keyboard window. The in-view drawing below is only a fallback if the layer can't attach.
+    private val popupLayer = KeyPopupOverlay(this) { kbTheme }
+    private var popupActive = false
+    // Accent panel state. The panel itself is drawn by [popupLayer]; this is the bookkeeping the
+    // touch handling needs (what is shown, where, and which item is selected).
+    private var altShown = false
+    private var altItems: List<String> = emptyList()
+    private var altSel = 0                       // index into altItems
+    private var altLayout: AccentGrid.Layout? = null
+    private var altGeo: AccentGrid.Geometry? = null
+    private var altKeyLeft = 0f                  // pressed key's horizontal extent, for the "stay on the default" zone
+    private var altKeyRight = 0f
+    private var altBaseLabel = ""                // raw label of the long-pressed key (for onAccent)
+
+    /** The view the accent panel dims while it is open (normally the whole keyboard container). */
+    var popupScrimAnchor: View?
+        get() = popupLayer.scrimAnchor
+        set(v) { popupLayer.scrimAnchor = v }
+
+    private var trailActive = false
+    private var trailStartX = 0f
+    private var trailStartY = 0f
+    private var trailEndX = 0f
+    private var trailEndY = 0f
+    private var trailAlpha = 0f
+    private var trailAnimator: ValueAnimator? = null
+    private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val trailGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private var lastKeyTime = 0L
+    private var burstCount = 0
+    private var burstActive = false
+    private var burstProgress = 0f
+    private var burstAnimator: ValueAnimator? = null
+    private val burstPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val vibrator: Vibrator? by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE)
+            if (vm is android.os.VibratorManager) vm.defaultVibrator else null
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+    }
+
+    private val audioManager by lazy {
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+
+    private class Pointer {
+        var key: Key? = null
+        var downX = 0f
+        var downY = 0f
+        var lastX = 0f
+        var lastY = 0f
+        var longRunnable: Runnable? = null
+        var repeatRunnable: Runnable? = null
+        var consumed = false
+        var swiping = false
+        var repeated = false
+        /**
+         * True once the finger has moved far enough from [downX]/[downY] to be a glide
+         * (not a tap). While true, key rollover is suppressed: the pointer stays on
+         * the original key, no preview popups fire for crossed keys, and [fire] is
+         * skipped on up (the glide decoder takes over).
+         *
+         * Glide mode: once a glide is detected, the
+         * only feedback is the trail — individual keys are no longer "pressed".
+         */
+        var gliding = false
+
+        fun reset(k: Key?, x: Float, y: Float) {
+            key = k; downX = x; downY = y; lastX = x; lastY = y
+            longRunnable = null; repeatRunnable = null
+            consumed = false; swiping = false; repeated = false
+            gliding = false
+        }
+    }
+
+    private val pointers = SparseArray<Pointer>()
+    private var slidePointerId = -1
+    private val slidePath = ArrayDeque<FloatArray>()
+    // Touch geometry: per-character offsets for the word being typed
+    private val touchOffsets = ArrayList<TouchGeometry.KeyTouch>()
+    private var gestureEngine: GestureEngine? = null
+    private var gestureStartTime = 0L
+    private var lastGlidePreviewMs = 0L
+
+    private fun obtainPointer(k: Key?, x: Float, y: Float): Pointer {
+        val p = pointerPool.pollFirst() ?: Pointer()
+        p.reset(k, x, y)
+        return p
+    }
+
+    private fun recyclePointer(p: Pointer) {
+        p.key = null
+        p.longRunnable = null
+        p.repeatRunnable = null
+        if (pointerPool.size < 8) pointerPool.offerLast(p)
+    }
+
+    private fun dp(v: Float) = v * resources.displayMetrics.density
+
+    // ------------------------------------------------------------------ layout
+
+    fun setRows(r: List<List<Key>>) {
+        rows = r
+        layoutKeys()
+        invalidate()
+    }
+
+    fun setRowsAnimated(r: List<List<Key>>) {
+        layoutAnimator?.cancel()
+        layoutAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
+            duration = ShadeMotion.KEY_POPUP_OUT_MS
+            interpolator = ShadeMotion.FAST_OUT_LINEAR_IN
+            addUpdateListener { layoutAlpha = it.animatedValue as Float; invalidate() }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    rows = r
+                    layoutKeys()
+                    layoutAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                        duration = ShadeMotion.LAYOUT_FADE_IN_MS
+                        interpolator = ShadeMotion.FAST_OUT_SLOW_IN
+                        addUpdateListener { layoutAlpha = it.animatedValue as Float; invalidate() }
+                        start()
+                    }
+                }
+            })
+            start()
+        }
+    }
+
+    fun relayout() { layoutKeys(); invalidate() }
+
+    fun setSplitAnimated(split: Boolean) {
+        splitKeyboard = split
+        val target = if (split) 1f else 0f
+        if (splitProgress == target) return
+        splitAnimator?.cancel()
+        // Capture both endpoint layouts once, then interpolate key rects per frame.
+        // Key positions are linear in splitProgress (the split gap scales linearly),
+        // so the interpolated frames match what a full layoutKeys() pass would produce
+        // every frame — without ~11 passes over ~40 keys per frame (the old per-frame relayout).
+        val startRects = snapshotKeyRects()
+        val startProgress = splitProgress
+        splitProgress = target
+        layoutKeys()
+        val endRects = snapshotKeyRects()
+        splitAnimator = ValueAnimator.ofFloat(startProgress, target).apply {
+            duration = ShadeMotion.MODE_CHANGE_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
+            addUpdateListener {
+                splitProgress = it.animatedValue as Float
+                val span = target - startProgress
+                val t = if (span == 0f) 1f else (splitProgress - startProgress) / span
+                if (!applyInterpolatedRects(startRects, endRects, t)) layoutKeys()
+                invalidate()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    // Snap to the exact final layout (also covers mid-animation cancels).
+                    splitProgress = target
+                    layoutKeys()
+                    invalidate()
+                }
+            })
+            start()
+        }
+    }
+
+    fun setOneHandedAnimated(side: Int) {
+        val oldSide = oneHanded
+        oneHanded = side
+        val target = if (side == 0) 1f else oneHandedWidth
+        if (oneHandedProgress == target) {
+            if (side != oldSide) { layoutKeys(); invalidate() }
+            return
+        }
+        oneHandedAnimator?.cancel()
+        // Same endpoint-snapshot trick as setSplitAnimated: key positions are linear in
+        // oneHandedProgress (both the width fraction and the side offset scale linearly),
+        // so interpolated rects match a per-frame layoutKeys() pass at a fraction of
+        // the cost (the old per-frame relayout).
+        val startRects = snapshotKeyRects()
+        val startProgress = oneHandedProgress
+        oneHandedProgress = target
+        layoutKeys()
+        val endRects = snapshotKeyRects()
+        oneHandedAnimator = ValueAnimator.ofFloat(startProgress, target).apply {
+            duration = ShadeMotion.MODE_CHANGE_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
+            addUpdateListener {
+                oneHandedProgress = it.animatedValue as Float
+                val span = target - startProgress
+                val t = if (span == 0f) 1f else (oneHandedProgress - startProgress) / span
+                if (!applyInterpolatedRects(startRects, endRects, t)) layoutKeys()
+                invalidate()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    oneHandedProgress = target
+                    layoutKeys()
+                    invalidate()
+                }
+            })
+            start()
+        }
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val h = if (contentHeightPx > 0) contentHeightPx else dp(200f).toInt()
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), h)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        layoutKeys()
+        // Edge to edge: with gesture navigation the system reserves a strip at each screen edge for
+        // "back". Claim those strips for the keyboard so the outermost keys (q/p, a/l, ...) can be
+        // pressed right up to the screen edge.
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val edge = dp(40f).toInt()
+            systemGestureExclusionRects = listOf(
+                android.graphics.Rect(0, 0, edge, h),
+                android.graphics.Rect(w - edge, 0, w, h)
+            )
+        }
+    }
+
+    private fun layoutKeys() {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f || rows.isEmpty()) return
+
+        val availW = w * oneHandedProgress
+        val offX = when (oneHanded) {
+            1 -> 0f
+            2 -> w - availW
+            else -> 0f
+        }
+
+        // Reduced top and bottom padding so the bottom row hugs the edge.
+        val padTop = dp(5f)
+        val padBottom = dp(1f)
+        val bottomRowPad = dp(2f)
+        val defaultPad = dp(3f)
+        rowHeight = (h - padTop - padBottom) / rows.size
+        val maxGap = if (splitGapDp > 0f) dp(splitGapDp) else min(dp(72f), w * 0.15f)
+        val gap = maxGap * splitProgress
+
+        rows.forEachIndexed { r, row ->
+            val isBottom = r == rows.lastIndex
+            val padX = if (isBottom) bottomRowPad else defaultPad
+            val eligible = gap > 0.5f && row.size >= 6 && row.none { it.kind == KeyKind.SPACE }
+            val rowGap = if (eligible) gap else 0f
+            val total = row.sumOf { it.weight.toDouble() }.toFloat()
+            val bottomExtraGaps = if (isBottom) dp(3f) * (row.size - 1) else 0f
+            val unit = (availW - 2 * padX - rowGap - bottomExtraGaps) / total
+
+            var x = offX + padX
+            var gapDone = false
+            val splitIdx = row.size / 2
+            for ((idx, k) in row.withIndex()) {
+                if (eligible && !gapDone && idx >= splitIdx) {
+                    x += rowGap
+                    gapDone = true
+                }
+                k.left = x
+                k.right = x + k.weight * unit
+                k.top = padTop + r * rowHeight
+                k.bottom = k.top + rowHeight
+                k.updateInvalidateRect(dp(3f).toInt())
+                x = k.right
+                if (isBottom && idx < row.size - 1) x += dp(3f)
+            }
+        }
+
+        // Bottom-row outer corners: only the first and last *functional*
+        // keys (not spacers) get a corner treatment so ?123 and Enter hug
+        // the screen edge, matching modern keyboard.
+        val lastRow = rows.lastOrNull() ?: return
+        val visible = lastRow.filter { it.kind != KeyKind.SPACER }
+        for (k in visible) k.outerCorner = KeyOuterCorner.NONE
+        if (visible.isNotEmpty()) {
+            visible.firstOrNull()?.outerCorner = KeyOuterCorner.BOTTOM_LEFT
+            visible.last().outerCorner = KeyOuterCorner.BOTTOM_RIGHT
+        }
+    }
+
+    /**
+     * Flat snapshot of every key's rect as [left, top, right, bottom, ...]. Capturing the
+     * start and end layouts once lets the split / one-handed animators blend key rects
+     * directly per frame instead of re-running the full layout pass on every frame.
+     */
+    private fun snapshotKeyRects(): FloatArray = KeyboardLayoutMath.snapshotRects(rows)
+
+    private fun applyInterpolatedRects(a: FloatArray, b: FloatArray, t: Float): Boolean =
+        KeyboardLayoutMath.blendRects(rows, a, b, t, dp(3f).toInt())
+
+    private fun hit(x: Float, y: Float): Key? = KeyboardLayoutMath.hitKey(rows, x, y)
+
+    private fun display(s: String): String {
+        if (shiftState > 0 && s.length == 1 && s[0].isLetter()) {
+            val u = s.uppercase()
+            if (u.length == 1) return u
+        }
+        return s
+    }
+
+    // ------------------------------------------------------------------ drawing
+
+    override fun onDraw(c: Canvas) {
+        c.drawColor(kbTheme.bg)
+        val bmp = bgBitmap?.takeIf { !it.isRecycled }
+        if (bmp != null) {
+            val scale = maxOf(width.toFloat() / bmp.width, height.toFloat() / bmp.height)
+            val dw = bmp.width * scale
+            val dh = bmp.height * scale
+            dst.set((width - dw) / 2f, (height - dh) / 2f, (width + dw) / 2f, (height + dh) / 2f)
+            c.drawBitmap(bmp, null, dst, null)
+            fill.color = ColorUtils.setAlphaComponent(kbTheme.bg, 0x55)
+            c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
+        }
+
+        pressedKeys.clear()
+        val n = pointers.size()
+        for (i in 0 until n) pointers.valueAt(i).key?.let { pressedKeys.add(it) }
+
+        c.getClipBounds(clipBounds)
+        val clipL = clipBounds.left.toFloat()
+        val clipT = clipBounds.top.toFloat()
+        val clipR = clipBounds.right.toFloat()
+        val clipB = clipBounds.bottom.toFloat()
+
+        val gx = dp(2.5f)
+        val gy = dp(3f)
+        val radius = dp(7f)
+        val outerRadius = dp(24f)
+        val combinedAlpha = ((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255)
+        val pressDown = dp(0.7f)
+
+        for (row in rows) for (k in row) {
+            if (k.kind == KeyKind.SPACER) continue
+            if (k.right < clipL || k.left > clipR || k.bottom < clipT || k.top > clipB) continue
+            val pressAmt = k.pressAmt
+            val isPressed = pressAmt > 0.003f
+            val topShift = pressDown * pressAmt
+            rect.set(
+                k.left + gx,
+                k.top + gy + topShift,
+                k.right - gx,
+                k.bottom - gy + topShift
+            )
+
+            val special = k.kind == KeyKind.ENTER || (k.code == Codes.SHIFT && shiftState == 2)
+            if (!keyBorders && !isPressed && !special) {
+                drawContent(c, k, combinedAlpha)
+                continue
+            }
+
+            if (keyBorders) {
+                shadowPaint.color = 0x18000000
+                rect.set(
+                    k.left + gx,
+                    k.top + gy + dp(1.5f),
+                    k.right - gx,
+                    k.bottom - gy + dp(1.5f)
+                )
+                if (k.outerCorner == KeyOuterCorner.NONE) {
+                    c.drawRoundRect(rect, radius, radius, shadowPaint)
+                } else {
+                    c.drawRoundRect(rect, outerRadius, outerRadius, shadowPaint)
+                }
+                rect.set(
+                    k.left + gx,
+                    k.top + gy + topShift,
+                    k.right - gx,
+                    k.bottom - gy + topShift
+                )
+            }
+
+            var baseCol = when {
+                k.kind == KeyKind.ENTER && enterIsPrimary -> kbTheme.accent
+                k.kind == KeyKind.ENTER -> kbTheme.keyFn
+                k.kind == KeyKind.FUNC && k.code == Codes.SHIFT && shiftState == 2 -> kbTheme.keyFn
+                k.kind == KeyKind.FUNC -> kbTheme.keyFn
+                else -> kbTheme.key
+            }
+            if (bmp != null && !isPressed) baseCol = ColorUtils.setAlphaComponent(baseCol, 0xCC)
+            val col = if (isPressed) {
+                ColorUtils.blendARGB(baseCol, kbTheme.pressed, pressAmt)
+            } else {
+                baseCol
+            }
+            fill.color = ColorUtils.setAlphaComponent(col, combinedAlpha)
+
+            val outer = k.outerCorner
+            if (outer == KeyOuterCorner.NONE) {
+                c.drawRoundRect(rect, radius, radius, fill)
+            } else {
+                drawOuterRoundedKey(c, k, radius, outerRadius, outer)
+            }
+            drawContent(c, k, combinedAlpha)
+
+            if (k.code == Codes.DELETE && deleteSlideActive && deleteSlideWordCount > 0) {
+                drawDeleteSlideBadge(c, k)
+            }
+        }
+
+        // Space-swipe trail (cursor move) — only while a space slide is in progress.
+        if (trailActive && trailAlpha > 0f) drawSpaceSwipeTrail(c)
+        // Gesture (glide typing) trail — independent of trailActive; the gesture engine
+        // manages its own life cycle (live draw + post-release fade).
+        drawGestureTrail(c)
+        if (burstActive && typingBurstEnabled) drawTypingBurst(c)
+        previewKey?.let { if (previewProgress > 0f && !popupActive) drawKeyPreview(c, it) }
+    }
+
+    private fun drawDeleteSlideBadge(c: Canvas, k: Key) {
+        val cx = k.centerX
+        val cy = k.centerY - dp(6f)
+        val badge = deleteSlideWordCount.toString()
+        val r = dp(9f)
+        val badgeY = cy - r - dp(12f)
+        fill.color = kbTheme.accent
+        c.drawCircle(cx, badgeY, r, fill)
+        textPaint.color = kbTheme.accentText
+        textPaint.textSize = dp(11f)
+        c.drawText(badge, cx, badgeY - (textPaint.ascent() + textPaint.descent()) / 2f, textPaint)
+    }
+
+    /**
+     * Draw a key whose outer bottom corner (left or right) is rounded with
+     * [outerRadius] while the other three corners use the regular [radius].
+     * Used for the ?123 key (bottom-left) and Enter key (bottom-right) so
+     * they hug the screen edge the way modern keyboard's do.
+     *
+     * The radii array follows the order expected by Path.addRoundRect:
+     *   [topLeftX, topLeftY, topRightX, topRightY,
+     *    bottomRightX, bottomRightY, bottomLeftX, bottomLeftY]
+     */
+    private fun drawOuterRoundedKey(
+        c: Canvas,
+        k: Key,
+        radius: Float,
+        outerRadius: Float,
+        which: KeyOuterCorner
+    ) {
+        // 8 radii: [tl_x, tl_y, tr_x, tr_y, br_x, br_y, bl_x, bl_y]
+        val r = FloatArray(8) { radius }
+        when (which) {
+            KeyOuterCorner.BOTTOM_LEFT -> {
+                r[6] = outerRadius; r[7] = outerRadius   // bottom-left
+            }
+            KeyOuterCorner.BOTTOM_RIGHT -> {
+                r[4] = outerRadius; r[5] = outerRadius   // bottom-right
+            }
+            KeyOuterCorner.NONE -> { /* all radius */ }
+        }
+        path.reset()
+        path.addRoundRect(rect, r, Path.Direction.CW)
+        c.drawPath(path, fill)
+    }
+
+    private fun textY(p: Paint, cy: Float) = cy - (p.ascent() + p.descent()) / 2f
+
+    private fun drawContent(c: Canvas, k: Key, alpha: Int) {
+        val cx = (rect.left + rect.right) / 2f
+        val cy = (rect.top + rect.bottom) / 2f
+        val s = min(rect.height(), rect.width()) * 0.22f
+        when (k.kind) {
+            KeyKind.CHAR -> {
+                textPaint.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
+                textPaint.textSize = min(rowHeight * 0.40f, dp(24f))
+                c.drawText(display(k.label), cx, textY(textPaint, cy), textPaint)
+                if (showHints && k.alts.isNotEmpty() && k.alts[0].isDigit()) {
+                    textPaint.color = ColorUtils.setAlphaComponent(kbTheme.hint, alpha)
+                    textPaint.textSize = dp(10f)
+                    c.drawText(k.alts.substring(0, 1), rect.right - dp(7f), rect.top + dp(12f), textPaint)
+                }
+            }
+            KeyKind.SPACE -> Unit
+            KeyKind.ENTER -> {
+                if (enterLabel.isNotEmpty()) {
+                    textPaint.color = ColorUtils.setAlphaComponent(
+                        if (enterIsPrimary) kbTheme.accentText else kbTheme.text, alpha
+                    )
+                    textPaint.textSize = dp(14f)
+                    c.drawText(enterLabel, cx, textY(textPaint, cy), textPaint)
+                } else {
+                    stroke.color = ColorUtils.setAlphaComponent(
+                        if (enterIsPrimary) kbTheme.accentText else kbTheme.text, alpha
+                    )
+                    stroke.strokeWidth = dp(2f)
+                    stroke.style = Paint.Style.STROKE
+                    path.reset()
+                    path.moveTo(cx + s, cy - s * 0.9f)
+                    path.lineTo(cx + s, cy)
+                    path.lineTo(cx - s, cy)
+                    path.moveTo(cx - s + s * 0.7f, cy - s * 0.7f)
+                    path.lineTo(cx - s, cy)
+                    path.lineTo(cx - s + s * 0.7f, cy + s * 0.7f)
+                    c.drawPath(path, stroke)
+                }
+            }
+            KeyKind.FUNC -> when (k.code) {
+                Codes.SHIFT -> drawShift(c, cx, cy, s, alpha)
+                Codes.DELETE -> drawDelete(c, cx, cy, s, alpha)
+                Codes.EMOJI -> drawSmiley(c, cx, cy, s, alpha)
+                else -> {
+                    textPaint.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
+                    textPaint.textSize = dp(14f)
+                    c.drawText(k.label, cx, textY(textPaint, cy), textPaint)
+                }
+            }
+            KeyKind.SPACER -> Unit
+        }
+    }
+
+    private fun drawShift(c: Canvas, cx: Float, cy0: Float, s0: Float, alpha: Int) {
+        val caps = shiftState == 2
+        val shiftBoost = 1f + 0.18f * shiftTapProgress
+        val s = s0 * shiftBoost
+        val cy = if (caps) cy0 - s * 0.15f else cy0
+        val col = kbTheme.text
+
+        path.reset()
+        path.moveTo(cx, cy - s)
+        path.lineTo(cx + s, cy)
+        path.lineTo(cx + s * 0.45f, cy)
+        path.lineTo(cx + s * 0.45f, cy + s * 0.9f)
+        path.lineTo(cx - s * 0.45f, cy + s * 0.9f)
+        path.lineTo(cx - s * 0.45f, cy)
+        path.lineTo(cx - s, cy)
+        path.close()
+        stroke.color = ColorUtils.setAlphaComponent(col, alpha)
+        stroke.strokeWidth = dp(2f)
+        stroke.style = if (shiftState > 0) Paint.Style.FILL_AND_STROKE else Paint.Style.STROKE
+        c.drawPath(path, stroke)
+
+        if (caps) {
+            stroke.style = Paint.Style.STROKE
+            stroke.strokeWidth = dp(2f)
+            stroke.color = ColorUtils.setAlphaComponent(col, alpha)
+            c.drawLine(cx - s * 0.5f, cy + s * 1.4f, cx + s * 0.5f, cy + s * 1.4f, stroke)
+        }
+    }
+
+    private fun drawDelete(c: Canvas, cx: Float, cy: Float, s: Float, alpha: Int) {
+        stroke.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
+        stroke.strokeWidth = dp(2f)
+        stroke.style = Paint.Style.STROKE
+        path.reset()
+        path.moveTo(cx - s * 1.1f, cy)
+        path.lineTo(cx - s * 0.4f, cy - s * 0.8f)
+        path.lineTo(cx + s * 1.1f, cy - s * 0.8f)
+        path.lineTo(cx + s * 1.1f, cy + s * 0.8f)
+        path.lineTo(cx - s * 0.4f, cy + s * 0.8f)
+        path.close()
+        c.drawPath(path, stroke)
+        c.drawLine(cx - s * 0.05f, cy - s * 0.35f, cx + s * 0.65f, cy + s * 0.35f, stroke)
+        c.drawLine(cx - s * 0.05f, cy + s * 0.35f, cx + s * 0.65f, cy - s * 0.35f, stroke)
+    }
+
+    private fun drawSmiley(c: Canvas, cx: Float, cy: Float, s: Float, alpha: Int) {
+        stroke.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
+        stroke.strokeWidth = dp(1.8f)
+        stroke.style = Paint.Style.STROKE
+        c.drawCircle(cx, cy, s * 0.95f, stroke)
+        fill.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
+        c.drawCircle(cx - s * 0.35f, cy - s * 0.25f, s * 0.11f, fill)
+        c.drawCircle(cx + s * 0.35f, cy - s * 0.25f, s * 0.11f, fill)
+        rect.set(cx - s * 0.5f, cy - s * 0.45f, cx + s * 0.5f, cy + s * 0.45f)
+        c.drawArc(rect, 20f, 140f, false, stroke)
+    }
+
+    // ------------------------------------------------------------------ spacebar trail
+
+    private fun drawSpaceSwipeTrail(c: Canvas) {
+        // Draw the basic space-swipe trail (cursor movement)
+        val a = trailAlpha
+        if (a > 0f) {
+            val x0 = trailStartX
+            val y0 = trailStartY
+            val x1 = trailEndX
+            val y1 = trailEndY
+
+            trailGlowPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0x22).toInt())
+            trailGlowPaint.strokeWidth = dp(10f)
+            c.drawLine(x0, y0, x1, y1, trailGlowPaint)
+
+            trailPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xAA).toInt())
+            trailPaint.strokeWidth = dp(3f)
+            c.drawLine(x0, y0, x1, y1, trailPaint)
+
+            fill.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xCC).toInt())
+            c.drawCircle(x1, y1, dp(5f), fill)
+        }
+    }
+
+    /**
+     * Draw the glide-typing trail via the gesture engine. Independent of [trailActive]
+     * (which tracks only the space-swipe trail) — the gesture engine manages its own
+     * lifecycle (live draw while the finger is down + whole-trail fade after release).
+     *
+     * Calling [invalidate] here keeps the redraw loop alive while the trail is still
+     * visible, so the post-release fade animates without needing the finger to move.
+     */
+    private fun drawGestureTrail(c: Canvas) {
+        val ge = gestureEngine ?: return
+        if (!ge.hasTrail()) return
+        ge.setTrailColor(kbTheme.accent)
+        ge.drawTrail(c, trailPaint)
+        // Keep animating until the trail is fully gone.
+        if (ge.hasTrail()) invalidate()
+    }
+
+    private fun startTrail(x: Float, y: Float) {
+        trailActive = true
+        trailStartX = x
+        trailStartY = y
+        trailEndX = x
+        trailEndY = y
+        trailAlpha = 0f
+        trailAnimator?.cancel()
+        trailAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = ShadeMotion.SWIPE_TRAIL_FADE_IN_MS
+            addUpdateListener { trailAlpha = it.animatedValue as Float; invalidate() }
+            start()
+        }
+    }
+
+    private fun updateTrail(x: Float, y: Float) {
+        if (!trailActive) return
+        trailEndX = x
+        trailEndY = y
+        invalidate()
+    }
+
+    private fun endTrail() {
+        if (!trailActive) return
+        trailAnimator?.cancel()
+        trailAnimator = ValueAnimator.ofFloat(trailAlpha, 0f).apply {
+            duration = ShadeMotion.SWIPE_TRAIL_FADE_OUT_MS
+            addUpdateListener { trailAlpha = it.animatedValue as Float; invalidate() }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    trailActive = false
+                    invalidate()
+                }
+            })
+            start()
+        }
+    }
+
+    // ------------------------------------------------------------------ preview / alt
+
+    private fun drawKeyPreview(c: Canvas, k: Key) {
+        val label = display(k.label)
+        val t = previewProgress.coerceIn(0f, 1f)
+        val scale = 0.82f + 0.18f * t
+        val w = (k.right - k.left) * 1.3f * scale
+        val h = rowHeight * 1.25f * scale
+        val cx = k.centerX.coerceIn(w / 2f + dp(2f), width - w / 2f - dp(2f))
+        var bottom = k.top + dp(6f)
+        var top = bottom - h
+        if (top < dp(1f)) {
+            bottom += dp(1f) - top
+            top = dp(1f)
+        }
+        val r = dp(14f)
+        val a = (255 * minOf(1f, t * 1.6f)).toInt()
+
+        rect.set(cx - w / 2f, top + dp(2f), cx + w / 2f, bottom + dp(2f))
+        previewShadow.color = ColorUtils.setAlphaComponent(0x000000, (0x40 * t).toInt())
+        c.drawRoundRect(rect, r, r, previewShadow)
+
+        rect.set(cx - w / 2f, top, cx + w / 2f, bottom)
+        previewBg.color = ColorUtils.setAlphaComponent(kbTheme.popupBg, a)
+        c.drawRoundRect(rect, r, r, previewBg)
+
+        previewText.color = ColorUtils.setAlphaComponent(kbTheme.text, a)
+        previewText.textSize = min(h * 0.5f, dp(32f))
+        c.drawText(label, cx, (top + bottom) / 2f - (previewText.ascent() + previewText.descent()) / 2f, previewText)
+    }
+
+    private fun showPreviewFor(k: Key) {
+        if (!showPreview) return
+        if (popupLayer.prepare()) {
+            // Same bubble + animation for every row, drawn above everything in the keyboard window.
+            previewKey = null
+            popupActive = true
+            popupLayer.showPreview(display(k.label), k.left, k.top, k.right, rowHeight)
+            return
+        }
+        // Fallback: draw inside the keyboard view (cannot extend above it).
+        popupActive = false
+        previewKey = k
+        previewAnimator?.cancel()
+        previewAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = ShadeMotion.KEY_POPUP_IN_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
+            addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
+            start()
+        }
+    }
+
+    private fun hidePreview() {
+        if (popupActive) {
+            popupActive = false
+            popupLayer.hidePreview()
+            return
+        }
+        if (previewKey == null) return
+        previewAnimator?.cancel()
+        previewAnimator = ValueAnimator.ofFloat(previewProgress, 0f).apply {
+            duration = ShadeMotion.KEY_POPUP_OUT_MS
+            interpolator = ShadeMotion.FAST_OUT_LINEAR_IN
+            addUpdateListener { previewProgress = it.animatedValue as Float; invalidate() }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    previewKey = null
+                    invalidate()
+                }
+            })
+            start()
+        }
+    }
+
+    /** Opens the accent panel for [k]. Returns false (and shows nothing) if there is nothing to show. */
+    private fun showAlt(p: Pointer, k: Key): Boolean {
+        // Display-shift the alts (so long-pressing 'a' with shift on shows 'Á'), then drop duplicates.
+        val chars = k.alts.map { display(it.toString()) }
+            .distinct()
+            .take(AccentGrid.MAX_ITEMS)
+        if (chars.isEmpty()) return false
+        // The popup layer is the only renderer; without it there is no panel to show.
+        if (!popupLayer.prepare()) return false
+        val n = chars.size
+
+        // The default item: the number printed on a top-row key (q -> 1, w -> 2 ...) or else the
+        // first accent. Releasing without sliding commits it; it sits right above the key.
+        val numberIdx = chars.indexOfFirst { it.length == 1 && it[0].isDigit() }
+        val defaultItem = if (numberIdx >= 0) numberIdx else 0
+
+        val margin = dp(4f)
+        val pad = dp(6f)
+        val preferredCell = dp(48f)
+        // Reserve the strip/headroom above the keyboard; the layer knows how far up the window goes.
+        val minTop = popupLayer.minTopInOwner()
+
+        // Two passes: place once to learn the left edge, find the column above the key, then
+        // build the layout around that column (the placement itself does not depend on it).
+        val geo = AccentGrid.place(
+            n = n, keyCenterX = k.centerX, keyTop = k.top, preferredCell = preferredCell,
+            pad = pad, viewWidth = width.toFloat(), margin = margin, gap = dp(6f), minTop = minTop
+        )
+        val anchorCol = AccentGrid.anchorColumn(k.centerX, geo.left, geo.pad, geo.cell, geo.cols)
+        val layout = AccentGrid.layout(n, anchorCol, defaultItem)
+
+        altItems = chars
+        altBaseLabel = k.label
+        altLayout = layout
+        altGeo = geo
+        altKeyLeft = k.left
+        altKeyRight = k.right
+        altSel = defaultItem
+        altShown = true
+        popupLayer.showAccents(chars, layout, geo, altSel)
+        return true
+    }
+
+    private fun updateAlt(p: Pointer, x: Float, y: Float) {
+        val layout = altLayout ?: return
+        val geo = altGeo ?: return
+        if (!altShown || altItems.isEmpty()) return
+
+        // While the finger is still on the pressed key (below the panel, within the key's width)
+        // the default item stays selected, so a small wobble after the long press changes nothing.
+        val item = if (y >= geo.bottom && x >= altKeyLeft && x <= altKeyRight) {
+            layout.itemOfCell[layout.anchorCell]
+        } else {
+            AccentGrid.hit(layout, geo, x, y)
+        }
+        if (item < 0) return // empty cell: keep the current selection
+        if (item != altSel) {
+            altSel = item
+            popupLayer.setAccentSelection(item)
+            hapticTick()
+        }
+    }
+
+    private fun dismissAlt() {
+        if (!altShown) return
+        // The layer keeps its own copy of the panel and animates it (and the scrim) out.
+        popupLayer.hideAccents()
+        altShown = false
+        altItems = emptyList()
+        altLayout = null
+        altGeo = null
+    }
+
+    // ------------------------------------------------------------------ typing burst
+
+    private fun drawTypingBurst(c: Canvas) {
+        val intensity = burstProgress
+        if (intensity <= 0f) return
+        val cx = width / 2f
+        val cy = height / 2f
+        val maxR = maxOf(width, height) * 0.6f
+        val r = maxR * (1f - intensity)
+        burstPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (intensity * 0x60).toInt())
+        burstPaint.strokeWidth = dp(2f) + dp(3f) * intensity
+        c.drawCircle(cx, cy, r, burstPaint)
+    }
+
+    private fun onKeyBurst() {
+        if (!typingBurstEnabled) return
+        val now = SystemClock.uptimeMillis()
+        if (now - lastKeyTime < 120L) burstCount++ else burstCount = 1
+        lastKeyTime = now
+        if (burstCount >= 6 && !burstActive) {
+            burstActive = true
+            burstAnimator?.cancel()
+            burstAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = ShadeMotion.FEEDBACK_BURST_MS
+                interpolator = ShadeMotion.FAST_OUT_SLOW_IN
+                addUpdateListener { burstProgress = it.animatedValue as Float; invalidate() }
+                addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        burstActive = false; burstProgress = 0f; burstCount = 0; invalidate()
+                    }
+                })
+                start()
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ touch
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (trackpadActive) return handleTrackpad(e)
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                // Deliver touch events as they arrive instead of batching them to the
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                    try { requestUnbufferedDispatch(e) } catch (t: Throwable) { Log.w("KeyboardView", "requestUnbufferedDispatch failed", t) }
+                }
+                val i = e.actionIndex
+                down(e.getPointerId(i), e.getX(i), e.getY(i))
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val n = e.pointerCount
+                for (i in 0 until n) {
+                    val pid = e.getPointerId(i)
+                    // Feed historical points for the glide pointer so fast swipes don't
+                    // cut corners — Android batches intermediate positions between frames
+                    // into a single MOVE event; without these the trail and the gesture
+                    // engine both see only the final position of each batch.
+                    val histCount = e.historySize
+                    if (histCount > 0 && pid == slidePointerId) {
+                        for (h in 0 until histCount) {
+                            move(pid, e.getHistoricalX(i, h), e.getHistoricalY(i, h))
+                        }
+                    }
+                    move(pid, e.getX(i), e.getY(i))
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                up(e.getPointerId(e.actionIndex), false)
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                cancelCount = 0
+                val n = pointers.size()
+                if (cancelIds.size < n) { cancelAllSlow(); return true }
+                for (i in 0 until n) cancelIds[cancelCount++] = pointers.keyAt(i)
+                for (i in 0 until cancelCount) up(cancelIds[i], true)
+            }
+        }
+        return true
+    }
+
+    private fun handleTrackpad(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                trackpadStartX = e.x; trackpadStartY = e.y
+                trackpadLastSentX = 0f; trackpadLastSentY = 0f
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = e.x - trackpadStartX
+                val dy = e.y - trackpadStartY
+                val stepX = ((dx - trackpadLastSentX) / trackpadStep).toInt()
+                val stepY = ((dy - trackpadLastSentY) / trackpadStep).toInt()
+                if (stepX != 0 || stepY != 0) {
+                    listener?.onCursorMove(-stepX, -stepY)
+                    trackpadLastSentX += stepX * trackpadStep
+                    trackpadLastSentY += stepY * trackpadStep
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> exitTrackpad()
+        }
+        return true
+    }
+
+    private fun enterTrackpad() {
+        if (trackpadActive) return
+        trackpadActive = true
+        hapticHeavy()
+        listener?.onTrackpadEnter()
+        invalidate()
+    }
+
+    private fun exitTrackpad() {
+        if (!trackpadActive) return
+        trackpadActive = false
+        listener?.onTrackpadExit()
+        invalidate()
+    }
+
+    private fun cancelAllSlow() {
+        val n = pointers.size()
+        val ids = IntArray(n)
+        for (i in 0 until n) ids[i] = pointers.keyAt(i)
+        for (id in ids) up(id, true)
+    }
+
+    private fun down(id: Int, x: Float, y: Float) {
+        val k = hit(x, y) ?: return
+        val p = obtainPointer(k, x, y)
+        pointers.put(id, p)
+        if (k.kind == KeyKind.CHAR) {
+            listener?.onTouchSample(k, x, y)
+
+            // Touch geometry: record the offset from key center
+            val offset = TouchGeometry.computeTouchOffset(k, x, y)
+            if (offset != null) touchOffsets.add(offset)
+
+            if (glideEnabled) {
+                slidePointerId = id
+                slidePath.clear()
+                slidePath.addLast(floatArrayOf(x, y))
+
+                // Initialize gesture engine on first key down
+                val keyW = if (rows.isNotEmpty() && rows[0].isNotEmpty()) {
+                    rows[0][0].right - rows[0][0].left
+                } else 100f
+                val ge0 = gestureEngine
+                if (ge0 == null) gestureEngine = GestureEngine(keyW) else ge0.setKeyWidth(keyW)
+                gestureStartTime = android.os.SystemClock.uptimeMillis()
+                gestureEngine?.onDown(x, y, 0)
+            }
+        }
+        feedback(k)
+        onKeyBurst()
+        touchKey(k)
+        pressKey(p)
+        invalidate(k)
+    }
+
+    // ---- Per-key press feedback -------------------------------------------------------------
+    // Every key has its own pressAmt that eases towards 1 while held (fast) and back to 0 after
+    // release (slower), so a key fades out instead of snapping back, and two keys pressed in
+    // quick succession animate independently. Driven by Choreographer so it follows the display.
+    private val animKeys = ArrayList<Key>(8)
+    private var pressTickRunning = false
+    private var pressTickLastNanos = 0L
+
+    private val pressTick = object : android.view.Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            val dtMs = if (pressTickLastNanos == 0L) 16f
+            else ((frameTimeNanos - pressTickLastNanos) / 1_000_000f).coerceIn(1f, 50f)
+            pressTickLastNanos = frameTimeNanos
+            var moving = false
+            var i = animKeys.size - 1
+            while (i >= 0) {
+                val k = animKeys[i]
+                val target = if (isHeld(k)) 1f else 0f
+                val cur = k.pressAmt
+                if (cur != target) {
+                    k.pressAmt = if (target > cur) {
+                        minOf(1f, cur + dtMs / ShadeMotion.KEY_PRESS_DOWN_MS)
+                    } else {
+                        maxOf(0f, cur - dtMs / ShadeMotion.KEY_PRESS_UP_MS)
+                    }
+                    invalidate(k)
+                    if (k.pressAmt != target) moving = true
+                }
+                if (k.pressAmt == 0f && target == 0f) animKeys.removeAt(i)
+                i--
+            }
+            if (moving) {
+                android.view.Choreographer.getInstance().postFrameCallback(this)
+            } else {
+                pressTickRunning = false
+                pressTickLastNanos = 0L
+            }
+        }
+    }
+
+    private fun isHeld(k: Key): Boolean {
+        for (i in 0 until pointers.size()) if (pointers.valueAt(i).key === k) return true
+        return false
+    }
+
+    private fun touchKey(k: Key) {
+        if (!animKeys.contains(k)) animKeys.add(k)
+        kickPressTick()
+    }
+
+    private fun kickPressTick() {
+        if (pressTickRunning) return
+        pressTickRunning = true
+        pressTickLastNanos = 0L
+        android.view.Choreographer.getInstance().postFrameCallback(pressTick)
+    }
+
+    private fun cancelPressTick() {
+        android.view.Choreographer.getInstance().removeFrameCallback(pressTick)
+        pressTickRunning = false
+        pressTickLastNanos = 0L
+        for (k in animKeys) k.pressAmt = 0f
+        animKeys.clear()
+    }
+
+    private fun startPressAnimation() { kickPressTick() }
+
+    private fun stopPressAnimation() { kickPressTick() }
+
+    private fun animateShiftTap() {
+        shiftTapAnimator?.cancel()
+        // shiftTapProgress only affects the shift key's drawing: invalidate just its
+        // dirty rect each frame instead of the whole view (the old whole-view invalidate). The Key
+        // object stays valid across the animation — layoutKeys() refreshes its
+        // invalidateRect if the layout changes mid-animation.
+        val shift = findShiftKey()
+        shiftTapAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = ShadeMotion.KEY_POPUP_IN_MS
+            interpolator = ShadeMotion.FAST_OUT_SLOW_IN
+            addUpdateListener {
+                shiftTapProgress = it.animatedValue as Float
+                invalidateShift(shift)
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    shiftTapAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
+                        duration = ShadeMotion.SWIPE_TRAIL_FADE_OUT_MS
+                        interpolator = ShadeMotion.FAST_OUT_LINEAR_IN
+                        addUpdateListener {
+                            shiftTapProgress = it.animatedValue as Float
+                            invalidateShift(shift)
+                        }
+                        addListener(object : android.animation.AnimatorListenerAdapter() {
+                            override fun onAnimationEnd(animation: android.animation.Animator) {
+                                invalidateShift(shift) // paint the exact resting state
+                            }
+                        })
+                        start()
+                    }
+                }
+            })
+            start()
+        }
+    }
+
+    private fun findShiftKey(): Key? {
+        for (row in rows) for (k in row) {
+            if (k.kind == KeyKind.FUNC && k.code == Codes.SHIFT) return k
+        }
+        return null
+    }
+
+    private fun invalidateShift(k: Key?) {
+        if (k != null) invalidate(k) else invalidate()
+    }
+
+    private fun pressKey(p: Pointer) {
+        val k = p.key ?: return
+        if (k.kind == KeyKind.CHAR) showPreviewFor(k)
+        if (k.kind == KeyKind.FUNC && k.code == Codes.SHIFT) {
+            animateShiftTap()
+        }
+        if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
+            val r = Runnable { startDeleteRepeat(p) }
+            p.longRunnable = r
+            handler.postDelayed(r, longPressMs)
+            return
+        }
+        val longable = k.kind == KeyKind.SPACE ||
+            k.kind == KeyKind.ENTER ||
+            (k.kind == KeyKind.CHAR && k.alts.isNotEmpty()) ||
+            (k.kind == KeyKind.FUNC && k.code == Codes.EMOJI)
+        if (longable) {
+            val r = Runnable { longPress(p) }
+            p.longRunnable = r
+            handler.postDelayed(r, longPressMs)
+        }
+    }
+
+    private fun startDeleteRepeat(p: Pointer) {
+        val k = p.key ?: return
+        if (k.kind != KeyKind.FUNC || k.code != Codes.DELETE) return
+        if (p.consumed) return
+
+        p.longRunnable = null
+        p.repeated = true
+        hapticHeavy()
+        listener?.onKey(Codes.DELETE)
+
+        val repeat = object : Runnable {
+            var n = 0
+            override fun run() {
+                if (p.consumed) return
+                if (p.key !== k) return
+                listener?.onKey(Codes.DELETE)
+                n++
+                if (haptic && n % 2 == 0) hapticTick()
+                val next = if (n > 12) (repeatIntervalMs / 2).coerceAtLeast(18L) else repeatIntervalMs
+                handler.postDelayed(this, next)
+            }
+        }
+        p.repeatRunnable = repeat
+        handler.postDelayed(repeat, repeatDelayMs)
+    }
+
+    private fun move(id: Int, x: Float, y: Float) {
+        val p = pointers.get(id) ?: return
+        val k = p.key ?: return
+        // Accent popup takes priority over everything: once the long-press popup is open, the
+        // finger only navigates the accent strip. We must NOT feed the gesture engine or the
+        // slide path here, otherwise the glide-typing system records the slide-over-accents as a
+        // glide word and commits it on finger-up (inserting “letters behind the popup”).
+        if (altShown) {
+            p.lastX = p.downX
+            p.lastY = y
+            updateAlt(p, x, y)
+            return
+        }
+        if (id == slidePointerId && k.kind == KeyKind.CHAR) {
+            // Detect the glide threshold: once the finger has moved far enough from
+            // the down point, this is a glide (not a tap). Detection threshold:
+            // `glideStart = max(slop*1.5, iw*0.75)`.
+            // Before the threshold: normal rollover to neighbouring keys (so a thumb
+            // that drifts one key over still types the right letter). After: the
+            // pointer is locked to the original key, key previews are hidden, and
+            // only the trail follows the finger.
+            if (!p.gliding) {
+                val dx = x - p.downX
+                val dy = y - p.downY
+                val dist = sqrt(dx * dx + dy * dy)
+                val keyW = if (rows.isNotEmpty() && rows[0].isNotEmpty()) {
+                    rows[0][0].right - rows[0][0].left
+                } else dp(40f)
+                if (dist > keyW * GLIDE_START_KEY_WIDTHS) {
+                    p.gliding = true
+                    // Cancel any pending long-press / repeat — a glide is not a hold.
+                    cancelLong(p)
+                    // Hide the key preview popup — the trail is the only feedback now.
+                    hidePreview()
+                    // Clear the live preview composing text so the first letter (if
+                    // instant-typed) doesn't linger while the decoder hasn't run yet.
+                    listener?.onGlidePreview(null)
+                    hapticTick()
+                }
+            }
+
+            slidePath.addLast(floatArrayOf(x, y))
+            if (slidePath.size > 240) slidePath.removeFirst()
+
+            // Feed gesture engine for proper sampling + trail
+            val elapsed = (android.os.SystemClock.uptimeMillis() - gestureStartTime).toInt()
+            gestureEngine?.addEventPoint(x, y, elapsed)
+
+            // Glide live preview — only once we're actually gliding (not during the
+            // initial tap). The service decodes the sampled path through the real
+            // SlideDecoder and surfaces a real word (or nothing) as composing text.
+            if (p.gliding) {
+                val sampledPath = gestureEngine?.getIncrementalPath()
+                val nowMs = android.os.SystemClock.uptimeMillis()
+                if (sampledPath != null && sampledPath.size >= 6 &&
+                    gestureEngine?.hasRecognitionTimePast(nowMs, lastGlidePreviewMs) == true) {
+                    lastGlidePreviewMs = nowMs
+                    listener?.onGlidePreviewPath(sampledPath)
+                }
+            }
+
+            // Redraw so the gesture-engine trail follows the finger.
+            invalidate()
+
+            // While gliding, do NOT fall through to the key-rollover block below.
+            // The pointer stays on the original key; crossed keys are not "pressed".
+            if (p.gliding) return
+        }
+        if (k.kind == KeyKind.SPACE) {
+            if (p.consumed) return
+            if (!p.swiping && abs(x - p.downX) > dp(14f)) {
+                p.swiping = true
+                cancelLong(p)
+                hidePreview()
+                p.lastX = p.downX
+                p.lastY = y
+                startTrail(p.downX, p.downY)
+            }
+            if (p.swiping) {
+                val step = dp(14f)
+                while (x - p.lastX >= step) { listener?.onCursor(1); p.lastX += step }
+                while (p.lastX - x >= step) { listener?.onCursor(-1); p.lastX -= step }
+                updateTrail(x, y)
+            }
+            return
+        }
+        if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
+            val dx = x - p.downX
+            val now = android.os.SystemClock.uptimeMillis()
+            if (slideDeleteEnabled && !deleteSlideActive && dx < -dp(16f)) {
+                deleteSlideActive = true
+                deleteSlideStartX = p.downX
+                deleteSlideWordCount = 0
+                deleteSlideLastX = x
+                deleteSlideLastT = now
+                deleteSlideAccum = 0f
+                deleteSlideSpeed = 0f
+                cancelLong(p)
+                hapticTick()
+                listener?.onDeleteSlideStart()
+                // The distance already travelled to cross the threshold counts as the first steps.
+                deleteSlideAccum = -dx - dp(16f)
+            } else if (deleteSlideActive) {
+                // Speed picks the unit: a slow drag selects character by character, a fast flick
+                // word by word. The speed is smoothed so one jittery sample can't flip the mode.
+                val moved = deleteSlideLastX - x // positive = moving left
+                val dt = (now - deleteSlideLastT).coerceAtLeast(1L)
+                val instant = abs(moved) / dp(1f) / dt
+                deleteSlideSpeed = deleteSlideSpeed * 0.6f + instant * 0.4f
+                deleteSlideLastX = x
+                deleteSlideLastT = now
+                deleteSlideAccum += moved
+            }
+            if (deleteSlideActive) {
+                val fast = deleteSlideSpeed >= DELETE_FAST_DP_PER_MS
+                val stepPx = if (fast) dp(22f) else dp(9f)
+                var units = 0
+                while (deleteSlideAccum >= stepPx) { units++; deleteSlideAccum -= stepPx }
+                while (deleteSlideAccum <= -stepPx) { units--; deleteSlideAccum += stepPx }
+                if (units != 0) {
+                    val selected = listener?.onDeleteSlideStep(units, fast) ?: 0
+                    if (selected != deleteSlideWordCount) {
+                        deleteSlideWordCount = selected
+                        hapticTick()
+                        invalidate()
+                    }
+                }
+            }
+            return
+        }
+        val nk = hit(x, y)
+        if (nk != null && nk !== k && !(nk.kind == KeyKind.FUNC && nk.code == Codes.DELETE)) {
+            val old = k
+            cancelLong(p)
+            hidePreview()
+            p.key = nk
+            p.repeated = false
+            touchKey(nk)
+            pressKey(p)
+            invalidate(old)
+            invalidate(nk)
+        }
+    }
+
+
+    private fun slidePathSpread(path: Collection<FloatArray>): Float {
+        if (path.isEmpty()) return 0f
+        var minX = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        for (point in path) {
+            minX = minOf(minX, point[0]); maxX = maxOf(maxX, point[0])
+            minY = minOf(minY, point[1]); maxY = maxOf(maxY, point[1])
+        }
+        return (maxX - minX) + (maxY - minY)
+    }
+
+    /** Quick raw sequence from slide path — for live preview only. */
+    // NOTE: live preview now goes through the real SlideDecoder via onGlidePreviewPath
+    // (see ShadeService). The raw-crossing guess here used to surface "qwertyui" while
+    // sliding, which read as "the slide triggers every key in its path". Removed.
+
+    private fun up(id: Int, cancel: Boolean) {
+        val p = pointers.get(id) ?: return
+        pointers.remove(id)
+        cancelLong(p)
+        p.repeatRunnable?.let { handler.removeCallbacks(it) }
+        p.repeatRunnable = null
+        hidePreview()
+        if (p.swiping) endTrail()
+
+        var slideConsumed = false
+        // Don't commit a glide word if the finger ended on an accent selection — the accent
+        // branch below handles that. Without this guard, a slide that started before the
+        // long-press fired (recording a few glide points) would also commit a glide word.
+        //
+        // The glide is committed when EITHER:
+        //  - the pointer entered glide mode (p.gliding — the finger crossed the
+        //    GLIDE_START threshold), OR
+        //  - the slide path is long enough by the old spread heuristic (backward compat
+        //    for the case where gliding wasn't set — e.g. a very fast flick that never
+        //    hit a MOVE event after the threshold).
+        val wasGlide = p.gliding
+        if (!cancel && !altShown && id == slidePointerId &&
+            (wasGlide || (slidePath.size >= 4 && slidePathSpread(slidePath) > dp(48f)))) {
+            // Gesture typing: use the gesture engine's properly sampled path
+            // The sampler drops the last stretch of the swipe; add where the finger actually lifted.
+            slidePath.lastOrNull()?.let { gestureEngine?.finish(it[0], it[1]) }
+            val path = gestureEngine?.getPath() ?: slidePath.toList()
+            slideConsumed = listener?.onSwipePath(path) == true
+            if (slideConsumed) p.consumed = true
+            // Add trail points and clear the live preview — also when decoding
+            // failed, otherwise the raw preview letters linger as composing text.
+            gestureEngine?.addTrail()
+            listener?.onGlidePreview(null)
+        }
+        if (id == slidePointerId) {
+            slidePointerId = -1
+            slidePath.clear()
+        }
+
+        val k = p.key
+        if (k != null && k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
+            if (deleteSlideActive) {
+                if (!cancel && deleteSlideWordCount > 0) {
+                    listener?.onDeleteCommit()
+                } else {
+                    listener?.onDeleteCancel()
+                }
+                deleteSlideActive = false
+                deleteSlideWordCount = 0
+                invalidate(k)
+            } else if (!cancel && !p.consumed && !p.repeated) {
+                listener?.onKey(Codes.DELETE)
+            }
+        } else if (altShown) {
+            val s = altItems.getOrNull(altSel)
+            dismissAlt()
+            if (!cancel && s != null) listener?.onText(s)
+        } else if (!cancel && k != null && !p.consumed && !p.swiping) {
+            fire(k)
+        }
+        if (k != null) invalidate(k)
+        recyclePointer(p)
+        stopPressAnimation() // lets the released key fade out, even while another finger is down
+    }
+
+    private fun invalidate(k: Key) {
+        val r = k.invalidateRect
+        if (r != null) invalidate(r) else invalidate()
+    }
+
+    private fun cancelLong(p: Pointer) {
+        p.longRunnable?.let { handler.removeCallbacks(it) }
+        p.longRunnable = null
+        p.repeatRunnable?.let { handler.removeCallbacks(it) }
+        p.repeatRunnable = null
+    }
+
+    private fun fire(k: Key) {
+        when (k.kind) {
+            KeyKind.CHAR -> listener?.onText(display(k.label))
+            KeyKind.SPACE -> listener?.onKey(Codes.SPACE)
+            KeyKind.ENTER -> listener?.onKey(Codes.ENTER)
+            KeyKind.FUNC -> if (k.code != Codes.DELETE) listener?.onKey(k.code)
+            KeyKind.SPACER -> Unit
+        }
+    }
+
+    private fun longPress(p: Pointer) {
+        val k = p.key ?: return
+        p.longRunnable = null
+        if (k.kind == KeyKind.CHAR) hapticTick() else hapticHeavy()
+        if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
+            p.consumed = true
+            return
+        }
+        if (k.kind == KeyKind.ENTER) {
+            p.consumed = true
+            hidePreview()
+            listener?.onEnterLongPress()
+            return
+        }
+        if (k.kind == KeyKind.SPACE) {
+            if (trackpadEnabled) {
+                p.consumed = true
+                enterTrackpad()
+            } else {
+                p.consumed = true
+                listener?.onLongPressSpecial()
+            }
+            return
+        }
+        if (k.kind == KeyKind.FUNC && k.code == Codes.EMOJI) {
+            p.consumed = true
+            listener?.onLongPressSpecial()
+            return
+        }
+        if (k.kind == KeyKind.CHAR && k.alts.isNotEmpty()) {
+            // Don't call hidePreview() — showAlt() will morph the existing bubble into the panel.
+            // If no panel could be shown, the key stays a normal tap instead of being swallowed.
+            if (showAlt(p, k)) p.consumed = true
+        }
+    }
+
+    // ------------------------------------------------------------------ haptics
+
+    private fun feedback(k: Key) {
+        if (haptic) {
+            when {
+                k.kind == KeyKind.FUNC && k.code == Codes.SHIFT && shiftState == 2 ->
+                    hapticHeavy()
+                else -> hapticModern()
+            }
+        }
+        if (sound) {
+            val am = audioManager
+            am.playSoundEffect(
+                when {
+                    k.kind == KeyKind.SPACE -> AudioManager.FX_KEYPRESS_SPACEBAR
+                    k.kind == KeyKind.FUNC && k.code == Codes.DELETE -> AudioManager.FX_KEYPRESS_DELETE
+                    k.kind == KeyKind.ENTER -> AudioManager.FX_KEYPRESS_RETURN
+                    else -> AudioManager.FX_KEYPRESS_STANDARD
+                }
+            )
+        }
+    }
+
+    private fun hapticModern() {
+        val played = when (hapticStrength) {
+            0 -> playPredefinedHaptic(VibrationEffect.EFFECT_TICK)
+            2 -> playPredefinedHaptic(VibrationEffect.EFFECT_CLICK)
+            else -> false
+        }
+        if (played) return
+        performHapticFeedback(
+            HapticFeedbackConstants.KEYBOARD_TAP,
+            HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+        )
+    }
+
+    private fun playPredefinedHaptic(effect: Int): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        val v = vibrator ?: return false
+        return try {
+            v.vibrate(VibrationEffect.createPredefined(effect))
+            true
+        } catch (t: Exception) {
+            ShadeLog.w("KeyboardView", "predefined haptic failed", t, once = true)
+            false
+        }
+    }
+
+    private fun hapticTick() {
+        if (!haptic) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
+                return
+            } catch (e: Exception) { Log.w("KeyboardView", "Vibration tick failed", e) }
+        }
+        performHapticFeedback(
+            HapticFeedbackConstants.KEYBOARD_TAP,
+            HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+        )
+    }
+
+    private fun hapticHeavy() {
+        if (!haptic) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
+                return
+            } catch (e: Exception) { Log.w("KeyboardView", "Heavy vibration failed", e) }
+        }
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        cancelPressTick()
+        layoutAnimator?.cancel()
+        previewAnimator?.cancel()
+        burstAnimator?.cancel()
+        trailAnimator?.cancel()
+        splitAnimator?.cancel()
+        shiftTapAnimator?.cancel()
+        oneHandedAnimator?.cancel()
+        val n = pointers.size()
+        for (i in 0 until n) {
+            val p = pointers.valueAt(i)
+            cancelLong(p)
+            recyclePointer(p)
+        }
+        pointers.clear()
+        popupLayer.detach() // re-attached on the next key press, which also covers a new IME window
+        popupActive = false
+        previewKey = null
+        altShown = false
+        altItems = emptyList()
+        trailActive = false
+        deleteSlideActive = false
+        bgBitmap = null // drop the reference only; ShadeService owns the bitmap
+    }
+
+    fun release() {
+        listener = null
+        bgBitmap = null
+        cancelPressTick()
+        layoutAnimator?.cancel()
+        previewAnimator?.cancel()
+        burstAnimator?.cancel()
+        trailAnimator?.cancel()
+        splitAnimator?.cancel()
+        shiftTapAnimator?.cancel()
+        oneHandedAnimator?.cancel()
+        pointers.clear()
+        pointerPool.clear()
+        slidePath.clear()
+        slidePointerId = -1
+        touchOffsets.clear()
+        popupLayer.detach()
+        popupActive = false
+        previewKey = null
+        altShown = false
+        altItems = emptyList()
+        trailActive = false
+        deleteSlideActive = false
+    }
+
+    /** Flush recorded touch offsets to the listener and clear for the next word. */
+    fun flushTouchOffsets() {
+        if (touchOffsets.isNotEmpty()) {
+            listener?.onTouchOffsets(ArrayList(touchOffsets))
+            touchOffsets.clear()
+        }
+    }
+
+    /** Remove the last touch offset (backspace). */
+    fun popTouchOffset() {
+        if (touchOffsets.isNotEmpty()) touchOffsets.removeAt(touchOffsets.lastIndex)
+    }
+
+    /** Clear all touch offsets (new composing word). */
+    fun clearTouchOffsets() {
+        touchOffsets.clear()
+    }
+}

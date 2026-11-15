@@ -37,94 +37,69 @@
         <item name="colorControlHighlight">#22FFFFFF</item>
     </style>
 
-    <style name="SettingsRowStyle">
-        <item name="android:orientation">horizontal</item>
-        <item name="android:gravity">center_vertical</item>
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:paddingStart">14dp</item>
-        <item name="android:paddingEnd">14dp</item>
-        <item name="android:paddingTop">14dp</item>
-        <item name="android:paddingBottom">14dp</item>
-        <item name="android:background">@drawable/bg_settings_row</item>
-        <item name="android:clickable">true</item>
-        <item name="android:focusable">true</item>
-        <item name="android:minHeight">68dp</item>
-    </style>
-
-    <style name="SettingsCard">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginBottom">16dp</item>
-        <item name="android:background">@drawable/bg_settings_card</item>
-        <item name="android:orientation">vertical</item>
-    </style>
-
-    <style name="SettingsSectionLabel">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginStart">8dp</item>
-        <item name="android:layout_marginBottom">6dp</item>
-        <item name="android:textAllCaps">true</item>
-        <item name="android:textColor">@color/settings_section</item>
-        <item name="android:textSize">11sp</item>
-        <item name="android:textStyle">bold</item>
-        <item name="android:letterSpacing">0.12</item>
-    </style>
-
-    <style name="SettingsDivider">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">1dp</item>
-        <item name="android:layout_marginStart">70dp</item>
-        <item name="android:background">@color/settings_divider</item>
-    </style>
-
     <style name="ShadeDialogTheme" parent="Theme.AppCompat.DayNight.Dialog.Alert">
-        <item name="android:colorBackground">@color/settings_background</item>
-        <item name="android:textColorPrimary">@color/settings_title</item>
-        <item name="android:textColorSecondary">@color/settings_subtitle</item>
-        <item name="colorAccent">@color/settings_accent</item>
-        <item name="colorControlNormal">@color/settings_chevron</item>
-        <item name="colorControlActivated">@color/settings_accent</item>
+        <!-- Noir: matches the redesigned settings; only settings dialogs use this. -->
+        <item name="android:colorBackground">@color/noir_sheet</item>
+        <item name="android:textColorPrimary">@color/noir_text</item>
+        <item name="android:textColorSecondary">@color/noir_text_secondary</item>
+        <item name="colorAccent">@color/noir_text</item>
+        <item name="colorControlNormal">@color/noir_control_normal</item>
+        <item name="colorControlActivated">@color/noir_text</item>
     </style>
 
-    <!-- ──────── M3 Settings Theme ────────
+    <!-- ──────── Noir Settings Theme ────────
          Applied to SettingsActivity via android:theme in the manifest.
-         Uses Material 3 color tokens for the new card-based settings UI.
-         Parent is Theme.Material3.DayNight.NoActionBar (from the Material
-         Components library) which provides M3 motion, color roles, and
-         component defaults (MaterialSwitch, Slider, MaterialButtonToggleGroup). -->
+         Pitch-black surfaces, white controls, gray secondary text. The M3
+         parent provides component defaults (MaterialSwitch, Slider,
+         MaterialButtonToggleGroup); the color roles here make every one of
+         them render monochrome (white = on, black = off). -->
     <style name="ShadeSettings" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">@color/m3_primary</item>
-        <item name="colorOnPrimary">@color/m3_on_primary</item>
-        <item name="colorPrimaryContainer">@color/m3_primary_container</item>
-        <item name="colorOnPrimaryContainer">@color/m3_on_primary_container</item>
-        <item name="colorSecondary">@color/m3_secondary</item>
-        <item name="colorOnSecondary">@color/m3_on_secondary</item>
-        <item name="colorSecondaryContainer">@color/m3_secondary_container</item>
-        <item name="colorOnSecondaryContainer">@color/m3_on_secondary_container</item>
-        <item name="colorTertiary">@color/m3_tertiary</item>
-        <item name="colorOnTertiary">@color/m3_on_tertiary</item>
-        <item name="colorTertiaryContainer">@color/m3_tertiary_container</item>
-        <item name="colorOnTertiaryContainer">@color/m3_on_tertiary_container</item>
-        <item name="colorError">@color/m3_error</item>
-        <item name="colorOnError">@color/m3_on_error</item>
-        <item name="colorErrorContainer">@color/m3_error_container</item>
-        <item name="colorOnErrorContainer">@color/m3_on_error_container</item>
-        <item name="android:colorBackground">@color/m3_background</item>
-        <item name="colorOnBackground">@color/m3_on_background</item>
-        <item name="colorSurface">@color/m3_surface</item>
-        <item name="colorOnSurface">@color/m3_on_surface</item>
-        <item name="colorSurfaceVariant">@color/m3_surface_variant</item>
-        <item name="colorOnSurfaceVariant">@color/m3_on_surface_variant</item>
-        <item name="colorOutline">@color/m3_outline</item>
-        <item name="colorOutlineVariant">@color/m3_outline_variant</item>
-        <item name="android:statusBarColor">@color/m3_surface</item>
-        <item name="android:navigationBarColor">@color/m3_background</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowBackground">@color/m3_background</item>
+        <item name="colorPrimary">@color/noir_text</item>
+        <item name="colorOnPrimary">@color/noir_on_button</item>
+        <item name="colorPrimaryContainer">@color/noir_field</item>
+        <item name="colorOnPrimaryContainer">@color/noir_text</item>
+        <item name="colorSecondary">@color/noir_text</item>
+        <item name="colorOnSecondary">@color/noir_on_button</item>
+        <item name="colorSecondaryContainer">@color/noir_field</item>
+        <item name="colorOnSecondaryContainer">@color/noir_text</item>
+        <item name="colorTertiary">@color/noir_text</item>
+        <item name="colorOnTertiary">@color/noir_on_button</item>
+        <item name="colorTertiaryContainer">@color/noir_field</item>
+        <item name="colorOnTertiaryContainer">@color/noir_text</item>
+        <item name="colorError">#9E9E9E</item>
+        <item name="colorOnError">@color/noir_on_button</item>
+        <item name="colorErrorContainer">@color/noir_field</item>
+        <item name="colorOnErrorContainer">@color/noir_text</item>
+        <item name="android:colorBackground">@color/noir_background</item>
+        <item name="colorOnBackground">@color/noir_text</item>
+        <item name="colorSurface">@color/noir_background</item>
+        <item name="colorOnSurface">@color/noir_text</item>
+        <item name="colorSurfaceVariant">@color/noir_field</item>
+        <item name="colorOnSurfaceVariant">@color/noir_text_secondary</item>
+        <item name="colorSurfaceContainerLowest">#0A0A0A</item>
+        <item name="colorSurfaceContainerLow">#0F0F0F</item>
+        <item name="colorSurfaceContainer">#141414</item>
+        <item name="colorSurfaceContainerHigh">#1F1F1F</item>
+        <item name="colorSurfaceContainerHighest">#2A2A2A</item>
+        <item name="colorSurfaceInverse">@color/noir_text</item>
+        <item name="colorOnSurfaceInverse">@color/noir_on_button</item>
+        <item name="colorOutline">@color/noir_control_normal</item>
+        <item name="colorOutlineVariant">@color/noir_divider</item>
+        <item name="android:statusBarColor">@color/noir_background</item>
+        <item name="android:navigationBarColor">@color/noir_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowBackground">@color/noir_background</item>
+        <item name="colorControlNormal">@color/noir_control_normal</item>
+        <item name="colorControlActivated">@color/noir_text</item>
+        <item name="colorControlHighlight">#22FFFFFF</item>
         <!-- MaterialSwitch + Slider + MaterialButtonToggleGroup use these -->
         <item name="materialSwitchStyle">@style/Widget.Material3.CompoundButton.Switch</item>
         <item name="sliderStyle">@style/Widget.Material3.Slider</item>
+    </style>
+
+    <!-- Slide-up/down window animation for the color picker sheet. -->
+    <style name="SheetDialogAnimation">
+        <item name="android:windowEnterAnimation">@anim/sheet_slide_in</item>
+        <item name="android:windowExitAnimation">@anim/sheet_slide_out</item>
     </style>
 </resources>

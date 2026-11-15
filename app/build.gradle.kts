@@ -5,35 +5,42 @@ plugins {
     // Kotlin plugin is provided by AGP 9.x's built-in Kotlin support.
 }
 
-// KLIPY GIF API key, baked into BuildConfig. Looked up (first match wins) in:
-//   1. -PKLIPY_API_KEY=... / ~/.gradle/gradle.properties
-//   2. the KLIPY_API_KEY environment variable (CI)
-//   3. KLIPY_API_KEY=... in local.properties (git-ignored)
+// GIF provider API key, baked into BuildConfig. Looked up (first match wins) in:
+//   1. -PGIF_API_KEY=... / ~/.gradle/gradle.properties
+//   2. the GIF_API_KEY environment variable (CI)
+//   3. GIF_API_KEY=... in local.properties (git-ignored)
+//   4. the legacy KLIPY_API_KEY spellings of the above, kept for older setups
 // Without a key the GIF button is hidden. Note that a key inside an APK can always be extracted,
-// so use a key that is restricted/rate-limited on KLIPY's side and never one with other privileges.
-val klipyApiKey: String = run {
+// so use a key that is restricted/rate-limited at the provider and never one with other privileges.
+val gifApiKey: String = run {
     val local = Properties().apply {
         val f = rootProject.file("local.properties")
         if (f.exists()) f.inputStream().use { load(it) }
     }
-    (providers.gradleProperty("KLIPY_API_KEY").orNull
+    (providers.gradleProperty("GIF_API_KEY").orNull
+        ?: System.getenv("GIF_API_KEY")
+        ?: local.getProperty("GIF_API_KEY")
+        ?: providers.gradleProperty("KLIPY_API_KEY").orNull
         ?: System.getenv("KLIPY_API_KEY")
         ?: local.getProperty("KLIPY_API_KEY")
         ?: "").trim().filter { it.isLetterOrDigit() || it == '-' || it == '_' }
 }
 
 android {
-    namespace = "com.noircipher.shade"
+    namespace = "com.shade.keyboard"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.noircipher.shade"
+        applicationId = "com.shade.keyboard"
         minSdk = 26
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "KLIPY_API_KEY", "\"$klipyApiKey\"")
+        buildConfigField("String", "GIF_API_KEY", "\"$gifApiKey\"")
     }
 
     signingConfigs {
@@ -99,6 +106,9 @@ android {
         // Android stubs return defaults instead of throwing, so pure-logic classes that
         // touch android.* types can still be unit-tested on the JVM.
         unitTests.isReturnDefaultValues = true
+        // Include the merged app resources so Robolectric IME smoke tests can resolve
+        // app strings/layouts exactly like a real device build would.
+        unitTests.isIncludeAndroidResources = true
     }
 
     lint {
@@ -120,7 +130,7 @@ kotlin {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
-    // The Android SDK's org.json is a stub in local unit tests; KlipyParser needs the real one.
+    // The Android SDK's org.json is a stub in local unit tests; GifParser needs the real one.
     testImplementation("org.json:json:20240303")
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
@@ -139,4 +149,7 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
     implementation("com.google.ai.edge.litert:litert:1.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // Robolectric drives the real IME lifecycle (create / onCreateInputView / onStartInputView /
+    // layout / draw) on the JVM, so a startup crash in ShadeService shows up as a test failure.
+    testImplementation("org.robolectric:robolectric:4.16.1")
 }

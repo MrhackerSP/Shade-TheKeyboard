@@ -1,15 +1,15 @@
 # Keep the IME service entry point and all activities referenced from the
 # manifest by name (R8 would otherwise rename them and break inflation).
--keep class com.noircipher.shade.ShadeService { *; }
--keep class com.noircipher.shade.MainActivity { *; }
--keep class com.noircipher.shade.SettingsActivity { *; }
--keep class com.noircipher.shade.SettingsActivity$* { *; }
--keep class com.noircipher.shade.SettingsAdapter$* { *; }
--keep class com.noircipher.shade.SettingsTree { *; }
--keep class com.noircipher.shade.SettingsItem { *; }
--keep class com.noircipher.shade.SettingsItem$* { *; }
--keep class com.noircipher.shade.SettingsPage { *; }
--keep class com.noircipher.shade.TypingStatsActivity { *; }
+-keep class com.shade.keyboard.ShadeService { *; }
+-keep class com.shade.keyboard.MainActivity { *; }
+-keep class com.shade.keyboard.SettingsActivity { *; }
+-keep class com.shade.keyboard.SettingsActivity$* { *; }
+-keep class com.shade.keyboard.SettingsAdapter$* { *; }
+-keep class com.shade.keyboard.SettingsTree { *; }
+-keep class com.shade.keyboard.SettingsItem { *; }
+-keep class com.shade.keyboard.SettingsItem$* { *; }
+-keep class com.shade.keyboard.SettingsPage { *; }
+-keep class com.shade.keyboard.TypingStatsActivity { *; }
 
 # Reflection-free code, so we can afford aggressive optimizations
 -optimizationpasses 5
@@ -49,4 +49,4 @@
 }
 
 # Keep the BuildConfig class (some libs reflect on it)
--keep class com.noircipher.shade.BuildConfig { *; }
+-keep class com.shade.keyboard.BuildConfig { *; }

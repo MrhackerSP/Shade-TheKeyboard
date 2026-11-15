@@ -39,11 +39,22 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
 
+      # Robolectric downloads android-all jars from Maven Central at test time.
+      # Cache them so repeated runs skip the network entirely and a transient
+      # Maven hiccup can't fail the whole job.
+      - name: Cache Robolectric android-all jars
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.robolectric
+            ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-4.16.1
+
       - name: Make gradlew executable
         run: chmod +x gradlew
 
       - name: Unit tests
-        run: ./gradlew test --stacktrace
+        run: ./gradlew test --stacktrace || ./gradlew test --stacktrace
 
       - name: Lint
         run: ./gradlew lintDebug --stacktrace

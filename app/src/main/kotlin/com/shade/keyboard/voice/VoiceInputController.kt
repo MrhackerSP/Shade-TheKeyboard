@@ -1,0 +1,89 @@
+package com.shade.keyboard.voice
+
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Bundle
+import android.provider.Settings
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.util.Log
+import android.widget.Toast
+
+class VoiceInputController(
+    private val context: Context,
+    private val onFinalText: (String) -> Unit
+) {
+    private var recognizer: SpeechRecognizer? = null
+    var isListening = false
+        private set
+
+    fun start() {
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            Toast.makeText(context, "Speech recognition is not available on this device", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(context, "Grant microphone permission to use voice typing", Toast.LENGTH_LONG).show()
+            try {
+                // A keyboard can't show the permission dialog itself; a tiny transparent activity does.
+                context.startActivity(
+                    Intent(context, VoicePermissionActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
+            } catch (e: Exception) {
+                // Some restricted contexts cannot start activities.
+                Log.w("VoiceInputController", "Failed to launch voice permission activity", e)
+            }
+            return
+        }
+
+        cancel()
+        val sr = SpeechRecognizer.createSpeechRecognizer(context)
+        recognizer = sr
+        sr.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() { isListening = false }
+            override fun onError(error: Int) { isListening = false }
+            override fun onResults(results: Bundle?) {
+                isListening = false
+                val text = results
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                    ?.trim().orEmpty()
+                if (text.isNotEmpty()) onFinalText(text)
+            }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        }
+        isListening = true
+        try {
+            sr.startListening(intent)
+        } catch (t: Throwable) {
+            cancel()
+            Toast.makeText(context, "Unable to start voice input", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun cancel() {
+        val sr = recognizer
+        recognizer = null
+        isListening = false
+        try { sr?.setRecognitionListener(null) } catch (e: Exception) { Log.w("VoiceInputController", "Failed to clear recognition listener", e) }
+        try { sr?.cancel() } catch (e: Exception) { Log.w("VoiceInputController", "Failed to cancel speech recognizer", e) }
+        try { sr?.destroy() } catch (e: Exception) { Log.w("VoiceInputController", "Failed to destroy speech recognizer", e) }
+    }
+}

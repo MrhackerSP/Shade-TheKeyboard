@@ -3,7 +3,7 @@
     <!--
         Defense in depth. The only network use is the opt-in update check
         (Updater.kt, GitHub releases) and the GIF picker (gif/, api.klipy.com
-        and KLIPY's media CDN). This config blocks all cleartext
+        and the provider's media CDN). This config blocks all cleartext
         traffic and pins no CAs (i.e., only HTTPS with system-trusted CAs works).
     -->
     <base-config cleartextTrafficPermitted="false">
