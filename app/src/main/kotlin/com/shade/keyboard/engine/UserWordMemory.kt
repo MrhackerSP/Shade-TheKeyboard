@@ -24,6 +24,9 @@ class UserWordMemory(context: Context) {
 
     fun penalize(word: String) = State.change(word) { (it - 3).coerceAtLeast(-50) }
 
+    /** Removes the word entirely from the learned memory ("Remove suggestion"). */
+    fun forget(word: String) = State.forget(word)
+
     fun score(word: String): Float {
         val value = State.get(word)
         if (value <= 0) return 0f
@@ -96,6 +99,18 @@ class UserWordMemory(context: Context) {
                 }
                 dirty = true
                 version++
+            }
+            saver?.request()
+        }
+
+        fun forget(word: String) {
+            val w = norm(word)
+            if (w.isEmpty()) return
+            synchronized(lock) {
+                if (counts?.remove(w) != null) {
+                    dirty = true
+                    version++
+                }
             }
             saver?.request()
         }

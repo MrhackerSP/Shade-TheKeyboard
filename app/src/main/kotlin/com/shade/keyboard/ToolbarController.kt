@@ -161,6 +161,15 @@ internal class ToolbarController(private val svc: ShadeService) {
 
     internal fun refreshStrip() { with(svc) {
         if (!svc.stripReady()) return
+        // The strip must never pop back over an open panel (emoji header), the GIF bar or the
+        // translator bar. transitionToPanel() hides the strip and then calls refreshStrip(); without
+        // this guard the unconditional VISIBLE below resurrected the suggestion bar over the emoji
+        // search box. When a full-screen surface owns the strip's place, the strip and its children
+        // stay hidden and there is nothing to refresh.
+        if (!svc.stripVisibleAllowed()) {
+            strip.visibility = View.GONE
+            return
+        }
         val suggestionsActive = suggestionsOn && suggestionsAllowed
         val showTools = toolbarOpen || (suggestionsActive == false)
 

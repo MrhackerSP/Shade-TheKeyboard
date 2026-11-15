@@ -95,6 +95,16 @@ class AdaptiveWordMemory(context: Context) {
         return (entry.score * decay) / MAX_SCORE
     }
 
+    /** Removes the word from the adaptive memory ("Remove suggestion"). */
+    @Synchronized
+    fun forget(word: String) {
+        val key = word.trim().lowercase()
+        if (values.remove(key) != null) {
+            dirty = true
+            scheduleFlush()
+        }
+    }
+
     private fun scheduleFlush() {
         if (flushJob?.isActive == true) return
         flushJob = scope.launch {

@@ -12,12 +12,26 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Online GIF provider API. The key is baked into the build (see `GIF_API_KEY` in
- * app/build.gradle.kts); without one the GIF feature hides itself.
+ * Online GIF provider API. The key comes either from the build (`GIF_API_KEY` in
+ * app/build.gradle.kts / gradle.properties / CI env) or from the runtime setting
+ * (`gif_api_key` pref, pasted in the GIF panel's setup card). Without any key the
+ * panel still opens and shows the setup card instead of hiding itself.
  */
 object GifConfig {
-    val apiKey: String get() = BuildConfig.GIF_API_KEY
+    /** Key pasted at runtime (GIF panel → setup card); overrides the build-time key. */
+    @Volatile
+    var runtimeKey: String? = null
+
+    fun applyPrefs(prefs: android.content.SharedPreferences) {
+        runtimeKey = prefs.getString(KEY_PREF, null)?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    val apiKey: String
+        get() = runtimeKey ?: BuildConfig.GIF_API_KEY
+
     val isConfigured: Boolean get() = apiKey.isNotBlank()
+
+    const val KEY_PREF = "gif_api_key"
 }
 
 /** One downloadable rendition of a GIF. */

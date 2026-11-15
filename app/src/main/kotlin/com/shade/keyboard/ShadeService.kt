@@ -15,6 +15,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.ColorDrawable
 import android.widget.ImageView
 import android.inputmethodservice.InputMethodService
 import android.os.Build
@@ -26,6 +27,7 @@ import android.os.SystemClock
 import android.util.TypedValue
 import android.text.InputType
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -44,6 +46,7 @@ import androidx.core.content.FileProvider
 import androidx.core.view.inputmethod.EditorInfoCompat
 import com.shade.keyboard.gif.GifController
 import com.shade.keyboard.translate.TranslationService
+import com.shade.keyboard.translate.TranslatePanel
 import com.shade.keyboard.gif.GifItem
 import com.shade.keyboard.gif.GifConfig
 import androidx.core.view.WindowInsetsAnimationCompat
@@ -158,6 +161,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var translatorActive = false
     private var translatorInput = StringBuilder()
     private var translatorTarget = "en"
+    private var translatorResult: String? = null
+    internal var translateBar: TranslatePanel? = null
     internal lateinit var strip: LinearLayout
     internal lateinit var toggle: TextView
     // floating drag handle above the keyboard. Dragging vertically
@@ -180,6 +185,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     internal lateinit var kb: KeyboardView
     internal lateinit var emoji: EmojiPanel
     internal lateinit var clipPanel: ClipboardPanel
+    // "Remove suggestion" dialog drawn over the keyboard area (inside the content frame).
+    private var removeDialogOverlay: FrameLayout? = null
+    private var removeDialogWord: TextView? = null
 
     internal var kbTheme: KbTheme = Themes.LIGHT
     internal var mode = Mode.LETTERS
@@ -395,6 +403,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         super.onCreate()
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         PrefsMigration.run(prefs)
+        // Runtime GIF API key (GIF panel setup card) overrides the build-time key.
+        GifConfig.applyPrefs(prefs)
         dict = WordDictionary(this)
         voice = VoiceInputController(this) { text -> commitVoiceText(text) }
         clips = ClipboardStore(this)
@@ -508,6 +518,15 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 setPadding(dp(6f).toInt(), 0, dp(6f).toInt(), 0)
                 TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(this, 12, 19, 1, TypedValue.COMPLEX_UNIT_SP)
                 setOnClickListener { suggestPipeline.pickSuggestion(it.tag as Int) }
+                // Long-press a suggestion to remove it (Gboard-style). The confirmation dialog
+                // is drawn over the keyboard area only — never over the suggestion bar itself.
+                setOnLongClickListener { v ->
+                    val word = candidates.getOrNull(v.tag as Int) ?: ""
+                    if (word.isEmpty()) return@setOnLongClickListener false
+                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    showRemoveSuggestionDialog(word)
+                    true
+                }
             }
         }
         slotOlds = List(3) {
@@ -606,6 +625,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             addView(emoji, FrameLayout.LayoutParams(MATCH, MATCH))
             addView(clipPanel, FrameLayout.LayoutParams(MATCH, MATCH))
             addView(resizeOverlay, FrameLayout.LayoutParams(MATCH, MATCH))
+            // "Remove suggestion" confirmation. Lives inside [content] so it covers the keyboard
+            // area only — the suggestion strip above it stays visible and untouched.
+            addView(buildRemoveSuggestionOverlay(), FrameLayout.LayoutParams(MATCH, MATCH))
         }
 
         // Resize/float handle — hidden by default (standard behavior).
@@ -653,6 +675,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         )
         gifController.bar.visibility = View.GONE
         root.addView(gifController.bar, 2, LinearLayout.LayoutParams(MATCH, WRAP))
+
+        // Translator bar: replaces the suggestion strip while translating. It owns a visible
+        // input field (the missing "text field"), the target-language chip and the result row.
+        translateBar = TranslatePanel(this, object : TranslatePanel.Callbacks {
+            override fun onClose() { closeTranslator() }
+            override fun onInsert() { commitTranslation() }
+            override fun onCycleTarget() { cycleTranslatorTarget() }
+        }).also {
+            it.visibility = View.GONE
+            root.addView(it, 3, LinearLayout.LayoutParams(MATCH, WRAP))
+        }
 
         // [root] (opaque keyboard background, side/nav-bar padding, float offset) is wrapped so a
         // transparent headroom band can sit above it for the accent panel.
@@ -744,6 +777,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         super.onStartInputView(editorInfo, restarting)
         closeGif()
         closeTranslator()
+        hideRemoveSuggestionDialog()
         info = editorInfo
         fieldNoPersonalizedLearning =
             (editorInfo.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
@@ -1073,16 +1107,21 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     // ------------------------------------------------------------------ GIFs (online)
 
-    internal fun gifAvailable(): Boolean = GifConfig.isConfigured && prefs.getBoolean("gif_enabled", true)
+    /**
+     * The GIF panel is always reachable when the feature toggle is on. With no API key it opens
+     * into the setup card instead of hiding itself, so the button and panel are always present.
+     */
+    internal fun gifAvailable(): Boolean = prefs.getBoolean("gif_enabled", true)
 
     private fun openGif() {
-        if (!this::gifController.isInitialized || !gifAvailable()) return
+        if (!gifAvailable()) return
         if (fieldSecureInput || currentFieldType == FieldTypeDetector.FieldType.PASSWORD) {
             Toast.makeText(this, R.string.gif_blocked_secure, Toast.LENGTH_SHORT).show()
             return
         }
         endWord()
         if (panel != Panel.NONE) transitionToPanel(Panel.NONE, animate = false)
+        if (translatorActive) closeTranslator()
         gifActive = true
         strip.visibility = View.GONE
         gifController.bar.visibility = View.VISIBLE
@@ -1094,7 +1133,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         gifActive = false
         gifController.close()
         gifController.bar.visibility = View.GONE
-        if (panel == Panel.NONE) strip.visibility = View.VISIBLE
+        syncStripVisibility()
+    }
+
+    /** The strip shows only when no other surface (panel/GIF bar/translator) owns its place. */
+    internal fun stripVisibleAllowed(): Boolean = panel == Panel.NONE && !gifActive && !translatorActive
+
+    internal fun syncStripVisibility() {
+        strip.visibility = if (stripVisibleAllowed()) View.VISIBLE else View.GONE
     }
 
     private fun sendGif(item: GifItem, query: String) {
@@ -1146,37 +1192,94 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (gifActive) closeGif()
         translatorActive = true
         translatorInput.clear()
-        strip.visibility = View.GONE
-        Toast.makeText(this, R.string.translator_hint, Toast.LENGTH_SHORT).show()
+        translatorResult = null
+        translatorTarget = prefs.getString("translator_target", "en") ?: "en"
+        syncStripVisibility()
+        translateBar?.apply {
+            visibility = View.VISIBLE
+            setQuery("")
+            setStatus(getString(R.string.translator_hint))
+            setTarget(translatorTarget)
+        }
     }
 
     private fun closeTranslator() {
         if (!translatorActive) return
         translatorActive = false
         translatorInput.clear()
-        if (panel == Panel.NONE) strip.visibility = View.VISIBLE
+        translatorResult = null
+        translateBar?.visibility = View.GONE
+        syncStripVisibility()
+    }
+
+    /** Language chip: cycles through the supported target languages and remembers the choice. */
+    private fun cycleTranslatorTarget() {
+        val idx = TRANSLATOR_TARGETS.indexOf(translatorTarget).coerceAtLeast(0)
+        translatorTarget = TRANSLATOR_TARGETS[(idx + 1) % TRANSLATOR_TARGETS.size]
+        prefs.edit().putString("translator_target", translatorTarget).apply()
+        translateBar?.setTarget(translatorTarget)
+    }
+
+    /** Commits the translated text into the app's field and closes the panel. */
+    private fun commitTranslation() {
+        val result = translatorResult
+        if (result.isNullOrEmpty()) return
+        currentInputConnection?.commitText(result + " ", 1)
+        closeTranslator()
+        afterText()
     }
 
     private fun onTranslatorKey(code: Int, text: String?) {
         when (code) {
-            Codes.DELETE -> { if (translatorInput.isNotEmpty()) translatorInput.deleteCharAt(translatorInput.length - 1) }
-            Codes.SPACE -> translatorInput.append(' ')
+            Codes.DELETE -> {
+                if (translatorInput.isNotEmpty()) {
+                    val start = translatorInput.offsetByCodePoints(translatorInput.length, -1)
+                    translatorInput.delete(start, translatorInput.length)
+                }
+                translatorResult = null
+                translateBar?.setQuery(translatorInput.toString())
+                translateBar?.setStatus(getString(R.string.translator_hint))
+            }
+            Codes.SPACE -> {
+                translatorInput.append(' ')
+                translatorResult = null
+                translateBar?.setQuery(translatorInput.toString())
+                translateBar?.setStatus(getString(R.string.translator_hint))
+            }
             Codes.ENTER -> {
+                // First Enter translates; with a result on screen Enter inserts it (as does Insert).
+                val existing = translatorResult
+                if (!existing.isNullOrEmpty()) {
+                    commitTranslation()
+                    return
+                }
                 val query = translatorInput.toString().trim()
-                if (query.isNotEmpty()) {
-                    scope.launch {
-                        val result = TranslationService.translate(query, "auto", translatorTarget)
-                        if (result != null) {
-                            currentInputConnection?.commitText(result + " ", 1)
-                        } else {
-                            Toast.makeText(this@ShadeService, R.string.translator_error, Toast.LENGTH_SHORT).show()
-                        }
-                        closeTranslator()
+                if (query.isEmpty()) {
+                    closeTranslator()
+                    return
+                }
+                translateBar?.setStatus(getString(R.string.translator_translating))
+                val target = translatorTarget
+                scope.launch {
+                    val translated = TranslationService.translate(query, "auto", target)
+                    if (!translatorActive) return@launch
+                    if (translated.isNullOrEmpty()) {
+                        translateBar?.setStatus(getString(R.string.translator_error))
+                    } else {
+                        translatorResult = translated
+                        translateBar?.setResult(translated)
                     }
-                } else closeTranslator()
+                }
             }
             Codes.SHIFT, Codes.SYMBOLS, Codes.SYMBOLS2, Codes.LETTERS -> { /* mode keys work normally */ }
-            else -> { text?.let { translatorInput.append(it) } }
+            else -> {
+                text?.let {
+                    translatorInput.append(it)
+                    translatorResult = null
+                    translateBar?.setQuery(translatorInput.toString())
+                    translateBar?.setStatus(getString(R.string.translator_hint))
+                }
+            }
         }
     }
 
@@ -1222,6 +1325,127 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             )
         }
         updateShiftFromCaps()
+        suggestPipeline.updateSuggestions()
+    }
+
+    // ------------------------------------------------------------------ remove suggestion
+
+    /**
+     * Builds the "Remove suggestion?" confirmation. The overlay is added to the keyboard content
+     * frame (kb / emoji / clip panel layer), so it covers the keyboard only — the suggestion strip
+     * above stays visible and usable. Created once; themed on every show.
+     */
+    private fun buildRemoveSuggestionOverlay(): View {
+        val overlay = FrameLayout(this).apply {
+            visibility = View.GONE
+            background = ColorDrawable(0x59000000)
+            setOnClickListener { hideRemoveSuggestionDialog() }
+            isClickable = true
+        }
+
+        val title = TextView(this).apply {
+            text = getString(R.string.remove_suggestion_title)
+            textSize = 16f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val word = TextView(this).apply {
+            textSize = 22f
+            maxLines = 1
+            gravity = Gravity.CENTER
+            setPadding(dp(10f).toInt(), dp(8f).toInt(), dp(10f).toInt(), dp(8f).toInt())
+        }
+        removeDialogWord = word
+
+        val cancelBtn = TextView(this).apply {
+            text = getString(R.string.action_cancel)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setPadding(dp(18f).toInt(), dp(10f).toInt(), dp(18f).toInt(), dp(10f).toInt())
+            setOnClickListener { hideRemoveSuggestionDialog() }
+        }
+        val removeBtn = TextView(this).apply {
+            text = getString(R.string.remove_suggestion_confirm)
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding(dp(18f).toInt(), dp(10f).toInt(), dp(18f).toInt(), dp(10f).toInt())
+            setOnClickListener {
+                val w = removeDialogWord?.text?.toString().orEmpty()
+                hideRemoveSuggestionDialog()
+                if (w.isNotEmpty()) removeSuggestionConfirmed(w)
+            }
+        }
+
+        val buttonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            addView(cancelBtn, LinearLayout.LayoutParams(WRAP, WRAP))
+            addView(removeBtn, LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = dp(10f).toInt() })
+        }
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20f).toInt(), dp(18f).toInt(), dp(20f).toInt(), dp(12f).toInt())
+            elevation = dp(8f)
+            addView(title, LinearLayout.LayoutParams(WRAP, WRAP))
+            addView(word, LinearLayout.LayoutParams(MATCH, WRAP))
+            addView(buttonRow, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(8f).toInt() })
+        }
+
+        overlay.addView(card, FrameLayout.LayoutParams(MATCH, WRAP).apply {
+            gravity = Gravity.CENTER
+            marginStart = dp(24f).toInt(); marginEnd = dp(24f).toInt()
+        })
+        removeDialogOverlay = overlay
+        return overlay
+    }
+
+    /** Opens the dialog for [word]; re-themed so it always matches the current keyboard theme. */
+    private fun showRemoveSuggestionDialog(word: String) {
+        val overlay = removeDialogOverlay ?: return
+        val th = kbTheme
+        val card = overlay.getChildAt(0) as? ViewGroup ?: return
+        overlay.background = ColorDrawable(0x59000000)
+        card.background = GradientDrawable().apply {
+            cornerRadius = dp(18f).toFloat()
+            setColor(th.popupBg)
+        }
+        (card.getChildAt(0) as? TextView)?.setTextColor(th.text)
+        removeDialogWord?.setTextColor(th.accent)
+        removeDialogWord?.text = word
+        val buttons = card.getChildAt(2) as? ViewGroup
+        val cancelBtn = buttons?.getChildAt(0) as? TextView
+        val removeBtn = buttons?.getChildAt(1) as? TextView
+        cancelBtn?.setTextColor(th.hint)
+        removeBtn?.setTextColor(th.accentText)
+        removeBtn?.background = GradientDrawable().apply {
+            cornerRadius = dp(14f).toFloat()
+            setColor(th.accent)
+        }
+        overlay.visibility = View.VISIBLE
+    }
+
+    private fun hideRemoveSuggestionDialog() {
+        removeDialogOverlay?.visibility = View.GONE
+    }
+
+    /**
+     * Applies the removal: the word is suppressed from the suggestion bar for this session,
+     * erased from the learned-word memories (unless learning is off or the field is private),
+     * and the strip refills without it.
+     */
+    private fun removeSuggestionConfirmed(word: String) {
+        rejectionTracker.suppress(word)
+        if (lastClipText != null && lastClipText.equals(word, ignoreCase = true)) lastClipText = null
+        if (!incognito && personalLearningAllowed()) {
+            userWordMemory.forget(word)
+            adaptiveWordMemory.forget(word)
+        }
+        // Refresh the strip immediately: drop the word from the current candidates so the
+        // removed suggestion disappears even if no new suggestions are computed right now.
+        candidates = candidates.filterNot { it.equals(word, ignoreCase = true) }
+        shownWords = shownWords.filterNot { it.equals(word, ignoreCase = true) }
+        toolbarC.refreshStrip()
         suggestPipeline.updateSuggestions()
     }
 
@@ -3131,6 +3355,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         private const val ACCENT_HEADROOM_DP = 64f
         private const val NEURAL_FAILURE_TTL_MS = 5L * 60L * 1000L
         internal const val SUGGEST_DEBOUNCE_MS = 32L
+        // Target languages cycled by the translator's language chip ("→ English" etc.).
+        private val TRANSLATOR_TARGETS = listOf(
+            "en", "hi", "es", "fr", "de", "pt", "ar", "ru", "ja", "ko", "zh"
+        )
         // 4o — autocorrect confidence threshold. Combined with the typing-speed
         // adjustment in [endWord] to gate aggressive autocorrects.
         private const val AUTOCORRECT_CONFIDENCE_THRESHOLD = 0.85f

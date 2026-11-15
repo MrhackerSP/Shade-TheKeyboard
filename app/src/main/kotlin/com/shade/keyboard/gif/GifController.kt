@@ -32,8 +32,21 @@ class GifController(
     val loader = GifImageLoader(context, scope)
     val bar = GifBar(context, loader, this)
 
-    private val client: GifClient? =
-        if (GifConfig.isConfigured) GifClient(GifConfig.apiKey, customerId()) else null
+    // The client is rebuilt whenever the effective API key changes (build-time key or the
+    // runtime key pasted in the panel's setup card), so a saved key works immediately.
+    private var clientInstance: GifClient? = null
+    private var clientKey: String? = null
+
+    private val client: GifClient?
+        get() {
+            val key = GifConfig.apiKey
+            if (key.isBlank()) return null
+            if (clientInstance == null || clientKey != key) {
+                clientInstance = GifClient(key, customerId())
+                clientKey = key
+            }
+            return clientInstance
+        }
 
     private var query = ""
     private var activeQuery = ""
@@ -54,7 +67,7 @@ class GifController(
         activeQuery = ""
         bar.setQuery("")
         when {
-            client == null -> bar.showStatus(context.getString(R.string.gif_unavailable))
+            client == null -> bar.showSetup()
             !consented -> bar.showConsent()
             else -> loadFirst("")
         }
@@ -72,19 +85,26 @@ class GifController(
     // ---- keystrokes forwarded by the service -----------------------------------------------
 
     fun type(text: String) {
-        if (!isOpen || client == null || !consented) return
+        if (!isOpen) return
+        // While the API-key setup card is open, keystrokes feed the key field instead of the query.
+        if (bar.isCapturingKey) { bar.appendKeyInput(text); return }
+        if (client == null || !consented) return
         query = (query + text).take(MAX_QUERY)
         bar.setQuery(query)
     }
 
     fun backspace() {
-        if (!isOpen || query.isEmpty()) return
+        if (!isOpen) return
+        if (bar.isCapturingKey) { bar.backspaceKeyInput(); return }
+        if (query.isEmpty()) return
         query = query.substring(0, query.offsetByCodePoints(query.length, -1))
         bar.setQuery(query)
     }
 
     fun submit() {
-        if (!isOpen || client == null || !consented) return
+        if (!isOpen) return
+        if (bar.isCapturingKey) { bar.submitKeyInput(); return }
+        if (client == null || !consented) return
         activeQuery = query.trim()
         loadFirst(activeQuery)
     }
@@ -102,6 +122,13 @@ class GifController(
     override fun onConsent() {
         prefs.edit().putBoolean(KEY_CONSENT, true).apply()
         loadFirst("")
+    }
+
+    override fun onApiKeySaved(key: String) {
+        prefs.edit().putString(GifConfig.KEY_PREF, key.trim()).apply()
+        GifConfig.applyPrefs(prefs)
+        bar.showStatus(context.getString(R.string.gif_key_saved))
+        if (consented) loadFirst("") else bar.showConsent()
     }
 
     // ---- sending ------------------------------------------------------------------------------

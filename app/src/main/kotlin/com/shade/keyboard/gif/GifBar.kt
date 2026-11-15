@@ -38,6 +38,9 @@ class GifBar(
         fun onPick(item: GifItem)
         fun onNearEnd()
         fun onConsent()
+
+        /** Called with the API key the user typed in the setup card (already trimmed). */
+        fun onApiKeySaved(key: String)
     }
 
     private var theme: KbTheme = Themes.LIGHT
@@ -51,6 +54,15 @@ class GifBar(
     private val status = TextView(context)
     private val consentBtn = TextView(context)
     private val overlay = LinearLayout(context)
+
+    // Setup card (shown while no API key is configured): message + key display + save button.
+    private val setupBox = LinearLayout(context)
+    private val keyMessage = TextView(context)
+    private val keyView = TextView(context)
+    private val keySaveBtn = TextView(context)
+    private var keyInput = ""
+    private var capturingKey = false
+    private lateinit var resultsView: FrameLayout
 
     private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
 
@@ -110,13 +122,44 @@ class GifBar(
         consentBtn.setOnClickListener { callbacks.onConsent() }
         overlay.addView(consentBtn, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8f) })
 
-        val results = FrameLayout(context)
+        // --- setup card: key paste via the keyboard below -------------------------------------
+        setupBox.orientation = VERTICAL
+        setupBox.gravity = Gravity.CENTER
+        setupBox.visibility = GONE
+        keyMessage.text = context.getString(R.string.gif_needs_key_message)
+        keyMessage.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        keyMessage.gravity = Gravity.CENTER
+        keyMessage.setPadding(dp(16f), 0, dp(16f), 0)
+        setupBox.addView(keyMessage, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+
+        // The API key is typed on the keyboard below (keys are forwarded while the bar is open);
+        // this display shows what has been typed so far. It never opens the system IME.
+        keyView.maxLines = 1
+        keyView.ellipsize = null
+        keyView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        keyView.gravity = Gravity.CENTER_VERTICAL
+        keyView.setPadding(dp(12f), 0, dp(12f), 0)
+        setupBox.addView(keyView, LayoutParams(LayoutParams.MATCH_PARENT, dp(36f)).apply {
+            marginStart = dp(24f); marginEnd = dp(24f); topMargin = dp(8f)
+        })
+
+        keySaveBtn.text = context.getString(R.string.gif_key_save)
+        keySaveBtn.gravity = Gravity.CENTER
+        keySaveBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        keySaveBtn.typeface = Typeface.DEFAULT_BOLD
+        keySaveBtn.setPadding(dp(20f), dp(8f), dp(20f), dp(8f))
+        keySaveBtn.setOnClickListener { saveKey() }
+        setupBox.addView(keySaveBtn, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10f) })
+        overlay.addView(setupBox, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        val results = FrameLayout(context).also { resultsView = it }
         results.addView(scroll, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         results.addView(overlay, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         addView(results, LayoutParams(LayoutParams.MATCH_PARENT, dp(THUMB_HEIGHT_DP + 12f)))
 
         setTheme(theme)
         setQuery("")
+        refreshKeyView()
     }
 
     fun setTheme(t: KbTheme) {
@@ -133,6 +176,17 @@ class GifBar(
         queryView.background = GradientDrawable().apply {
             cornerRadius = dp(18f).toFloat()
             setColor(t.keyFn)
+        }
+        keyMessage.setTextColor(t.hint)
+        keyView.setTextColor(t.text)
+        keyView.background = GradientDrawable().apply {
+            cornerRadius = dp(14f).toFloat()
+            setColor(t.keyFn)
+        }
+        keySaveBtn.setTextColor(t.accentText)
+        keySaveBtn.background = GradientDrawable().apply {
+            cornerRadius = dp(18f).toFloat()
+            setColor(t.accent)
         }
         setQuery(query)
         for (i in 0 until row.childCount) {
@@ -162,8 +216,90 @@ class GifBar(
         queryView.text = sb
     }
 
+    // ---- setup card (no API key configured) ------------------------------------------------
+
+    /** True while the keyboard's forwarded keystrokes feed the API key field. */
+    val isCapturingKey: Boolean get() = capturingKey
+
+    /**
+     * Setup card: explains that a free API key is needed and captures the key the user types on
+     * the keyboard below. The card is taller than the thumbnail strip, so the results container
+     * grows to fit it and shrinks back when GIFs load.
+     */
+    fun showSetup() {
+        capturingKey = true
+        keyInput = ""
+        refreshKeyView()
+        status.text = context.getString(R.string.gif_needs_key_title)
+        consentBtn.visibility = GONE
+        setupBox.visibility = VISIBLE
+        // The card is taller than the thumbnail strip: let the results container grow to fit it.
+        (resultsView.layoutParams as? LinearLayout.LayoutParams)?.let {
+            it.height = LinearLayout.LayoutParams.WRAP_CONTENT
+            resultsView.layoutParams = it
+            resultsView.requestLayout()
+        }
+        overlay.visibility = VISIBLE
+    }
+
+    /** Appends typed characters to the API key field (keys forwarded by the service). */
+    fun appendKeyInput(text: String) {
+        if (!capturingKey) return
+        keyInput = (keyInput + text).take(MAX_QUERY)
+        refreshKeyView()
+    }
+
+    /** Removes the last API-key character (keys forwarded by the service). */
+    fun backspaceKeyInput() {
+        if (!capturingKey || keyInput.isEmpty()) return
+        keyInput = keyInput.substring(0, keyInput.offsetByCodePoints(keyInput.length, -1))
+        refreshKeyView()
+    }
+
+    /** Enter on the keyboard (or the Save button) persists the key via the controller. */
+    fun submitKeyInput() {
+        if (!capturingKey) return
+        saveKey()
+    }
+
+    private fun saveKey() {
+        val key = keyInput.trim()
+        if (key.isEmpty()) {
+            status.text = context.getString(R.string.gif_key_hint)
+            return
+        }
+        leaveSetup()
+        callbacks.onApiKeySaved(key)
+    }
+
+    private fun refreshKeyView() {
+        val sb = SpannableStringBuilder()
+        if (keyInput.isEmpty()) {
+            sb.append(context.getString(R.string.gif_key_hint))
+            sb.setSpan(ForegroundColorSpan(theme.hint), 0, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        } else {
+            sb.append(keyInput)
+            sb.setSpan(ForegroundColorSpan(theme.text), 0, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            val start = sb.length
+            sb.append("|")
+            sb.setSpan(ForegroundColorSpan(theme.accent), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        keyView.text = sb
+    }
+
+    private fun leaveSetup() {
+        capturingKey = false
+        setupBox.visibility = GONE
+        (resultsView.layoutParams as? LinearLayout.LayoutParams)?.let {
+            it.height = dp(THUMB_HEIGHT_DP + 12f)
+            resultsView.layoutParams = it
+            resultsView.requestLayout()
+        }
+    }
+
     /** Replaces the thumbnails, or appends the next page to them. */
     fun showItems(items: List<GifItem>, append: Boolean) {
+        if (capturingKey) leaveSetup()
         if (!append) clearThumbs()
         for (item in items) addThumb(item)
         if (!append) scroll.scrollTo(0, 0)
@@ -177,6 +313,7 @@ class GifBar(
 
     /** Shows a message in place of the thumbnails (null hides it). */
     fun showStatus(message: String?) {
+        if (capturingKey) leaveSetup()
         consentBtn.visibility = GONE
         if (message == null) {
             overlay.visibility = GONE
@@ -188,6 +325,7 @@ class GifBar(
 
     /** First-use notice: nothing is sent to the GIF provider until the person taps Continue. */
     fun showConsent() {
+        if (capturingKey) leaveSetup()
         clearThumbs()
         status.text = context.getString(R.string.gif_consent_message)
         consentBtn.visibility = VISIBLE
@@ -218,5 +356,6 @@ class GifBar(
 
     companion object {
         private const val THUMB_HEIGHT_DP = 100
+        private const val MAX_QUERY = 80
     }
 }

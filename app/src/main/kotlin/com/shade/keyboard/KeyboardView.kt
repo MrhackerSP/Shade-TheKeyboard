@@ -307,6 +307,9 @@ class KeyboardView(context: Context) : View(context) {
     private var gestureEngine: GestureEngine? = null
     private var gestureStartTime = 0L
     private var lastGlidePreviewMs = 0L
+    // Last letter key the glide path crossed; used to pop one bubble per crossed key
+    // (Gboard-style reaction) instead of re-triggering on every move event.
+    private var glideHighlightKey: Key? = null
 
     private fun obtainPointer(k: Key?, x: Float, y: Float): Pointer {
         val p = pointerPool.pollFirst() ?: Pointer()
@@ -834,8 +837,9 @@ class KeyboardView(context: Context) : View(context) {
         if (!ge.hasTrail()) return
         ge.setTrailColor(kbTheme.accent)
         ge.drawTrail(c, trailPaint)
-        // Keep animating until the trail is fully gone.
-        if (ge.hasTrail()) invalidate()
+        // Keep animating until the post-release fade is fully gone (a static ribbon under a
+        // held finger needs no redraw loop — every move event already invalidates).
+        if (ge.isTrailFading()) invalidate()
     }
 
     private fun startTrail(x: Float, y: Float) {
@@ -1171,7 +1175,11 @@ class KeyboardView(context: Context) : View(context) {
                     rows[0][0].right - rows[0][0].left
                 } else 100f
                 val ge0 = gestureEngine
-                if (ge0 == null) gestureEngine = GestureEngine(keyW) else ge0.setKeyWidth(keyW)
+                if (ge0 == null) {
+                    gestureEngine = GestureEngine(keyW)
+                    gestureEngine?.setTrailDensity(resources.displayMetrics.density)
+                } else ge0.setKeyWidth(keyW)
+                glideHighlightKey = null
                 gestureStartTime = android.os.SystemClock.uptimeMillis()
                 gestureEngine?.onDown(x, y, 0)
             }
@@ -1395,11 +1403,23 @@ class KeyboardView(context: Context) : View(context) {
             // Feed gesture engine for proper sampling + trail
             val elapsed = (android.os.SystemClock.uptimeMillis() - gestureStartTime).toInt()
             gestureEngine?.addEventPoint(x, y, elapsed)
+            // Dense capture for the visible ribbon (the decode sampler above stays sparse).
+            gestureEngine?.addTrailPoint(x, y)
 
             // Glide live preview — only once we're actually gliding (not during the
             // initial tap). The service decodes the sampled path through the real
             // SlideDecoder and surfaces a real word (or nothing) as composing text.
             if (p.gliding) {
+                // Gboard-style reaction: every letter key the finger crosses pops its bubble,
+                // so the path visibly "lights up" the keys it passes over.
+                if (altShown.not()) {
+                    hit(x, y)?.let { hk ->
+                        if (hk.kind == KeyKind.CHAR && hk !== glideHighlightKey) {
+                            glideHighlightKey = hk
+                            showPreviewFor(hk)
+                        }
+                    }
+                }
                 val sampledPath = gestureEngine?.getIncrementalPath()
                 val nowMs = android.os.SystemClock.uptimeMillis()
                 if (sampledPath != null && sampledPath.size >= 6 &&

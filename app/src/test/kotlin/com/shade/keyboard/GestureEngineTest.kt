@@ -90,26 +90,56 @@ class GestureEngineTest {
     }
 
     @Test
-    fun trailIsVisibleWhileSwipingAndExpiresAfterLinger() {
+    fun trailStaysVisibleWhileTheFingerIsDown() {
+        // Gboard-style: the ribbon never expires mid-glide — it only fades after release.
         val e = engine()
         slowSwipe(e, 3)
         assertTrue(e.hasTrail())
-        now += 800
-        assertTrue(e.hasTrail())          // exactly at the linger limit
-        now += 1
-        assertFalse(e.hasTrail())         // nothing left to redraw -> no endless invalidate()
+        now += 5_000
+        assertTrue(e.hasTrail())          // finger still down: no linger expiry
     }
 
     @Test
-    fun addTrailRestartsFadeFromRelease() {
+    fun trailFadesOutQuicklyAfterRelease() {
         val e = engine()
         slowSwipe(e, 3)
-        now += 700
         e.addTrail()                      // finger lifted
-        now += 700
+        assertTrue(e.hasTrail())          // fade just started
+        now += 220
+        assertTrue(e.hasTrail())          // exactly at the fade limit
+        now += 1
+        assertFalse(e.hasTrail())         // fade finished -> no endless invalidate()
+    }
+
+    @Test
+    fun redrawLoopOnlyRunsDuringReleaseFade() {
+        val e = engine()
+        slowSwipe(e, 3)
+        assertFalse(e.isTrailFading())    // finger down: static ribbon, no fade loop needed
+        e.addTrail()
+        assertTrue(e.isTrailFading())     // fade running -> keep invalidating
+        now += 221
+        assertFalse(e.isTrailFading())    // fade finished
+    }
+
+    @Test
+    fun addTrailPointKeepsTheRibbonDenseButNotJagged() {
+        val e = engine()
+        e.setTrailDensity(1f)             // ribbon captures a point every >= 3 px
+        e.onDown(0f, 0f, 1000)            // down event starts the ribbon
+        e.addTrailPoint(1f, 0f)           // < 3 px from the last point -> dropped
+        e.addTrailPoint(2f, 0f)           // still < 3 px -> dropped
+        e.addTrailPoint(5f, 0f)           // kept
         assertTrue(e.hasTrail())
-        now += 101
-        assertFalse(e.hasTrail())
+    }
+
+    @Test
+    fun ribbonPointsDoNotPolluteTheDecodePath() {
+        val e = engine()
+        e.onDown(0f, 0f, 1000)
+        e.addTrailPoint(1f, 0f)           // dense, unsampled ribbon points
+        e.addTrailPoint(2f, 0f)
+        assertEquals(1, e.getLength())    // decode sampling is untouched by the ribbon
     }
 
     @Test

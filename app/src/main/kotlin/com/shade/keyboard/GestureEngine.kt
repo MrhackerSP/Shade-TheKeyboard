@@ -62,18 +62,22 @@ class GestureEngine(
     private var incrementalRecognitionSize = 0
 
     // ---- Trail rendering state ----
+    // Gboard-style ribbon: a smooth, translucent ribbon follows the finger with a soft glow and a
+    // small round blob at the head; while the finger is down the whole path stays visible, and on
+    // release the remaining ribbon fades out quickly (trailFadeDuration).
     private val trailX = ArrayList<Float>()
     private val trailY = ArrayList<Float>()
     private val trailTimes = ArrayList<Long>()
     private var trailColor = 0x80FFFFFF.toInt()
     private var trailReleaseTime = 0L  // 0 = still drawing; >0 = finger lifted, fading out
 
-    // Trail visual parameters
-    private var trailStartWidth = 10f    // px at the finger (thick end)
-    private var trailEndWidth = 1f      // px at the tail (thin end)
-    private var trailLingerDuration = 800L   // ms the trail stays visible after the last point before fading
-    private var trailFadeDuration = 800L     // ms for the whole-trail fade-out after release
-    private val trailMaxPoints = 120        // cap memory; old points are dropped
+    // Trail visual parameters. Widths are computed from [trailDensity] at draw time so the ribbon
+    // keeps its physical size on every screen (the old 10px/1px constants were nearly invisible
+    // on modern densities).
+    private var trailDensity = 2f
+    private var trailFadeDuration = 220L     // ms for the whole-trail fade-out after release
+    private var trailMinPointDistance = 0f   // px between captured trail points (set from density)
+    private val trailMaxPoints = 300         // cap memory; oldest points are dropped
 
     // Reusable buffers for smooth drawing
     private val smoothPath = Path()
@@ -82,7 +86,14 @@ class GestureEngine(
     private val tanBuffer = FloatArray(2)
 
     fun setTrailColor(color: Int) { trailColor = color }
-    fun setTrailWidths(start: Float, end: Float) { trailStartWidth = start; trailEndWidth = end }
+
+    /**
+     * Screen density used to size the ribbon (set by KeyboardView). Call before the first stroke.
+     */
+    fun setTrailDensity(density: Float) {
+        trailDensity = if (density > 0f) density else 2f
+        trailMinPointDistance = 3f * trailDensity
+    }
 
     /** Reset state for a new gesture stroke. */
     fun onDown(x: Float, y: Float, elapsedTime: Int) {
@@ -113,6 +124,27 @@ class GestureEngine(
             }
         }
         return true
+    }
+
+    /**
+     * Feeds the visible ribbon a raw (unsampled) point. Decode sampling (eventTimes above) stays
+     * sparse on purpose; the ribbon needs much denser points to look smooth like Gboard's.
+     */
+    fun addTrailPoint(x: Float, y: Float) {
+        val last = trailX.size - 1
+        if (last >= 0) {
+            val dx = x - trailX[last]
+            val dy = y - trailY[last]
+            if (dx * dx + dy * dy < trailMinPointDistance * trailMinPointDistance) return
+        }
+        trailX.add(x)
+        trailY.add(y)
+        trailTimes.add(clock())
+        while (trailX.size > trailMaxPoints) {
+            trailX.removeAt(0)
+            trailY.removeAt(0)
+            trailTimes.removeAt(0)
+        }
     }
 
     /** Check if this is a gesture (not a tap). */
@@ -167,34 +199,42 @@ class GestureEngine(
 
     /**
      * Called on finger-up: marks the trail for whole-trail fade-out (the entire
-     * the entire trail fades together over [trailFadeDuration], not per-point).
+     * trail fades together over [trailFadeDuration], not per-point).
      */
     fun addTrail() {
         trailReleaseTime = clock()
     }
 
-    /** True while there are trail points still visible (used to stop endless redraws). */
+    /**
+     * True while the ribbon has points to draw. While the finger is down the path stays fully
+     * visible (it must never vanish mid-glide); after release it fades for [trailFadeDuration].
+     */
     fun hasTrail(): Boolean {
         if (trailX.size < 2) return false
-        if (trailReleaseTime == 0L) {
-            // Still drawing: trail lingers for [trailLingerDuration] after the last point
-            // was added. After that it's gone (no more redraws).
-            val last = if (trailTimes.isEmpty()) 0L else trailTimes.last()
-            return clock() - last <= trailLingerDuration
-        }
-        val elapsed = clock() - trailReleaseTime
-        return elapsed <= trailFadeDuration
+        if (trailReleaseTime == 0L) return true
+        return clock() - trailReleaseTime <= trailFadeDuration
     }
 
     /**
-     * Draw the gesture trail as a smooth bezier curve with width taper and alpha fade.
+     * True only while the post-release fade is running — the caller keeps the redraw loop alive
+     * for the fade; a static ribbon under a held finger needs no continuous redraws.
+     */
+    fun isTrailFading(): Boolean {
+        if (trailReleaseTime == 0L) return false
+        return clock() - trailReleaseTime <= trailFadeDuration
+    }
+
+    /**
+     * Draw the gesture trail as a smooth ribbon, Gboard-style.
      *
      * Trail characteristics:
-     * - Smooth quadratic bezier through midpoints (no jagged segments)
-     * - Width tapers from thick (near finger) to thin (at tail)
-     * - Alpha fades from opaque (near finger) to transparent (at tail)
-     * - Round stroke caps for a blob look
-     * - After release, the whole trail fades out together over ~200ms
+     * - Smooth quadratic bezier through midpoints (no jagged corners) over densely captured points
+     * - Soft glow pass under a solid core ribbon; round caps/joins everywhere
+     * - Width tapers gently from a thick head (near the finger) to a thinner tail
+     * - Alpha: fairly uniform (tail ~45%) so crossed keys stay readable, head ~90%
+     * - A small round blob at the finger position, like Gboard's glide head
+     * - While the finger is down the whole path stays visible; after release the whole ribbon
+     *   fades out together over ~220ms
      */
     fun drawTrail(canvas: Canvas, paint: Paint) {
         val n = trailX.size
@@ -231,9 +271,13 @@ class GestureEngine(
         val totalLen = pathMeasure.length
         if (totalLen <= 0f) return
 
-        // Draw the trail in ~40 segments, each with its own width and alpha.
-        // Segment 0 = tail (oldest, thin, transparent); last segment = head (newest, thick, opaque).
-        val segments = max(2, min(40, n))
+        val headW = 13f * trailDensity   // ribbon width at the finger
+        val tailW = 4.5f * trailDensity  // ribbon width at the oldest end
+        val glowExtra = 5.5f * trailDensity
+
+        // Segment count scales with path length so short strokes stay smooth and long glides
+        // don't cost too much (Gboard's ribbon reads as a continuous curve, never as a polyline).
+        val segments = (totalLen / (6f * trailDensity)).toInt().coerceIn(24, 120)
         paint.style = Paint.Style.STROKE
         paint.isAntiAlias = true
         paint.strokeCap = Paint.Cap.ROUND
@@ -244,38 +288,50 @@ class GestureEngine(
         val baseG = (trailColor shr 8) and 0xFF
         val baseB = trailColor and 0xFF
 
-        var prevX = 0f
-        var prevY = 0f
+        var prevX: Float
+        var prevY: Float
         pathMeasure.getPosTan(0f, posBuffer, tanBuffer)
         prevX = posBuffer[0]
         prevY = posBuffer[1]
 
-        for (i in 1..segments) {
-            val t = i.toFloat() / segments
-            val distance = totalLen * t
-            pathMeasure.getPosTan(distance, posBuffer, tanBuffer)
-            val cx = posBuffer[0]
-            val cy = posBuffer[1]
+        for (pass in 0..1) {
+            // Pass 0 = soft glow under the ribbon; pass 1 = solid core.
+            if (pass == 0) {
+                paint.strokeWidth = headW + glowExtra
+            }
+            pathMeasure.getPosTan(0f, posBuffer, tanBuffer)
+            prevX = posBuffer[0]
+            prevY = posBuffer[1]
+            for (i in 1..segments) {
+                val t = i.toFloat() / segments
+                val distance = totalLen * t
+                pathMeasure.getPosTan(distance, posBuffer, tanBuffer)
+                val cx = posBuffer[0]
+                val cy = posBuffer[1]
 
-            // Width: thick at the head (t=1), thin at the tail (t=0).
-            val width = trailEndWidth + (trailStartWidth - trailEndWidth) * t
+                // Width: thick at the head (t=1), thinner at the tail (t=0).
+                if (pass == 1) {
+                    paint.strokeWidth = tailW + (headW - tailW) * t
+                }
 
-            // Alpha: opaque at the head (t=1), transparent at the tail (t=0).
-            // During live drawing, the tail is very short; after release the whole
-            // trail fades together via globalAlpha.
-            val segAlpha = (0.15f + 0.85f * t) * globalAlpha
-            val alpha = (255 * segAlpha).toInt().coerceIn(0, 255)
+                // Alpha: head is nearly opaque, tail clearly translucent so keys stay readable.
+                val segAlpha = ((0.45f + 0.45f * t) * if (pass == 0) 0.22f else 1f) * globalAlpha
+                val alpha = (255 * segAlpha).toInt().coerceIn(0, 255)
+                paint.color = (alpha shl 24) or (baseR shl 16) or (baseG shl 8) or baseB
 
-            paint.color = (alpha shl 24) or (baseR shl 16) or (baseG shl 8) or baseB
-            paint.strokeWidth = width
-
-            // Draw a small segment from prev to current.
-            // Using drawLine with ROUND cap gives the smooth blob look.
-            canvas.drawLine(prevX, prevY, cx, cy, paint)
-
-            prevX = cx
-            prevY = cy
+                canvas.drawLine(prevX, prevY, cx, cy, paint)
+                prevX = cx
+                prevY = cy
+            }
         }
+
+        // Head blob: a small round dot exactly at the finger position (Gboard's glide head).
+        val headAlpha = (255 * 0.92f * globalAlpha).toInt().coerceIn(0, 255)
+        paint.color = (headAlpha shl 24) or (baseR shl 16) or (baseG shl 8) or baseB
+        paint.style = Paint.Style.FILL
+        paint.strokeWidth = headW
+        canvas.drawCircle(trailX[n - 1], trailY[n - 1], headW * 0.52f, paint)
+        paint.style = Paint.Style.STROKE
     }
 
     /** Check if enough time has passed for a new recognition pass. */

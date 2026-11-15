@@ -20,6 +20,9 @@ class SuggestionRejectionTracker(context: Context) {
     @Volatile
     private var threshold: Int = DEFAULT_THRESHOLD
     private val counts = ConcurrentHashMap<String, AtomicInteger>()
+    // Words the user explicitly removed via the long-press dialog on the suggestion strip.
+    // Suppressed immediately for the whole session, without needing N implicit rejections.
+    private val suppressed = ConcurrentHashMap.newKeySet<String>()
 
     fun recordRejection(word: String) {
         if (word.isEmpty()) return
@@ -28,9 +31,22 @@ class SuggestionRejectionTracker(context: Context) {
         counts.computeIfAbsent(w) { AtomicInteger(0) }.incrementAndGet()
     }
 
+    /**
+     * Explicitly removes [word] from the suggestion bar: suppressed immediately and for the
+     * rest of the session (used by the "Remove suggestion" dialog).
+     */
+    fun suppress(word: String) {
+        val w = word.trim().lowercase()
+        if (w.isEmpty()) return
+        if (suppressed.size >= 2000) suppressed.clear()
+        suppressed.add(w)
+        counts[w] = AtomicInteger(DEFAULT_THRESHOLD)
+    }
+
     fun shouldSuppress(word: String): Boolean {
         if (word.isEmpty()) return false
         val w = word.trim().lowercase()
+        if (suppressed.contains(w)) return true
         val c = counts[w]?.get() ?: 0
         return c >= threshold
     }
@@ -42,6 +58,7 @@ class SuggestionRejectionTracker(context: Context) {
 
     fun clearSession() {
         counts.clear()
+        suppressed.clear()
     }
 
     fun setThreshold(value: Int) {

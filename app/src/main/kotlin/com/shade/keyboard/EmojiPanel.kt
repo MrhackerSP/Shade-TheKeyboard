@@ -256,6 +256,12 @@ class EmojiPanel(
             }
         })
         searchField.setOnClickListener { enterSearch() }
+        // Some taps only grant focus (e.g. the first tap after the panel opens, or when the
+        // click is consumed by cursor placement). Entering search on focus as well guarantees
+        // the keyboard appears on the FIRST tap, never the second.
+        searchField.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) enterSearch()
+        }
         // Hardware enter closes the search and returns to the emoji grid.
         searchField.setOnEditorActionListener { _, _, _ -> exitSearch(); true }
 
@@ -270,6 +276,9 @@ class EmojiPanel(
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10f), dp(6f), dp(10f), dp(8f))
+            // Tapping the row around the field (padding, margins) must behave exactly like
+            // tapping the field itself — one tap, keyboard up.
+            setOnClickListener { enterSearch() }
         }
         searchRow.addView(searchField, LayoutParams(0, dp(40f), 1f))
         searchRow.addView(searchClear, LayoutParams(dp(40f), LayoutParams.MATCH_PARENT))

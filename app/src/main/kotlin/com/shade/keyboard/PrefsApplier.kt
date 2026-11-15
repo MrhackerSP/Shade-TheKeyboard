@@ -197,6 +197,7 @@ internal class PrefsApplier(private val svc: ShadeService) {
         emoji.setTheme(kbTheme)
         clipPanel.setTheme(kbTheme)
         if (svc.gifControllerReady()) gifController.bar.setTheme(kbTheme)
+        svc.translateBar?.setTheme(kbTheme)
 
         root.setBackgroundColor(kbTheme.bg)
         toggle.setTextColor(kbTheme.hint)
