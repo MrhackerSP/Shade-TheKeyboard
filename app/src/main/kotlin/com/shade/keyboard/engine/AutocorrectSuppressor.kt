@@ -68,7 +68,7 @@ class AutocorrectSuppressor(context: Context) {
 
     private fun load() {
         try {
-            val root = JSONObject(prefs.getString("items", "{}"))
+            val root = JSONObject(prefs.getString("items", null) ?: "{}")
             for (k in root.keys()) {
                 val o = root.getJSONObject(k)
                 cache[k] = Entry(o.optInt("c", 0), o.optLong("t", 0L))

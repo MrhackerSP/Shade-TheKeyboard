@@ -7,7 +7,7 @@
 import re
 import glob
 
-ROOT = "/home/z/my-project/work/shade-extract/Shade-TheKeyboard-main"
+ROOT = "/home/z/my-project/work/Shade-TheKeyboard-main"
 CAT = open(f"{ROOT}/app/src/main/kotlin/com/shade/keyboard/SettingsCatalog.kt", encoding="utf-8").read()
 
 # 1. Collect catalog (key, kind, default) triples.

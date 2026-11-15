@@ -22,7 +22,13 @@ import org.json.JSONObject
  */
 class CorrectionMemory(context: Context) {
 
-    data class Entry(val corrected: String, val count: Int, val lastSeen: Long)
+    data class Entry(
+        val corrected: String,
+        val count: Int,
+        val lastSeen: Long,
+        /** The pair reached [APPROVE_COUNT] at least once — recall keeps surfacing it. */
+        val approved: Boolean = false,
+    )
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
@@ -41,10 +47,13 @@ class CorrectionMemory(context: Context) {
         val now = System.currentTimeMillis()
         val old = cache[key]
         val entry = if (old != null && old.corrected == fix) {
-            Entry(fix, (old.count + 1).coerceAtMost(MAX_COUNT), now)
+            val count = (old.count + 1).coerceAtMost(MAX_COUNT)
+            Entry(fix, count, now, approved = old.approved || count >= APPROVE_COUNT)
         } else {
             // Conflicting fix (user changed their mind): restart the count at 1.
-            Entry(fix, 1, now)
+            // The pair keeps its approved history so recall still surfaces the
+            // new fix; pre-approval (approves) needs the streak to grow back.
+            Entry(fix, 1, now, approved = old?.approved == true)
         }
         cache[key] = entry
         evict(now)
@@ -64,12 +73,17 @@ class CorrectionMemory(context: Context) {
         if (remaining <= 0) {
             cache.remove(key)
         } else {
-            cache[key] = Entry(old.corrected, remaining, old.lastSeen)
+            cache[key] = Entry(old.corrected, remaining, old.lastSeen, old.approved)
         }
         save()
     }
 
-    /** What the user usually means by [original], or null. Only pairs seen [APPROVE_COUNT]+ times. */
+    /**
+     * What the user usually means by [original], or null. Surfaces any pair
+     * that has been approved at least once — the current streak may be shorter
+     * after a conflicting fix — while pairs never approved stay hidden. Use
+     * [approves] when pre-approval is the question.
+     */
     @Synchronized
     fun recall(original: String): Entry? {
         val key = norm(original)
@@ -77,13 +91,13 @@ class CorrectionMemory(context: Context) {
         ensureLoad()
         val entry = cache[key] ?: return null
         if (System.currentTimeMillis() - entry.lastSeen >= TTL_MS) return null
-        return if (entry.count >= APPROVE_COUNT) entry else null
+        return if (entry.approved || entry.count >= APPROVE_COUNT) entry else null
     }
 
     /** True when this exact pair has been accepted enough times to pre-approve. */
     fun approves(original: String, corrected: String): Boolean {
         val entry = recall(original) ?: return false
-        return entry.corrected == norm(corrected)
+        return entry.count >= APPROVE_COUNT && entry.corrected == norm(corrected)
     }
 
     @Synchronized
@@ -128,7 +142,7 @@ class CorrectionMemory(context: Context) {
     private fun load() {
         loaded = true
         try {
-            val root = JSONObject(prefs.getString("pairs", "{}"))
+            val root = JSONObject(prefs.getString("pairs", null) ?: "{}")
             val now = System.currentTimeMillis()
             for (k in root.keys()) {
                 val o = root.optJSONObject(k) ?: continue
@@ -136,7 +150,10 @@ class CorrectionMemory(context: Context) {
                 val count = o.optInt("n", 0)
                 val seen = o.optLong("t", 0L)
                 if (fixed.isEmpty() || count <= 0 || now - seen >= TTL_MS) continue
-                cache[k] = Entry(fixed, count, seen)
+                cache[k] = Entry(
+                    fixed, count, seen,
+                    approved = o.optBoolean("a", false) || count >= APPROVE_COUNT
+                )
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to load correction memory; starting fresh", e)
@@ -157,7 +174,9 @@ class CorrectionMemory(context: Context) {
         try {
             val root = JSONObject()
             for ((k, v) in cache) {
-                root.put(k, JSONObject().put("c", v.corrected).put("n", v.count).put("t", v.lastSeen))
+                val o = JSONObject().put("c", v.corrected).put("n", v.count).put("t", v.lastSeen)
+                if (v.approved) o.put("a", true)
+                root.put(k, o)
             }
             prefs.edit().putString("pairs", root.toString()).apply()
         } catch (e: Exception) {

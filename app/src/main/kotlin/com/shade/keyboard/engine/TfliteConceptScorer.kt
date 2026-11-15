@@ -168,17 +168,17 @@ class TfliteConceptScorer(
         // Layer 1a — direct emoji triggers, longest matching trigger wins.
         matchTrigger(words, directRules)?.let { out.addAll(it) }
 
-        // Layer 1b — concept triggers mapped through the emoji table.
-        matchTrigger(words, conceptRules)?.forEach { concept ->
-            out.addAll(conceptEmojis[concept].orEmpty())
+        // Layer 1b — concept triggers mapped through the emoji table. Concepts
+        // are interleaved (each concept's first emoji, then each second, ...)
+        // so a multi-concept trigger surfaces every concept's top emoji within
+        // the limit instead of letting one concept's list crowd out the rest.
+        matchTrigger(words, conceptRules)?.let { concepts ->
+            out.addAll(interleave(concepts.map { conceptEmojis[it].orEmpty() }))
         }
 
         // Layer 2 — the concept model, if its probes passed at load time.
         if (out.size < limit && modelState != null && probesPassed) {
-            for (concept in modelConcepts(norm, 2)) {
-                out.addAll(conceptEmojis[concept].orEmpty())
-                if (out.size >= limit) break
-            }
+            out.addAll(interleave(modelConcepts(norm, 2).map { conceptEmojis[it].orEmpty() }))
         }
         return out.toList().take(limit)
     }
@@ -198,6 +198,23 @@ class TfliteConceptScorer(
             rules[words.takeLast(n).joinToString(" ")]?.let { return it }
         }
         return null
+    }
+
+    /** Round-robin merge that preserves each list's internal (priority) order. */
+    private fun interleave(lists: List<List<String>>): List<String> {
+        val merged = ArrayList<String>()
+        var depth = 0
+        while (true) {
+            var added = false
+            for (list in lists) {
+                if (depth < list.size) {
+                    merged.add(list[depth])
+                    added = true
+                }
+            }
+            if (!added) return merged
+            depth++
+        }
     }
 
     private fun loadRules(context: Context, path: String): Map<String, List<String>> =

@@ -126,7 +126,7 @@ class TouchBiasModel(context: Context) {
 
     private fun load() {
         try {
-            val root = JSONObject(prefs.getString("bias", "{}"))
+            val root = JSONObject(prefs.getString("bias", null) ?: "{}")
             for (key in root.keys()) {
                 val o = root.getJSONObject(key)
                 values[key] = Acc(

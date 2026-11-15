@@ -4,7 +4,7 @@
 blocks directly, no unicode_escape mangling."""
 import re
 
-ROOT = "/home/z/my-project/work/shade-extract/Shade-TheKeyboard-main"
+ROOT = "/home/z/my-project/work/Shade-TheKeyboard-main"
 NEW = open(f"{ROOT}/app/src/main/kotlin/com/shade/keyboard/EmojiCatalog.kt", encoding="utf-8").read()
 
 strip = lambda s: s.replace("\uFE0F", "")

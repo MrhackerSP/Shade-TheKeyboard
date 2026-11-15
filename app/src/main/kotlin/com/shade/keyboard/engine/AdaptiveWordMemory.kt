@@ -46,7 +46,7 @@ class AdaptiveWordMemory(context: Context) {
 
     private fun load() {
         try {
-            val root = JSONObject(prefs.getString("words", "{}"))
+            val root = JSONObject(prefs.getString("words", null) ?: "{}")
             for (key in root.keys()) {
                 val o = root.getJSONObject(key)
                 values[key] = Entry(o.optDouble("s", 0.0).toFloat(), o.optLong("t", 0L))

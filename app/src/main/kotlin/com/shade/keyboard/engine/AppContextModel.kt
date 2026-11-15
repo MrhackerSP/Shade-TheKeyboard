@@ -125,7 +125,7 @@ class AppContextModel(context: Context) {
 
     private fun load() {
         try {
-            val root = JSONObject(prefs.getString("apps", "{}"))
+            val root = JSONObject(prefs.getString("apps", null) ?: "{}")
             for (app in root.keys()) {
                 val o = root.getJSONObject(app)
                 val map = HashMap<String, Float>()

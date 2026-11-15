@@ -7,7 +7,7 @@ exist simply get an extra row (the loader accumulates them)."""
 
 import os
 
-TSV = "/home/z/my-project/work/shade-extract/Shade-TheKeyboard-main/app/src/main/assets/emoji/emoji_keywords_en.tsv"
+TSV = "/home/z/my-project/work/Shade-TheKeyboard-main/app/src/main/assets/emoji/emoji_keywords_en.tsv"
 
 CURATED = [
     # Emoji 18.0 (September 2026)
