@@ -119,6 +119,7 @@
     <string name="pref_voice_on_device">Prefer on-device voice recognition</string>
     <string name="pref_voice_on_device_sum">Use the phone\'s offline recognizer when it is available; falls back to the standard speech service otherwise</string>
     <string name="voice_hud_listening">Listening…</string>
+    <string name="voice_hud_error">Voice typing: %1$s — tap the mic to try again</string>
 
     <string name="open_input_settings">Open input settings</string>
     <string name="choose_keyboard">Choose Shade</string>

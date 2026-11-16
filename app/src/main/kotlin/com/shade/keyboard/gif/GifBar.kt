@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
+import android.widget.EditText
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -55,12 +56,11 @@ class GifBar(
     private val consentBtn = TextView(context)
     private val overlay = LinearLayout(context)
 
-    // Setup card (shown while no API key is configured): message + key display + save button.
+    // Setup card (shown while no API key is configured): message + key field + save button.
     private val setupBox = LinearLayout(context)
     private val keyMessage = TextView(context)
-    private val keyView = TextView(context)
+    private val keyField = EditText(context)
     private val keySaveBtn = TextView(context)
-    private var keyInput = ""
     private var capturingKey = false
     private lateinit var resultsView: FrameLayout
 
@@ -132,14 +132,19 @@ class GifBar(
         keyMessage.setPadding(dp(16f), 0, dp(16f), 0)
         setupBox.addView(keyMessage, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
 
-        // The API key is typed on the keyboard below (keys are forwarded while the bar is open);
-        // this display shows what has been typed so far. It never opens the system IME.
-        keyView.maxLines = 1
-        keyView.ellipsize = null
-        keyView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        keyView.gravity = Gravity.CENTER_VERTICAL
-        keyView.setPadding(dp(12f), 0, dp(12f), 0)
-        setupBox.addView(keyView, LayoutParams(LayoutParams.MATCH_PARENT, dp(36f)).apply {
+        // A real, editable field: shows a blinking cursor, allows cursor placement and the
+        // standard long-press → Paste menu (the whole point is pasting a copied API key).
+        // Keys typed on the Shade keyboard below are forwarded into it at the cursor (see
+        // appendKeyInput / backspaceKeyInput); showSoftInputOnFocus=false keeps the system
+        // IME from ever opening on top of this keyboard.
+        keyField.hint = context.getString(R.string.gif_key_hint)
+        keyField.isSingleLine = true
+        keyField.maxLines = 1
+        keyField.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        keyField.gravity = Gravity.CENTER_VERTICAL
+        keyField.setPadding(dp(12f), 0, dp(12f), 0)
+        keyField.showSoftInputOnFocus = false
+        setupBox.addView(keyField, LayoutParams(LayoutParams.MATCH_PARENT, dp(36f)).apply {
             marginStart = dp(24f); marginEnd = dp(24f); topMargin = dp(8f)
         })
 
@@ -159,7 +164,6 @@ class GifBar(
 
         setTheme(theme)
         setQuery("")
-        refreshKeyView()
     }
 
     fun setTheme(t: KbTheme) {
@@ -178,8 +182,9 @@ class GifBar(
             setColor(t.keyFn)
         }
         keyMessage.setTextColor(t.hint)
-        keyView.setTextColor(t.text)
-        keyView.background = GradientDrawable().apply {
+        keyField.setTextColor(t.text)
+        keyField.setHintTextColor(t.hint)
+        keyField.background = GradientDrawable().apply {
             cornerRadius = dp(14f).toFloat()
             setColor(t.keyFn)
         }
@@ -228,8 +233,7 @@ class GifBar(
      */
     fun showSetup() {
         capturingKey = true
-        keyInput = ""
-        refreshKeyView()
+        keyField.setText("")
         status.text = context.getString(R.string.gif_needs_key_title)
         consentBtn.visibility = GONE
         setupBox.visibility = VISIBLE
@@ -240,20 +244,47 @@ class GifBar(
             resultsView.requestLayout()
         }
         overlay.visibility = VISIBLE
+        // Only after everything is visible: requestFocus on a view inside GONE parents is a
+        // no-op. Cursor lands in the field right away, so long-press → Paste works without
+        // a tap first.
+        keyField.requestFocus()
     }
 
-    /** Appends typed characters to the API key field (keys forwarded by the service). */
+    /** Inserts forwarded keyboard text at the cursor (replacing any selection). */
     fun appendKeyInput(text: String) {
         if (!capturingKey) return
-        keyInput = (keyInput + text).take(MAX_QUERY)
-        refreshKeyView()
+        val sb = keyField.editableText
+        var start = keyField.selectionStart
+        var end = keyField.selectionEnd
+        if (start < 0 || end < 0 || start > sb.length || end > sb.length) {
+            start = sb.length; end = start
+        }
+        val from = minOf(start, end)
+        val to = maxOf(start, end)
+        sb.replace(from, to, text)
+        if (sb.length > MAX_QUERY) sb.delete(MAX_QUERY, sb.length)
+        keyField.setSelection(minOf(from + text.length, sb.length))
     }
 
-    /** Removes the last API-key character (keys forwarded by the service). */
+    /** Deletes the current selection, or the code point before the cursor. */
     fun backspaceKeyInput() {
-        if (!capturingKey || keyInput.isEmpty()) return
-        keyInput = keyInput.substring(0, keyInput.offsetByCodePoints(keyInput.length, -1))
-        refreshKeyView()
+        if (!capturingKey) return
+        val sb = keyField.editableText
+        var start = keyField.selectionStart
+        var end = keyField.selectionEnd
+        if (start < 0 || end < 0 || start > sb.length || end > sb.length) {
+            start = sb.length; end = start
+        }
+        if (start != end) {
+            val from = minOf(start, end)
+            sb.delete(from, maxOf(start, end))
+            keyField.setSelection(from)
+            return
+        }
+        if (start > 0) {
+            val delStart = sb.toString().offsetByCodePoints(start, -1)
+            sb.delete(delStart, start)
+        }
     }
 
     /** Enter on the keyboard (or the Save button) persists the key via the controller. */
@@ -263,7 +294,7 @@ class GifBar(
     }
 
     private fun saveKey() {
-        val key = keyInput.trim()
+        val key = keyField.text.toString().trim()
         if (key.isEmpty()) {
             status.text = context.getString(R.string.gif_key_hint)
             return
@@ -272,23 +303,9 @@ class GifBar(
         callbacks.onApiKeySaved(key)
     }
 
-    private fun refreshKeyView() {
-        val sb = SpannableStringBuilder()
-        if (keyInput.isEmpty()) {
-            sb.append(context.getString(R.string.gif_key_hint))
-            sb.setSpan(ForegroundColorSpan(theme.hint), 0, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        } else {
-            sb.append(keyInput)
-            sb.setSpan(ForegroundColorSpan(theme.text), 0, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            val start = sb.length
-            sb.append("|")
-            sb.setSpan(ForegroundColorSpan(theme.accent), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        }
-        keyView.text = sb
-    }
-
     private fun leaveSetup() {
         capturingKey = false
+        keyField.clearFocus()
         setupBox.visibility = GONE
         (resultsView.layoutParams as? LinearLayout.LayoutParams)?.let {
             it.height = dp(THUMB_HEIGHT_DP + 12f)

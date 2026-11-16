@@ -45,4 +45,21 @@ class VoiceEnginePolicyTest {
         val long = "a".repeat(300)
         assertEquals(120, VoiceEnginePolicy.hudText(long).length)
     }
+
+    @Test
+    fun knownErrorCodesGetHumanReadableDescriptions() {
+        assertEquals("network error", VoiceEnginePolicy.describeError(2))          // ERROR_NETWORK
+        assertEquals("no speech detected", VoiceEnginePolicy.describeError(6))     // ERROR_SPEECH_TIMEOUT
+        assertEquals("recognizer busy", VoiceEnginePolicy.describeError(8))        // ERROR_RECOGNIZER_BUSY
+        assertEquals(
+            "microphone permission missing",
+            VoiceEnginePolicy.describeError(9)                                     // ERROR_INSUFFICIENT_PERMISSIONS
+        )
+    }
+
+    @Test
+    fun unknownErrorCodesFallBackToGenericText() {
+        assertEquals("voice error 99", VoiceEnginePolicy.describeError(99))
+        assertEquals("voice error -1", VoiceEnginePolicy.describeError(-1))
+    }
 }

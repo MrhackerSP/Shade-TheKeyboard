@@ -39,4 +39,25 @@ object VoiceEnginePolicy {
 
     /** Text shown in the live listening chip: trimmed and bounded. */
     fun hudText(partial: String?): String = partial?.trim()?.take(120).orEmpty()
+
+    /**
+     * Short human-readable reason for a SpeechRecognizer error code. Kept in this
+     * Android-free object so it stays JVM-testable; the ints mirror the public
+     * android.speech.SpeechRecognizer.ERROR_* constants (1..12).
+     */
+    fun describeError(error: Int): String = when (error) {
+        1 -> "network timeout"            // ERROR_NETWORK_TIMEOUT
+        2 -> "network error"              // ERROR_NETWORK
+        3 -> "microphone error"           // ERROR_AUDIO
+        4 -> "service error"              // ERROR_SERVER
+        5 -> "recognizer error"           // ERROR_CLIENT
+        6 -> "no speech detected"         // ERROR_SPEECH_TIMEOUT
+        7 -> "didn't catch that"          // ERROR_NO_MATCH
+        8 -> "recognizer busy"            // ERROR_RECOGNIZER_BUSY
+        9 -> "microphone permission missing" // ERROR_INSUFFICIENT_PERMISSIONS
+        10 -> "language not available offline" // ERROR_LANGUAGE_UNAVAILABLE
+        11 -> "language not supported"     // ERROR_LANGUAGE_NOT_SUPPORTED
+        12 -> "too many requests"          // ERROR_TOO_MANY_REQUESTS
+        else -> "voice error $error"
+    }
 }

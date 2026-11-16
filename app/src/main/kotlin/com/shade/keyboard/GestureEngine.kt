@@ -64,7 +64,7 @@ class GestureEngine(
     // ---- Trail rendering state ----
     // Glide ribbon: a smooth, translucent ribbon follows the finger with a soft glow and a
     // small round blob at the head; while the finger is down the whole path stays visible, and on
-    // release the remaining ribbon fades out quickly (trailFadeDuration).
+    // release the remaining ribbon fades out over trailFadeDuration (Gboard-like timing).
     private val trailX = ArrayList<Float>()
     private val trailY = ArrayList<Float>()
     private val trailTimes = ArrayList<Long>()
@@ -72,10 +72,10 @@ class GestureEngine(
     private var trailReleaseTime = 0L  // 0 = still drawing; >0 = finger lifted, fading out
 
     // Trail visual parameters. Widths are computed from [trailDensity] at draw time so the ribbon
-    // keeps its physical size on every screen (the old 10px/1px constants were nearly invisible
-    // on modern densities).
+    // keeps its physical size on every screen. Sized to Gboard's thin ribbon: a narrow core with
+    // a modest glow, noticeably slimmer than the old 13dp/4.5dp ribbon.
     private var trailDensity = 2f
-    private var trailFadeDuration = 220L     // ms for the whole-trail fade-out after release
+    private var trailFadeDuration = 500L     // ms for the whole-trail fade-out after release (Gboard ~0.5s)
     private var trailMinPointDistance = 0f   // px between captured trail points (set from density)
     private val trailMaxPoints = 300         // cap memory; oldest points are dropped
 
@@ -234,7 +234,7 @@ class GestureEngine(
      * - Alpha: fairly uniform (tail ~45%) so crossed keys stay readable, head ~90%
      * - A small round blob at the finger position (the glide head)
      * - While the finger is down the whole path stays visible; after release the whole ribbon
-     *   fades out together over ~220ms
+     *   fades out together over ~500ms (Gboard-like), easing in so it lingers briefly first
      */
     fun drawTrail(canvas: Canvas, paint: Paint) {
         val n = trailX.size
@@ -249,7 +249,11 @@ class GestureEngine(
                 trailReleaseTime = 0L
                 return
             }
-            globalAlpha = 1f - elapsed.toFloat() / trailFadeDuration
+            // Ease-in fade: alpha = 1 - t². The ribbon holds near full opacity for the first
+            // moment (t=0.5 still ~75%), then sweeps away — reads like Gboard's
+            // linger-then-vanish instead of a linear dim.
+            val frac = elapsed.toFloat() / trailFadeDuration
+            globalAlpha = 1f - frac * frac
         }
 
         // Build a smooth path through the trail points using quadratic beziers.
@@ -271,9 +275,9 @@ class GestureEngine(
         val totalLen = pathMeasure.length
         if (totalLen <= 0f) return
 
-        val headW = 13f * trailDensity   // ribbon width at the finger
-        val tailW = 4.5f * trailDensity  // ribbon width at the oldest end
-        val glowExtra = 5.5f * trailDensity
+        val headW = 9f * trailDensity    // ribbon width at the finger (Gboard-thin)
+        val tailW = 3f * trailDensity    // ribbon width at the oldest end
+        val glowExtra = 4f * trailDensity
 
         // Segment count scales with path length so short strokes stay smooth and long glides
         // don't cost too much (the ribbon must read as a continuous curve, never a polyline).

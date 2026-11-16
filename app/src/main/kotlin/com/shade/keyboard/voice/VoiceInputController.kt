@@ -32,7 +32,8 @@ class VoiceInputController(
     private val context: Context,
     private val prefs: SharedPreferences,
     private val onPartialText: (String) -> Unit,
-    private val onFinalText: (String) -> Unit
+    private val onFinalText: (String) -> Unit,
+    private val onVoiceError: (String) -> Unit = {}
 ) {
     private var recognizer: SpeechRecognizer? = null
     private var lastPartial: String? = null
@@ -43,12 +44,21 @@ class VoiceInputController(
     var usesOnDeviceEngine = false
         private set
 
+    // Session state for the fast-fail retry (see onError): language, when this engine
+    // attempt started, and how many retries were used.
+    private var sessionLanguage: String? = null
+    private var attemptStartedAtMs = 0L
+    private var retryCount = 0
+
     fun start(languageTag: String? = null) {
+        sessionLanguage = languageTag
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            onPartialText("") // never leave the "Listening…" chip up without a session
             Toast.makeText(context, R.string.voice_input_unavailable, Toast.LENGTH_SHORT).show()
             return
         }
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            onPartialText("") // the chip showed "Listening…" — the session never started
             Toast.makeText(context, R.string.voice_permission_needed, Toast.LENGTH_LONG).show()
             try {
                 // A keyboard can't show the permission dialog itself; a tiny transparent activity does.
@@ -65,18 +75,27 @@ class VoiceInputController(
         }
 
         cancel()
-        val preferOnDevice = prefs.getBoolean(PREF_ON_DEVICE, true)
+        retryCount = 0
+        startEngine(preferOnDevice())
+    }
+
+    private fun preferOnDevice(): Boolean {
+        val prefer = prefs.getBoolean(PREF_ON_DEVICE, true)
         val onDeviceOk = Build.VERSION.SDK_INT >= VoiceEnginePolicy.ON_DEVICE_MIN_SDK &&
             SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
-        val wantOnDevice = VoiceEnginePolicy.chooseEngine(
-            Build.VERSION.SDK_INT, onDeviceOk, preferOnDevice
+        return VoiceEnginePolicy.chooseEngine(
+            Build.VERSION.SDK_INT, onDeviceOk, prefer
         ) == VoiceEnginePolicy.ENGINE_ON_DEVICE
+    }
 
-        // The policy gate above is opaque to lint's data-flow analysis (it runs
-        // through chooseEngine), so NewApi needs a direct SDK_INT guard at the
-        // call site. VERSION_CODES.S == 31 == VoiceEnginePolicy.ON_DEVICE_MIN_SDK,
-        // so this is behaviour-preserving: wantOnDevice already implies it.
-        val sr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && wantOnDevice) {
+    /** Creates a recognizer with the requested engine and starts listening. Main thread only. */
+    private fun startEngine(onDevice: Boolean) {
+        destroyCurrent()
+
+        // The policy gate in [preferOnDevice] is opaque to lint's data-flow analysis (it runs
+        // through chooseEngine), so NewApi needs a direct SDK_INT guard at the call site.
+        // VERSION_CODES.S == 31 == VoiceEnginePolicy.ON_DEVICE_MIN_SDK.
+        val sr = if (onDevice && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
                 SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
             } catch (t: Throwable) {
@@ -90,6 +109,7 @@ class VoiceInputController(
         val engine = sr ?: SpeechRecognizer.createSpeechRecognizer(context)
         recognizer = engine
         lastPartial = null
+        attemptStartedAtMs = System.currentTimeMillis()
 
         engine.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {}
@@ -103,7 +123,30 @@ class VoiceInputController(
                 // not silently dropped, but only if the engine seemed confident
                 // enough to transcribe something.
                 val promoted = VoiceEnginePolicy.pickFinalText(null, lastPartial)
-                if (promoted.isNotEmpty()) onFinalText(promoted) else onPartialText("")
+                if (promoted.isNotEmpty()) {
+                    onFinalText(promoted)
+                    return
+                }
+                // A recognizer that fails immediately with nothing transcribed (client,
+                // busy, permission-class errors — the on-device recognizer does this on
+                // several ROMs) gets exactly ONE retry on the other engine. Without it the
+                // "Listening…" chip flashed and vanished seconds after every tap, which
+                // reads as a crash.
+                if (retryCount < 1 && System.currentTimeMillis() - attemptStartedAtMs < 2500) {
+                    val canTryOther = if (usesOnDeviceEngine) true
+                        else Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                            SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+                    if (canTryOther) {
+                        retryCount++
+                        Log.w(TAG, "Recognizer failed fast (error $error); retrying with " +
+                            (if (usesOnDeviceEngine) "the standard engine" else "the on-device engine"))
+                        startEngine(!usesOnDeviceEngine)
+                        return
+                    }
+                }
+                onPartialText("")
+                // Surface the reason instead of silently dropping the chip.
+                onVoiceError(VoiceEnginePolicy.describeError(error))
             }
             override fun onResults(results: Bundle?) {
                 isListening = false
@@ -127,8 +170,9 @@ class VoiceInputController(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            if (!languageTag.isNullOrEmpty()) {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+            val lang = sessionLanguage
+            if (!lang.isNullOrEmpty()) {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
             }
         }
         isListening = true
@@ -138,15 +182,21 @@ class VoiceInputController(
             Log.w(TAG, "Unable to start voice input", t)
             cancel()
             onPartialText("")
+            onVoiceError(VoiceEnginePolicy.describeError(5)) // ERROR_CLIENT
         }
     }
 
     fun cancel() {
-        val sr = recognizer
-        recognizer = null
+        destroyCurrent()
         isListening = false
         lastPartial = null
         usesOnDeviceEngine = false
+    }
+
+    /** Stops and releases the current recognizer, if any. Safe to call any time. */
+    private fun destroyCurrent() {
+        val sr = recognizer
+        recognizer = null
         try { sr?.setRecognitionListener(null) } catch (e: Exception) { Log.w(TAG, "Failed to clear recognition listener", e) }
         try { sr?.cancel() } catch (e: Exception) { Log.w(TAG, "Failed to cancel speech recognizer", e) }
         try { sr?.destroy() } catch (e: Exception) { Log.w(TAG, "Failed to destroy speech recognizer", e) }

@@ -191,6 +191,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var removeDialogWord: TextView? = null
     // Live "listening" chip shown over the keyboard area while voice input transcribes.
     private var voiceHud: TextView? = null
+    // Auto-hides the error chip a moment after a voice failure was reported.
+    private val voiceHudErrorHider = Runnable { voiceHud?.visibility = View.GONE }
 
     internal var kbTheme: KbTheme = Themes.LIGHT
     internal var mode = Mode.LETTERS
@@ -414,7 +416,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             onFinalText = { text ->
                 hideVoiceHud()
                 commitVoiceText(text)
-            })
+            },
+            onVoiceError = { message -> voiceHudShowError(message) })
         clips = ClipboardStore(this)
         cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         try { cm.addPrimaryClipChangedListener(clipListener) } catch (e: Exception) { Log.w("ShadeService", "Failed to register clipboard listener", e) }
@@ -626,6 +629,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         )
         emoji.visibility = View.GONE
         clipPanel.visibility = View.GONE
+        // A freshly built view must start on the plain keyboard. The emoji header (search
+        // box) is VISIBLE by default, and transitionToPanel(Panel.NONE) early-returns while
+        // `panel` is already NONE, so without this line the search box lingered above the
+        // keyboard after the input view was rebuilt (service restart / rotation / theme
+        // change) until the emoji panel had been opened and closed once.
+        emoji.header.visibility = View.GONE
+        // The new view shows no panel; a stale `panel` value left over from the previous
+        // view (e.g. rebuilt while the emoji panel was open) would leave the new views out
+        // of sync with the state and wedge stripVisibleAllowed().
+        panel = Panel.NONE
 
         resizeOverlay = buildResizeOverlay()
         val content = FrameLayout(this).apply {
@@ -695,6 +708,19 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             override fun onClose() { closeTranslator() }
             override fun onInsert() { commitTranslation() }
             override fun onCycleTarget() { cycleTranslatorTarget() }
+            override fun onInputChanged(text: String) {
+                // The real EditText is now the source of truth; the watcher keeps the
+                // service state in sync whether the text came from forwarded keystrokes,
+                // a long-press paste or a clear.
+                translatorInput.setLength(0)
+                translatorInput.append(text)
+                // Any edit invalidates a previous translation (same as the old
+                // keystroke-forwarding path did).
+                if (translatorResult != null) {
+                    translatorResult = null
+                    translateBar?.setStatus(getString(R.string.translator_hint))
+                }
+            }
         }).also {
             it.visibility = View.GONE
             root.addView(it, 3, LinearLayout.LayoutParams(MATCH, WRAP))
@@ -1034,7 +1060,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (this::emoji.isInitialized == false) return
         if (p != Panel.NONE) endWord()
         if (p != Panel.NONE) closeGif()
-        if (panel == p) return
+        if (panel == p) {
+            // No transition, but keep the emoji header in sync: it must replace the
+            // suggestion strip only while the emoji panel is open. State and view can
+            // drift apart when the input view is rebuilt mid-panel.
+            emoji.header.visibility = if (p == Panel.EMOJI) View.VISIBLE else View.GONE
+            return
+        }
 
         val outgoing = when (panel) {
             Panel.EMOJI -> emoji
@@ -1213,6 +1245,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             setQuery("")
             setStatus(getString(R.string.translator_hint))
             setTarget(translatorTarget)
+            // Blinking cursor right away; long-press → Paste works without any tap first.
+            focusInput()
         }
     }
 
@@ -1244,21 +1278,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun onTranslatorKey(code: Int, text: String?) {
         when (code) {
-            Codes.DELETE -> {
-                if (translatorInput.isNotEmpty()) {
-                    val start = translatorInput.offsetByCodePoints(translatorInput.length, -1)
-                    translatorInput.delete(start, translatorInput.length)
-                }
-                translatorResult = null
-                translateBar?.setQuery(translatorInput.toString())
-                translateBar?.setStatus(getString(R.string.translator_hint))
-            }
-            Codes.SPACE -> {
-                translatorInput.append(' ')
-                translatorResult = null
-                translateBar?.setQuery(translatorInput.toString())
-                translateBar?.setStatus(getString(R.string.translator_hint))
-            }
+            // Typed keys edit the panel's real EditText at the cursor; the panel reports
+            // every change back through onInputChanged, which keeps translatorInput,
+            // the stale-result reset and the status line in sync.
+            Codes.DELETE -> translateBar?.backspaceInput()
+            Codes.SPACE -> translateBar?.appendInput(" ")
             Codes.ENTER -> {
                 // First Enter translates; with a result on screen Enter inserts it (as does Insert).
                 val existing = translatorResult
@@ -1266,7 +1290,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     commitTranslation()
                     return
                 }
-                val query = translatorInput.toString().trim()
+                val query = (translateBar?.inputText() ?: translatorInput.toString()).trim()
                 if (query.isEmpty()) {
                     closeTranslator()
                     return
@@ -1285,14 +1309,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 }
             }
             Codes.SHIFT, Codes.SYMBOLS, Codes.SYMBOLS2, Codes.LETTERS -> { /* mode keys work normally */ }
-            else -> {
-                text?.let {
-                    translatorInput.append(it)
-                    translatorResult = null
-                    translateBar?.setQuery(translatorInput.toString())
-                    translateBar?.setStatus(getString(R.string.translator_hint))
-                }
-            }
+            else -> text?.let { translateBar?.appendInput(it) }
         }
     }
 
@@ -3212,10 +3229,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     /** Session started: show the "listening" hint until the first partial arrives. */
     private fun voiceHudShowListening() {
-        voiceHud?.apply {
-            text = getString(R.string.voice_hud_listening)
-            visibility = View.VISIBLE
-        }
+        val hud = voiceHud ?: return
+        hud.removeCallbacks(voiceHudErrorHider)
+        hud.text = getString(R.string.voice_hud_listening)
+        hud.visibility = View.VISIBLE
+    }
+
+    /**
+     * A recognizer failure is surfaced with its reason instead of silently dropping the
+     * chip — a chip that flashes "Listening…" and vanishes reads as a crash. Auto-hides.
+     */
+    private fun voiceHudShowError(message: String) {
+        val hud = voiceHud ?: return
+        hud.removeCallbacks(voiceHudErrorHider)
+        hud.text = getString(R.string.voice_hud_error, message)
+        hud.visibility = View.VISIBLE
+        hud.postDelayed(voiceHudErrorHider, 2500)
     }
 
     /** Live partial transcript; an empty partial hides the chip. */
@@ -3231,6 +3260,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     private fun hideVoiceHud() {
+        voiceHud?.removeCallbacks(voiceHudErrorHider)
         voiceHud?.visibility = View.GONE
     }
 

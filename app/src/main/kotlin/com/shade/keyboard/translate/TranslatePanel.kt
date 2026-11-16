@@ -3,11 +3,11 @@ package com.shade.keyboard.translate
 import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.text.SpannableStringBuilder
-import android.text.Spanned
-import android.text.style.ForegroundColorSpan
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.shade.keyboard.KbTheme
@@ -39,6 +39,8 @@ class TranslatePanel(
         fun onInsert()
         /** The language chip was tapped; the service cycles the target and updates the panel. */
         fun onCycleTarget()
+        /** Every change to the input field (typed, pasted or cleared) keeps the service in sync. */
+        fun onInputChanged(text: String)
     }
 
     private var theme: KbTheme = Themes.LIGHT
@@ -46,13 +48,12 @@ class TranslatePanel(
     private val titleView = TextView(context)
     private val targetChip = TextView(context)
     private val closeBtn = TextView(context)
-    private val inputView = TextView(context)
+    private val inputField = EditText(context)
     private val resultView = TextView(context)
     private val insertBtn = TextView(context)
 
     // Display state (declared BEFORE the init block below — init reads them through
-    // setTheme → refreshInput/refreshResult, and Kotlin runs initializers in declaration order).
-    private var inputText: String = ""
+    // setTheme → refreshResult, and Kotlin runs initializers in declaration order).
     private var statusText: String = context.getString(R.string.translator_hint)
     private var resultText: String = ""
     private var hasResult = false
@@ -96,12 +97,27 @@ class TranslatePanel(
         top.addView(closeBtn, LayoutParams(dp(40f), dp(36f)))
         addView(top, LayoutParams(LayoutParams.MATCH_PARENT, dp(40f)))
 
-        // --- input display (the missing "text field") -------------------------------------------
-        inputView.maxLines = 1
-        inputView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-        inputView.gravity = Gravity.CENTER_VERTICAL
-        inputView.setPadding(dp(12f), 0, dp(12f), 0)
-        addView(inputView, LayoutParams(LayoutParams.MATCH_PARENT, dp(38f)).apply {
+        // --- input field -------------------------------------------------------------------------
+        // A real, editable field: blinking cursor, cursor placement by tap and the standard
+        // long-press → Paste menu. showSoftInputOnFocus=false keeps the system IME shut — the
+        // Shade keyboard below feeds this field (see ShadeService.onTranslatorKey).
+        inputField.hint = context.getString(R.string.translator_hint)
+        inputField.isSingleLine = true
+        inputField.maxLines = 1
+        inputField.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        inputField.gravity = Gravity.CENTER_VERTICAL
+        inputField.setPadding(dp(12f), 0, dp(12f), 0)
+        inputField.showSoftInputOnFocus = false
+        // Every text change — forwarded keystrokes, a paste, or a reset — is reported so
+        // the service's translator state never drifts from what is on screen.
+        inputField.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                callbacks.onInputChanged(s?.toString().orEmpty())
+            }
+        })
+        addView(inputField, LayoutParams(LayoutParams.MATCH_PARENT, dp(38f)).apply {
             marginStart = dp(6f); marginEnd = dp(6f)
         })
 
@@ -130,7 +146,6 @@ class TranslatePanel(
         addView(resultRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         setTheme(theme)
-        refreshInput()
     }
 
     fun setTheme(t: KbTheme) {
@@ -143,10 +158,12 @@ class TranslatePanel(
             cornerRadius = dp(14f).toFloat()
             setColor(t.keyFn)
         }
-        inputView.background = GradientDrawable().apply {
+        inputField.background = GradientDrawable().apply {
             cornerRadius = dp(14f).toFloat()
             setColor(t.keyFn)
         }
+        inputField.setTextColor(t.text)
+        inputField.setHintTextColor(t.hint)
         resultView.background = GradientDrawable().apply {
             cornerRadius = dp(14f).toFloat()
             setColor(t.keyFn)
@@ -156,14 +173,56 @@ class TranslatePanel(
             cornerRadius = dp(16f).toFloat()
             setColor(t.accent)
         }
-        refreshInput()
         refreshResult()
     }
 
-    /** Shows what has been typed so far (keys are forwarded by the service). */
+    /** Replaces the whole field (used when the panel opens or is reset). */
     fun setQuery(q: String) {
-        inputText = q
-        refreshInput()
+        if (inputField.text.toString() == q) return
+        inputField.setText(q)
+        inputField.setSelection(inputField.text.length)
+    }
+
+    /** Current field contents — authoritative for the service's translate call. */
+    fun inputText(): String = inputField.text.toString()
+
+    /** Inserts forwarded keyboard text at the cursor (replacing any selection). */
+    fun appendInput(text: String) {
+        val sb = inputField.editableText
+        var start = inputField.selectionStart
+        var end = inputField.selectionEnd
+        if (start < 0 || end < 0 || start > sb.length || end > sb.length) {
+            start = sb.length; end = start
+        }
+        val from = minOf(start, end)
+        sb.replace(from, maxOf(start, end), text)
+        inputField.setSelection(minOf(from + text.length, sb.length))
+    }
+
+    /** Deletes the current selection, or the code point before the cursor. */
+    fun backspaceInput() {
+        val sb = inputField.editableText
+        var start = inputField.selectionStart
+        var end = inputField.selectionEnd
+        if (start < 0 || end < 0 || start > sb.length || end > sb.length) {
+            start = sb.length; end = start
+        }
+        if (start != end) {
+            val from = minOf(start, end)
+            sb.delete(from, maxOf(start, end))
+            inputField.setSelection(from)
+            return
+        }
+        if (start > 0) {
+            val delStart = sb.toString().offsetByCodePoints(start, -1)
+            sb.delete(delStart, start)
+        }
+    }
+
+    /** Puts the cursor in the field: blinking caret + long-press paste ready immediately. */
+    fun focusInput() {
+        inputField.requestFocus()
+        inputField.setSelection(inputField.text.length)
     }
 
     /** Status line when there is no result yet: hint / "Translating…" / error. */
@@ -185,21 +244,6 @@ class TranslatePanel(
     fun setTarget(code: String) {
         val name = Locale.forLanguageTag(code).displayLanguage
         targetChip.text = "→ $name"
-    }
-
-    private fun refreshInput() {
-        val sb = SpannableStringBuilder()
-        if (inputText.isEmpty()) {
-            sb.append(context.getString(R.string.translator_hint))
-            sb.setSpan(ForegroundColorSpan(theme.hint), 0, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        } else {
-            sb.append(inputText)
-            sb.setSpan(ForegroundColorSpan(theme.text), 0, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            val start = sb.length
-            sb.append("|")
-            sb.setSpan(ForegroundColorSpan(theme.accent), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        }
-        inputView.text = sb
     }
 
     private fun refreshResult() {
