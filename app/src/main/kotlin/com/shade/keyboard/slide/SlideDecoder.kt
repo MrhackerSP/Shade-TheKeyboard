@@ -62,11 +62,14 @@ class SlideDecoder(
     private val dictionary: SlideDictionary,
     private val model: SwipeModel? = null
 ) {
-    constructor(dictionary: WordDictionary) : this(object : SlideDictionary {
-        override fun contains(word: String) = dictionary.contains(word)
-        override fun glideLexicon() = dictionary.glideLexicon()
-        override fun glideUserLexicon() = dictionary.glideUserLexicon()
-    }, null)
+    constructor(dictionary: WordDictionary, model: SwipeModel? = null) : this(
+        object : SlideDictionary {
+            override fun contains(word: String) = dictionary.contains(word)
+            override fun glideLexicon() = dictionary.glideLexicon()
+            override fun glideUserLexicon() = dictionary.glideUserLexicon()
+        },
+        model
+    )
 
     /**
      * Best word for the swipe, or null when nothing plausible fits.
@@ -115,7 +118,7 @@ class SlideDecoder(
         for (i in 1 until n) length += dist(xs[i], ys[i], xs[i - 1], ys[i - 1])
         if (n < 2 || length < TINY_PATH) return tinyPath(xs, ys, n, geo)
 
-        val run = Run(geo, xs, ys, n, length, context)
+        val run = Run(geo, xs, ys, n, length, context, model)
         var found = run.scan(dictionary.glideLexicon(), dictionary.glideUserLexicon(), relaxed = false)
         if (found.isEmpty()) found = run.scan(dictionary.glideLexicon(), dictionary.glideUserLexicon(), relaxed = true)
         return found.take(max)
@@ -223,7 +226,8 @@ class SlideDecoder(
         ys: FloatArray,
         n: Int,
         val length: Float,
-        val context: Map<String, Float>
+        val context: Map<String, Float>,
+        val model: SwipeModel? = null
     ) {
         val hasContext = context.isNotEmpty()
         val m: Int = min(M_MAX, max(M_MIN, round(length / RES).toInt()))
@@ -652,7 +656,7 @@ class SlideDecoder(
                     if (pairsOk && ideal > 0f) {
                         val ratio = ln((length + 0.4f) / (ideal + 0.4f))
                         val editNorm = (omission + insertion + transposition +
-                            nearbySub + generalSub) / alignLen
+                            nearbySub + generalSub).toFloat() / alignLen
                         val f = FloatArray(SwipeModel.FEATURE_NAMES.size)
                         f[0] = shape
                         f[1] = adh
