@@ -128,14 +128,15 @@ class SwipeModelTest {
     fun neuralPenaltyFollowsTheSignOfTheLogit() {
         val n = SwipeModel.FEATURE_NAMES.size
         val hw = List(2 * n) { "0.0" }.joinToString(",")
+        // hidden.w is units x features, hidden.b and output.w are one entry per unit
         val mk = { outW: String, b: String ->
             SwipeModel.parse(neuralJson(hiddenW = hw, hiddenB = "0.5, 0.5", outW = outW, outB = b))!!
         }
         val f = FloatArray(n) { 1f }
         // tanh(0.5) > 0 -> negative weights give a positive penalty (worse score)
-        assertTrue(mk("-1.0", "0.0").penalty(f) > 0f)
+        assertTrue(mk("-1.0, -1.0", "0.0").penalty(f) > 0f)
         // positive weights give a negative penalty (better score)
-        assertTrue(mk("1.0", "0.0").penalty(f) < 0f)
+        assertTrue(mk("1.0, 1.0", "0.0").penalty(f) < 0f)
     }
 
     @Test
