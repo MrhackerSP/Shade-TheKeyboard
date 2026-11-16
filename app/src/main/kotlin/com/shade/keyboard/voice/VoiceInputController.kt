@@ -72,7 +72,11 @@ class VoiceInputController(
             Build.VERSION.SDK_INT, onDeviceOk, preferOnDevice
         ) == VoiceEnginePolicy.ENGINE_ON_DEVICE
 
-        val sr = if (wantOnDevice) {
+        // The policy gate above is opaque to lint's data-flow analysis (it runs
+        // through chooseEngine), so NewApi needs a direct SDK_INT guard at the
+        // call site. VERSION_CODES.S == 31 == VoiceEnginePolicy.ON_DEVICE_MIN_SDK,
+        // so this is behaviour-preserving: wantOnDevice already implies it.
+        val sr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && wantOnDevice) {
             try {
                 SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
             } catch (t: Throwable) {
