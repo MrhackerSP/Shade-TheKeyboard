@@ -21,7 +21,7 @@ import org.junit.Test
 class TrainedSwipeRerankTest {
 
     private class FakeDictionary(
-        bundled: Map<String, Float>
+        private val bundled: Map<String, Float>
     ) : SlideDictionary {
         private val lex = GlideLexicon.build(bundled.keys.toList(), bundled.values.toFloatArray())
         override fun contains(word: String) = bundled.containsKey(word)

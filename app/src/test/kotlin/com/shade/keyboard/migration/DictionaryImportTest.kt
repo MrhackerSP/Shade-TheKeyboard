@@ -123,6 +123,7 @@ class DictionaryImportTest {
     @Test
     fun unknownBinaryIsIgnoredGracefully() {
         val h = harvest(byteArrayOf(0x00, 0x01, 0x02, 0x03, 0x04, 0x05))
-        assertTrue(h.isEmpty)
+        // Neither words nor source labels may be produced for unrecognizable data.
+        assertTrue(h.words.isEmpty() && h.sources.isEmpty())
     }
 }
