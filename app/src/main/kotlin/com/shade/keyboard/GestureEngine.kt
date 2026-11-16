@@ -62,7 +62,7 @@ class GestureEngine(
     private var incrementalRecognitionSize = 0
 
     // ---- Trail rendering state ----
-    // Gboard-style ribbon: a smooth, translucent ribbon follows the finger with a soft glow and a
+    // Glide ribbon: a smooth, translucent ribbon follows the finger with a soft glow and a
     // small round blob at the head; while the finger is down the whole path stays visible, and on
     // release the remaining ribbon fades out quickly (trailFadeDuration).
     private val trailX = ArrayList<Float>()
@@ -128,7 +128,7 @@ class GestureEngine(
 
     /**
      * Feeds the visible ribbon a raw (unsampled) point. Decode sampling (eventTimes above) stays
-     * sparse on purpose; the ribbon needs much denser points to look smooth like Gboard's.
+     * sparse on purpose; the ribbon needs much denser points to look and feel smooth.
      */
     fun addTrailPoint(x: Float, y: Float) {
         val last = trailX.size - 1
@@ -225,14 +225,14 @@ class GestureEngine(
     }
 
     /**
-     * Draw the gesture trail as a smooth ribbon, Gboard-style.
+     * Draw the gesture trail as a smooth glide ribbon.
      *
      * Trail characteristics:
      * - Smooth quadratic bezier through midpoints (no jagged corners) over densely captured points
      * - Soft glow pass under a solid core ribbon; round caps/joins everywhere
      * - Width tapers gently from a thick head (near the finger) to a thinner tail
      * - Alpha: fairly uniform (tail ~45%) so crossed keys stay readable, head ~90%
-     * - A small round blob at the finger position, like Gboard's glide head
+     * - A small round blob at the finger position (the glide head)
      * - While the finger is down the whole path stays visible; after release the whole ribbon
      *   fades out together over ~220ms
      */
@@ -276,7 +276,7 @@ class GestureEngine(
         val glowExtra = 5.5f * trailDensity
 
         // Segment count scales with path length so short strokes stay smooth and long glides
-        // don't cost too much (Gboard's ribbon reads as a continuous curve, never as a polyline).
+        // don't cost too much (the ribbon must read as a continuous curve, never a polyline).
         val segments = (totalLen / (6f * trailDensity)).toInt().coerceIn(24, 120)
         paint.style = Paint.Style.STROKE
         paint.isAntiAlias = true
@@ -325,7 +325,7 @@ class GestureEngine(
             }
         }
 
-        // Head blob: a small round dot exactly at the finger position (Gboard's glide head).
+        // Head blob: a small round dot exactly at the finger position (the glide head).
         val headAlpha = (255 * 0.92f * globalAlpha).toInt().coerceIn(0, 255)
         paint.color = (headAlpha shl 24) or (baseR shl 16) or (baseG shl 8) or baseB
         paint.style = Paint.Style.FILL

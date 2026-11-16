@@ -307,8 +307,8 @@ class KeyboardView(context: Context) : View(context) {
     private var gestureEngine: GestureEngine? = null
     private var gestureStartTime = 0L
     private var lastGlidePreviewMs = 0L
-    // Last letter key the glide path crossed; used to pop one bubble per crossed key
-    // (Gboard-style reaction) instead of re-triggering on every move event.
+    // Last letter key the glide path crossed; used to pop one bubble per crossed key,
+    // instead of re-triggering on every move event.
     private var glideHighlightKey: Key? = null
 
     private fun obtainPointer(k: Key?, x: Float, y: Float): Pointer {
@@ -1410,8 +1410,8 @@ class KeyboardView(context: Context) : View(context) {
             // initial tap). The service decodes the sampled path through the real
             // SlideDecoder and surfaces a real word (or nothing) as composing text.
             if (p.gliding) {
-                // Gboard-style reaction: every letter key the finger crosses pops its bubble,
-                // so the path visibly "lights up" the keys it passes over.
+                // Every letter key the finger crosses pops its bubble, so the path visibly
+                // "lights up" the keys it passes over.
                 if (altShown.not()) {
                     hit(x, y)?.let { hk ->
                         if (hk.kind == KeyKind.CHAR && hk !== glideHighlightKey) {

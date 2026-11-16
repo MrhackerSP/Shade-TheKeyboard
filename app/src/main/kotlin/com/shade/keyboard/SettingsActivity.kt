@@ -35,6 +35,7 @@ import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.lifecycle.lifecycleScope
+import com.shade.keyboard.migration.DictionaryImport
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -69,6 +70,8 @@ class SettingsActivity : AppCompatActivity() {
     // which runs Backup.export/import on IO.
     private lateinit var exportLauncher: ActivityResultLauncher<String>
     private lateinit var importLauncher: ActivityResultLauncher<Array<String>>
+    // Learned-word migration picker (SAF); the result flows into runWordImport().
+    private lateinit var wordImportLauncher: ActivityResultLauncher<Array<String>>
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -82,6 +85,9 @@ class SettingsActivity : AppCompatActivity() {
         }
         importLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) askBackupPassphrase(isExport = false, uri)
+        }
+        wordImportLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) runWordImport(uri)
         }
 
         setContentView(R.layout.activity_settings_noir)
@@ -118,6 +124,38 @@ class SettingsActivity : AppCompatActivity() {
     internal fun startExport() = exportLauncher.launch("shade-backup.shdbak")
 
     internal fun startImport() = importLauncher.launch(arrayOf("*/*"))
+
+    /**
+     * Learned-word migration: reads a file exported from another keyboard
+     * (backup archive, dictionary JSON or plain word list) and adds every
+     * word found to the learned-word memory. Runs on IO, reports a summary.
+     */
+    internal fun startWordImport() = wordImportLauncher.launch(arrayOf("*/*"))
+
+    private fun runWordImport(uri: Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            var report: DictionaryImport.Report? = null
+            var failed = false
+            try {
+                report = DictionaryImport.importFromUri(applicationContext, uri)
+            } catch (t: Exception) {
+                ShadeLog.w("SettingsActivity", "word import failed", t, once = true)
+                failed = true
+            }
+            withContext(Dispatchers.Main) {
+                when {
+                    failed -> Toast.makeText(this@SettingsActivity, R.string.import_words_failed, Toast.LENGTH_SHORT).show()
+                    report == null || report.isEmpty ->
+                        Toast.makeText(this@SettingsActivity, R.string.import_words_none, Toast.LENGTH_SHORT).show()
+                    else -> Toast.makeText(
+                        this@SettingsActivity,
+                        getString(R.string.import_words_done, report.imported, report.duplicates),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
 
     internal fun openTypingStats() {
         startActivity(Intent(this, TypingStatsActivity::class.java))

@@ -152,6 +152,7 @@ class SettingsCatalogTest {
         assertTrue(toggleDefault("gif_enabled"))
         assertTrue(toggleDefault("translator_enabled"))
         assertTrue(toggleDefault("voice_input"))
+        assertTrue(toggleDefault("voice_on_device"))              // getBoolean("voice_on_device", true)
         assertTrue(toggleDefault("learning_adaptive"))
         assertTrue(toggleDefault("learning_appctx"))
         assertTrue(toggleDefault("learning_suppressor"))          // getBoolean("learning_suppressor", true)

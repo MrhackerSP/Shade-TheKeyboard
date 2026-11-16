@@ -85,6 +85,7 @@ import com.shade.keyboard.engine.AcceptanceRateAdapter
 import com.shade.keyboard.engine.PerAppVocabularySnapshot
 import com.shade.keyboard.motion.ShadeMotion
 import com.shade.keyboard.slide.SlideDecoder
+import com.shade.keyboard.slide.SwipeModel
 import com.shade.keyboard.voice.VoiceInputController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -188,6 +189,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // "Remove suggestion" dialog drawn over the keyboard area (inside the content frame).
     private var removeDialogOverlay: FrameLayout? = null
     private var removeDialogWord: TextView? = null
+    // Live "listening" chip shown over the keyboard area while voice input transcribes.
+    private var voiceHud: TextView? = null
 
     internal var kbTheme: KbTheme = Themes.LIGHT
     internal var mode = Mode.LETTERS
@@ -231,7 +234,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
      */
     private var emojiPredictor: EmojiPredictor = EmojiPredictionEngine.builtIn()
     private var voice: VoiceInputController? = null
-    private val slideDecoder: SlideDecoder by lazy { SlideDecoder(dict) }
+    private val slideDecoder: SlideDecoder by lazy { SlideDecoder(dict, SwipeModel.load(this)) }
     // PrefsApplier: extracted from this class in the v11 refactor; bodies run in with(svc).
     internal val prefsApplier: PrefsApplier by lazy { PrefsApplier(this) }
     // ToolbarController: extracted from this class in the v11 refactor; bodies run in with(svc).
@@ -406,7 +409,12 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // Runtime GIF API key (GIF panel setup card) overrides the build-time key.
         GifConfig.applyPrefs(prefs)
         dict = WordDictionary(this)
-        voice = VoiceInputController(this) { text -> commitVoiceText(text) }
+        voice = VoiceInputController(this, prefs,
+            onPartialText = { partial -> voiceHudShowPartial(partial) },
+            onFinalText = { text ->
+                hideVoiceHud()
+                commitVoiceText(text)
+            })
         clips = ClipboardStore(this)
         cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         try { cm.addPrimaryClipChangedListener(clipListener) } catch (e: Exception) { Log.w("ShadeService", "Failed to register clipboard listener", e) }
@@ -471,7 +479,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         try { rankingScorer?.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close ranking scorer", e) }
         rankingScorer = null
         try { emojiPredictor.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close emoji predictor", e) }
-        try { voice?.cancel() } catch (e: Exception) { Log.w("ShadeService", "Failed to cancel voice input", e) }
+        stopVoice()
         voice = null
         serviceJob.cancel()
 
@@ -518,8 +526,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 setPadding(dp(6f).toInt(), 0, dp(6f).toInt(), 0)
                 TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(this, 12, 19, 1, TypedValue.COMPLEX_UNIT_SP)
                 setOnClickListener { suggestPipeline.pickSuggestion(it.tag as Int) }
-                // Long-press a suggestion to remove it (Gboard-style). The confirmation dialog
-                // is drawn over the keyboard area only — never over the suggestion bar itself.
+                // Long-press a suggestion to remove it. The confirmation dialog is drawn over
+                // the keyboard area only — never over the suggestion bar itself.
                 setOnLongClickListener { v ->
                     val word = candidates.getOrNull(v.tag as Int) ?: ""
                     if (word.isEmpty()) return@setOnLongClickListener false
@@ -628,6 +636,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             // "Remove suggestion" confirmation. Lives inside [content] so it covers the keyboard
             // area only — the suggestion strip above it stays visible and untouched.
             addView(buildRemoveSuggestionOverlay(), FrameLayout.LayoutParams(MATCH, MATCH))
+            // Live voice chip: floats over the keyboard area only, never the strip above it.
+            voiceHud = buildVoiceHud()
+            addView(voiceHud, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                topMargin = dp(8f).toInt()
+            })
         }
 
         // Resize/float handle — hidden by default (standard behavior).
@@ -890,7 +903,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         closeGif()
         closeTranslator()
         toolbarC.clearAutofillChips()
-        try { voice?.cancel() } catch (e: Exception) { Log.w("ShadeService", "Failed to cancel voice input", e) } // a late result must not land in the next field
+        stopVoice() // a late result must not land in the next field
         suggestJob?.cancel()
         suggestDebounceJob?.cancel()
         correctionJob?.cancel()
@@ -914,7 +927,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     override fun onFinishInput() {
         super.onFinishInput()
-        try { voice?.cancel() } catch (e: Exception) { Log.w("ShadeService", "Failed to cancel voice input", e) }
+        stopVoice()
         currentInputConnection?.finishComposingText()
         composing.clear()
         undoStack.clear()
@@ -1298,6 +1311,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 if (v == null) {
                     Toast.makeText(this, R.string.voice_input_unavailable, Toast.LENGTH_SHORT).show()
                 } else {
+                    voiceHudShowListening()
                     v.start()
                 }
             }
@@ -3176,6 +3190,53 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         pushUndo(cleaned.length + 1, "")
         composing.clear()
         afterText()
+    }
+
+    // ------------------------------------------------------------------ voice input HUD
+
+    private fun buildVoiceHud(): TextView {
+        return TextView(this).apply {
+            visibility = View.GONE
+            background = GradientDrawable().apply {
+                cornerRadius = dp(18f)
+                setColor(0xEE1C1C1E.toInt())
+            }
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 15f
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(14f).toInt(), dp(8f).toInt(), dp(14f).toInt(), dp(8f).toInt())
+            elevation = dp(4f)
+        }
+    }
+
+    /** Session started: show the "listening" hint until the first partial arrives. */
+    private fun voiceHudShowListening() {
+        voiceHud?.apply {
+            text = getString(R.string.voice_hud_listening)
+            visibility = View.VISIBLE
+        }
+    }
+
+    /** Live partial transcript; an empty partial hides the chip. */
+    private fun voiceHudShowPartial(partial: String) {
+        val hud = voiceHud ?: return
+        val text = partial.trim()
+        if (text.isEmpty()) {
+            hud.visibility = View.GONE
+        } else {
+            hud.text = text
+            hud.visibility = View.VISIBLE
+        }
+    }
+
+    private fun hideVoiceHud() {
+        voiceHud?.visibility = View.GONE
+    }
+
+    private fun stopVoice() {
+        hideVoiceHud()
+        try { voice?.cancel() } catch (e: Exception) { Log.w("ShadeService", "Failed to cancel voice input", e) }
     }
 
     private fun commitSlideWord(decoded: String) {

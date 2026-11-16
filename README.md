@@ -16,6 +16,13 @@ cp keystore.properties.example keystore.properties  # then fill in your keystore
 - Symbols pages, number pad (auto for number/phone fields), optional number row, emoji panel
 - Shift / caps-lock, auto-capitalize, double-space period, long-press accents, key previews
 - Space-bar swipe to move the cursor; long-press space for the keyboard picker
+- **Glide typing**: draw a word through its letters — an on-device decoder scores every
+  word's ideal path against the finger path (shape, adherence, corners, typed-error
+  decomposition), refined by a reranker trained on simulated swipes with letter-bigram /
+  trigram language-model features (`scripts/train_swipe_model.py`, deterministic and
+  reproducible). Trailing glow ribbon, key-pop feedback, live preview
+- **Voice typing**: on-device recognizer when the phone ships one (API 31+, fully
+  offline), platform speech service as fallback; live partial transcript while listening
 - Long-press accent panel: grid sized to the character count (e.g. 6 → 3×2, 8 → 4×2), round selection highlight, keyboard dims behind it
 
 **Text correction**
@@ -64,6 +71,8 @@ cp keystore.properties.example keystore.properties  # then fill in your keystore
 
 **Other**
 - Backup & restore of settings and learned words (JSON file)
+- **Learned-word migration**: import words exported from another keyboard — a backup
+  archive, dictionary JSON or plain word list — into the on-device learned memory
 
 ## Engineering notes
 
@@ -105,3 +114,19 @@ TFLite scorers, a shared `AssetTsv` parser replacing 19 hand-rolled asset
 readers, and a `ShadeLog` channel that every swallowed failure reports
 through (the remaining silent-looking guards are documented accumulate-and-
 rethrow or user-facing patterns, audited one by one).
+
+## Credits
+
+The trained glide decoder is an original, from-scratch implementation, but its
+design was shaped by two prior works:
+
+- [FUTO Keyboard](https://github.com/futo-futo/keyboard) — the first keyboard to
+  ship a fully on-device trained glide decoder. Its public behaviour and
+  write-ups inspired Shade's on-device approach; no source code or model data
+  was reused.
+- SHARK2 (K. Kristensson & S. Zhai, "SHARK2: A Large Vocabulary Shorthand
+  Writing System for Pen-Based Text Input", 2004) — the published
+  ideal-word-path shape-matching algorithm behind the decoder's core scoring.
+
+Shade's reranker weights are produced by Shade's own simulator
+(`scripts/train_swipe_model.py`) and can be retrained by anyone from source.

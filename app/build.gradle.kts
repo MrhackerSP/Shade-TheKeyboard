@@ -9,7 +9,6 @@ plugins {
 //   1. -PGIF_API_KEY=... / ~/.gradle/gradle.properties
 //   2. the GIF_API_KEY environment variable (CI)
 //   3. GIF_API_KEY=... in local.properties (git-ignored)
-//   4. the legacy KLIPY_API_KEY spellings of the above, kept for older setups
 // Without a key the GIF button is hidden. Note that a key inside an APK can always be extracted,
 // so use a key that is restricted/rate-limited at the provider and never one with other privileges.
 val gifApiKey: String = run {
@@ -20,9 +19,6 @@ val gifApiKey: String = run {
     (providers.gradleProperty("GIF_API_KEY").orNull
         ?: System.getenv("GIF_API_KEY")
         ?: local.getProperty("GIF_API_KEY")
-        ?: providers.gradleProperty("KLIPY_API_KEY").orNull
-        ?: System.getenv("KLIPY_API_KEY")
-        ?: local.getProperty("KLIPY_API_KEY")
         ?: "").trim().filter { it.isLetterOrDigit() || it == '-' || it == '_' }
 }
 

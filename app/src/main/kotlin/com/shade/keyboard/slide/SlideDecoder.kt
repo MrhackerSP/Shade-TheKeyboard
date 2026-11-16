@@ -30,9 +30,21 @@ import kotlin.math.sqrt
  *     swipe point is checked against the drawn polyline (a swipe that wanders over other keys does
  *     not match), direction changes of the swipe must sit on letters, and a loop drawn on a key
  *     favours the doubled spelling.
+ *  4. Rerank (optional): when a trained [SwipeModel] is bundled, each survivor's raw stage-2
+ *     feature vector is scored by a model fitted on simulated swipes and the result is
+ *     blended into the hand-tuned score (see SwipeModel for the training setup).
  *
  * The best-scoring word is returned even for sloppy swipes, but never a string of crossed letters
  * that is not a word. Tuned against simulated finger paths over the full 185k-word dictionary.
+ *
+ * Provenance: this is a from-scratch implementation written for Shade. Its design was
+ * shaped by studying the public behaviour and write-ups of FUTO Keyboard
+ * (https://github.com/futo-futo/keyboard), the first keyboard to ship a fully on-device
+ * trained glide decoder, and by the published ideal-word-path shape-matching algorithm
+ * SHARK2 (K. Kristensson & S. Zhai, "SHARK2: A Large Vocabulary Shorthand Writing System
+ * for Pen-Based Text Input", 2004). No source code from FUTO Keyboard or any other
+ * keyboard is used here; the trained reranker weights are fitted by Shade's own
+ * simulator (scripts/train_swipe_model.py) on simulated swipes.
  */
 
 /** The slice of the dictionary the decoder needs (lets tests use a tiny fake). */
@@ -47,13 +59,14 @@ interface SlideDictionary {
 }
 
 class SlideDecoder(
-    private val dictionary: SlideDictionary
+    private val dictionary: SlideDictionary,
+    private val model: SwipeModel? = null
 ) {
     constructor(dictionary: WordDictionary) : this(object : SlideDictionary {
         override fun contains(word: String) = dictionary.contains(word)
         override fun glideLexicon() = dictionary.glideLexicon()
         override fun glideUserLexicon() = dictionary.glideUserLexicon()
-    })
+    }, null)
 
     /**
      * Best word for the swipe, or null when nothing plausible fits.
@@ -289,17 +302,20 @@ class SlideDecoder(
         private val keepScore = FloatArray(STAGE1_KEEP)
         private val keepLex = IntArray(STAGE1_KEEP)
         private val keepIdx = IntArray(STAGE1_KEEP)
+        private val keepAlign = FloatArray(STAGE1_KEEP)
         private var kept = 0
         private var worstPos = 0
         private var worstScore = Float.NEGATIVE_INFINITY
 
-        private fun offer(score: Float, lex: Int, idx: Int) {
+        private fun offer(score: Float, align: Float, lex: Int, idx: Int) {
             if (kept < STAGE1_KEEP) {
                 keepScore[kept] = score; keepLex[kept] = lex; keepIdx[kept] = idx
+                keepAlign[kept] = align
                 kept++
                 if (kept == STAGE1_KEEP) findWorst()
             } else if (score < worstScore) {
                 keepScore[worstPos] = score; keepLex[worstPos] = lex; keepIdx[worstPos] = idx
+                keepAlign[worstPos] = align
                 findWorst()
             }
         }
@@ -378,7 +394,7 @@ class SlideDecoder(
                     val fit = context[lex.words[i]]
                     if (fit != null) s1 -= CONTEXT_WEIGHT * fit
                 }
-                offer(s1, lexId, i)
+                offer(s1, align, lexId, i)
             }
         }
 
@@ -620,6 +636,50 @@ class SlideDecoder(
                     oovFeature
 
                 if ((lex.doubleMask[i] and loopMask) != 0) score -= LOOP_BONUS
+
+                // Trained reranker: the same raw features the hand-tuned combination uses are
+                // scored by the fitted model, and the result nudges the total. Skipped when
+                // the word's ideal path is undefined on this layout (NaN pair distances) - the
+                // hand rule already handles those cases.
+                if (model != null) {
+                    var ideal = 0f
+                    var pairsOk = true
+                    for (k in 1 until len) {
+                        val d = geo.pair[c[k - 1] * 26 + c[k]]
+                        if (d.isNaN()) { pairsOk = false; break }
+                        ideal += d
+                    }
+                    if (pairsOk && ideal > 0f) {
+                        val ratio = ln((length + 0.4f) / (ideal + 0.4f))
+                        val editNorm = (omission + insertion + transposition +
+                            nearbySub + generalSub) / alignLen
+                        val f = FloatArray(SwipeModel.FEATURE_NAMES.size)
+                        f[0] = shape
+                        f[1] = adh
+                        f[2] = turn
+                        f[3] = cDistDiff
+                        f[4] = abs(vowelRatio - 0.4f)
+                        f[5] = editNorm
+                        f[6] = ratio
+                        f[7] = lex.prior[i]
+                        f[8] = len.toFloat()
+                        f[9] = shape * shape
+                        f[10] = adh * adh
+                        f[11] = editNorm * len
+                        f[12] = dist(px[0], py[0], vx[0], vy[0])
+                        f[13] = dist(px[m - 1], py[m - 1], vx[len - 1], vy[len - 1])
+                        // Letter-bigram and letter-trigram plausibility of the word itself,
+                        // scored from the frozen tables the model ships with - a
+                        // language-model signal that separates lookalike paths ("value" vs
+                        // "vampire") by how English their letter sequences sound.
+                        f[14] = model.bigramScore(lex.words[i])
+                        // The stage-1 DP alignment cost for this candidate - the decoder's
+                        // strongest single fit signal, fed to the model explicitly.
+                        f[15] = keepAlign[h]
+                        f[16] = model.trigramScore(lex.words[i])
+                        score += model.penalty(f)
+                    }
+                }
                 hits.add(Hit(lex.words[i], score))
             }
             hits.sortBy { it.score }

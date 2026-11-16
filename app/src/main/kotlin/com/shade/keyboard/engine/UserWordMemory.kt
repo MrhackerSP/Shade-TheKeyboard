@@ -27,6 +27,13 @@ class UserWordMemory(context: Context) {
     /** Removes the word entirely from the learned memory ("Remove suggestion"). */
     fun forget(word: String) = State.forget(word)
 
+    /**
+     * Bulk import of learned words (migration from another keyboard / word lists).
+     * Words already known are left untouched and reported as duplicates.
+     * Returns (imported, duplicates).
+     */
+    fun importWords(words: Map<String, Int>): Pair<Int, Int> = State.importWords(words)
+
     fun score(word: String): Float {
         val value = State.get(word)
         if (value <= 0) return 0f
@@ -113,6 +120,35 @@ class UserWordMemory(context: Context) {
                 }
             }
             saver?.request()
+        }
+
+        /**
+         * Seeds counters for imported words. Each word enters at a moderate count
+         * (capped so an imported dictionary never out-weights genuinely typed
+         * words); duplicates are skipped and reported.
+         */
+        fun importWords(words: Map<String, Int>): Pair<Int, Int> {
+            var imported = 0
+            var duplicates = 0
+            synchronized(lock) {
+                val m = counts ?: return 0 to 0
+                for ((raw, hint) in words) {
+                    val w = norm(raw)
+                    if (!UserWordCodec.isValidWord(w)) continue
+                    if (m.containsKey(w)) {
+                        duplicates++
+                        continue
+                    }
+                    m[w] = hint.coerceIn(1, 12)
+                    imported++
+                }
+                if (imported > 0) {
+                    dirty = true
+                    version++
+                }
+            }
+            if (imported > 0) saver?.request()
+            return imported to duplicates
         }
 
         fun snapshot(): Map<String, Float> = synchronized(lock) {

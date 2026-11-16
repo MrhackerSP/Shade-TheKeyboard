@@ -207,6 +207,9 @@ object SettingsCatalog {
                 listOf("translate", "translation")),
             SettingsItem.Toggle("voice_input", R.string.pref_voice_input, 0, true,
                 listOf("voice", "dictation", "microphone", "speech", "mic")),
+            SettingsItem.Toggle("voice_on_device", R.string.pref_voice_on_device,
+                R.string.pref_voice_on_device_sum, true,
+                listOf("voice", "offline", "on-device", "speech", "recognition")),
             SettingsItem.Toggle("learning_adaptive", R.string.pref_learning_adaptive,
                 R.string.pref_learning_adaptive_sum, true,
                 listOf("recency", "frequent", "adaptive", "learning")),
@@ -244,6 +247,9 @@ object SettingsCatalog {
             SettingsItem.Action(R.string.action_import, R.string.action_import_sub,
                 listOf("backup", "import", "restore")
             ) { ctx, _ -> (ctx as? SettingsActivity)?.startImport() },
+            SettingsItem.Action(R.string.action_import_words, R.string.action_import_words_sub,
+                listOf("import", "words", "dictionary", "migrate", "switch", "learned")
+            ) { ctx, _ -> (ctx as? SettingsActivity)?.startWordImport() },
             SettingsItem.Action(R.string.action_clear_learned, R.string.action_clear_learned_sub,
                 listOf("clear", "reset", "delete", "learned")
             ) { ctx, _ -> (ctx as? SettingsActivity)?.confirmClearLearned() }

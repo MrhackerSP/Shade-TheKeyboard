@@ -13,9 +13,9 @@ import java.net.URLEncoder
  * Translation service with multiple free backends, tried in order.
  * No API key required for any of them.
  *
- * 1. Web translate endpoint (gtx, POST body, ~4500 chars/chunk)
- * 2. Web translate endpoint (dict-chrome-ex, GET, ~1500 chars/chunk)
- * 3. MyMemory (free API, 450 chars/limit)
+ * 1. Web translate endpoint A (POST body, ~4500 chars/chunk)
+ * 2. Web translate endpoint B (GET, ~1500 chars/chunk)
+ * 3. Free translation API C (450 chars/chunk)
  *
  * Long text is split at sentence/paragraph boundaries and translated piece
  * by piece, then stitched back together.
@@ -39,9 +39,9 @@ object TranslationService {
         val to = normalizeTarget(target)
 
         for ((limit, fn) in listOf(
-            4500 to ::viaGtx,
-            1500 to ::viaDictExt,
-            450 to ::viaMyMemory
+            4500 to ::viaTranslatePost,
+            1500 to ::viaTranslateGet,
+            450 to ::viaFreeApi
         )) {
             // All three backends do blocking HttpURLConnection I/O: they must run on IO,
             // otherwise every call throws NetworkOnMainThreadException (swallowed below)
@@ -60,7 +60,7 @@ object TranslationService {
         return null
     }
 
-    private fun viaGtx(text: String, from: String, to: String): String {
+    private fun viaTranslatePost(text: String, from: String, to: String): String {
         val conn = open(
             "https://translate.googleapis.com/translate_a/single?client=gtx&sl=$from&tl=$to&dt=t&ie=UTF-8&oe=UTF-8"
         )
@@ -78,7 +78,7 @@ object TranslationService {
         }
     }
 
-    private fun viaDictExt(text: String, from: String, to: String): String {
+    private fun viaTranslateGet(text: String, from: String, to: String): String {
         val raw = open(
             "https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=$from&tl=$to&q=" +
                 URLEncoder.encode(text, "UTF-8")
@@ -94,7 +94,7 @@ object TranslationService {
         }
     }
 
-    private fun viaMyMemory(text: String, from: String, to: String): String {
+    private fun viaFreeApi(text: String, from: String, to: String): String {
         val src = if (from != "auto") from else guessSource(text)
         val raw = open(
             "https://api.mymemory.translated.net/get?q=" + URLEncoder.encode(text, "UTF-8") +

@@ -3,7 +3,7 @@
     <string name="ime_name">Shade</string>
     <string name="settings_title">Shade settings</string>
 
-    <string name="setup_intro">A private, open keyboard. Typing, suggestions and learning all happen on your device — no internet permission, no tracking. (Optional voice typing is handled by your phone\'s speech service, which may use the network.)</string>
+    <string name="setup_intro">A private, open keyboard. Typing, suggestions and learning all happen on your device — no internet permission, no tracking. (Voice typing runs on the device whenever your phone offers an offline recognizer.)</string>
     <string name="step1">1. Enable Shade</string>
     <string name="step2">2. Switch to Shade</string>
     <string name="step3">3. Try it here</string>
@@ -115,6 +115,10 @@
     <string name="settings_search_hint">Search settings…</string>
     <string name="pref_voice_input">Voice typing</string>
     <string name="voice_input_unavailable">Voice input unavailable on this device</string>
+    <string name="voice_permission_needed">Grant microphone permission to use voice typing</string>
+    <string name="pref_voice_on_device">Prefer on-device voice recognition</string>
+    <string name="pref_voice_on_device_sum">Use the phone\'s offline recognizer when it is available; falls back to the standard speech service otherwise</string>
+    <string name="voice_hud_listening">Listening…</string>
 
     <string name="open_input_settings">Open input settings</string>
     <string name="choose_keyboard">Choose Shade</string>
@@ -137,7 +141,7 @@
     <string name="gif_error">Couldn’t load GIFs. Check your connection.</string>
     <string name="gif_unavailable">GIF search isn’t available in this build.</string>
     <string name="gif_needs_key_title">GIF search needs a free API key</string>
-    <string name="gif_needs_key_message">Create a free key at klipy.com, then paste it below. The key stays on this device.</string>
+    <string name="gif_needs_key_message">Get a free key from your GIF provider\'s website, then paste it below. The key stays on this device.</string>
     <string name="gif_key_hint">Paste API key</string>
     <string name="gif_key_save">Save</string>
     <string name="gif_key_saved">API key saved — GIFs enabled</string>
@@ -238,6 +242,11 @@
     <string name="action_export_sub">Export to an encrypted .shdbak file</string>
     <string name="action_import">Restore from backup</string>
     <string name="action_import_sub">Import from a .shdbak file</string>
+    <string name="action_import_words">Import learned words</string>
+    <string name="action_import_words_sub">Load words exported from another keyboard — a backup archive, dictionary file or plain word list</string>
+    <string name="import_words_done">Imported %1$d new words (%2$d already known)</string>
+    <string name="import_words_none">No words found in the selected file</string>
+    <string name="import_words_failed">Could not read the selected file</string>
     <string name="action_clear_learned">Clear learned data</string>
     <string name="action_clear_learned_sub">Delete all adaptive learning and user words</string>
 
