@@ -24,7 +24,8 @@ class SwipeModelTest {
     private fun neuralJson(
         mean: String = List(SwipeModel.FEATURE_NAMES.size) { "0.0" }.joinToString(","),
         std: String = List(SwipeModel.FEATURE_NAMES.size) { "1.0" }.joinToString(","),
-        hiddenW: String = List(SwipeModel.FEATURE_NAMES.size) { "0.1" }.joinToString(","),
+        // 2 hidden units x 17 features, row-major (the loader validates the size)
+        hiddenW: String = List(2 * SwipeModel.FEATURE_NAMES.size) { "0.1" }.joinToString(","),
         hiddenB: String = "0.0, 0.0",
         outW: String = "2.0, -1.0",
         outB: String = "0.0",
@@ -67,7 +68,12 @@ class SwipeModelTest {
 
     @Test
     fun aHigherLogitMeansALowerPenalty() {
-        val model = SwipeModel.parse(json())!!
+        // Positive-dominant weights so larger features give a LARGER logit:
+        // logit(strong) = 0.1 + 3*(1+2+0.5) = 10.6, logit(weak) = 1.85; since
+        // penalty = -blend * logit, penalty(strong) = -21.2 < penalty(weak) = -3.7.
+        val model = SwipeModel.parse(
+            json(weights = "[1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]")
+        )!!
         val strong = FloatArray(SwipeModel.FEATURE_NAMES.size) { 3f }
         val weak = FloatArray(SwipeModel.FEATURE_NAMES.size) { 0.5f }
         assertTrue(model.penalty(strong) < model.penalty(weak))
@@ -82,7 +88,7 @@ class SwipeModelTest {
 
     @Test
     fun parsesAValidLegacyNeuralModel() {
-        // hidden units = 2; all hidden weights 0.1 -> pre-activation 1.5 per unit
+        // hidden units = 2; all hidden weights 0.1 -> 17 x 0.1 = 1.7 pre-activation per unit
         val n = SwipeModel.FEATURE_NAMES.size
         val hw = List(2 * n) { "0.1" }.joinToString(",")
         val model = SwipeModel.parse(
@@ -91,9 +97,9 @@ class SwipeModelTest {
                 """"output":{"w":[2.0,-1.0],"b":0.0},"blend":2.0}"""
         )
         assertNotNull(model)
-        // logit = 2*tanh(1.5) - tanh(1.5) = tanh(1.5); penalty = -2 * tanh(1.5)
+        // logit = 2*tanh(1.7) - tanh(1.7) = tanh(1.7); penalty = -2 * tanh(1.7)
         val f = FloatArray(n) { 1f }
-        assertEquals(-2.0f * kotlin.math.tanh(1.5f), model!!.penalty(f), 1e-4f)
+        assertEquals(-2.0f * kotlin.math.tanh(1.7f), model!!.penalty(f), 1e-4f)
     }
 
     @Test
@@ -101,8 +107,8 @@ class SwipeModelTest {
         val model = SwipeModel.parse(neuralJson())
         assertNotNull(model)
         val f = FloatArray(SwipeModel.FEATURE_NAMES.size) { 1f }
-        // identity norm -> pre-activation 1.5 per unit, logit = tanh(1.5)
-        assertEquals(-2.0f * kotlin.math.tanh(1.5f), model!!.penalty(f), 1e-4f)
+        // identity norm -> 17 x 0.1 = 1.7 pre-activation per unit, logit = tanh(1.7)
+        assertEquals(-2.0f * kotlin.math.tanh(1.7f), model!!.penalty(f), 1e-4f)
     }
 
     @Test
@@ -121,9 +127,9 @@ class SwipeModelTest {
     @Test
     fun neuralPenaltyFollowsTheSignOfTheLogit() {
         val n = SwipeModel.FEATURE_NAMES.size
-        val hw = List(n) { "0.0" }.joinToString(",")
+        val hw = List(2 * n) { "0.0" }.joinToString(",")
         val mk = { outW: String, b: String ->
-            SwipeModel.parse(neuralJson(hiddenW = hw, hiddenB = "0.5", outW = outW, outB = b))!!
+            SwipeModel.parse(neuralJson(hiddenW = hw, hiddenB = "0.5, 0.5", outW = outW, outB = b))!!
         }
         val f = FloatArray(n) { 1f }
         // tanh(0.5) > 0 -> negative weights give a positive penalty (worse score)

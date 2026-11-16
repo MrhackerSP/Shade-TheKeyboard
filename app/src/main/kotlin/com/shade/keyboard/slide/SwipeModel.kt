@@ -2,6 +2,7 @@ package com.shade.keyboard.slide
 
 import android.content.Context
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import kotlin.math.tanh
 
@@ -255,27 +256,33 @@ class SwipeModel private constructor(
             }
         }
 
-        /** Optional frozen bigram table; null when absent or malformed. */
+        /**
+         * Optional frozen bigram table; null when absent. A malformed table
+         * (wrong length, non-numeric or non-finite entries) throws so the
+         * model is rejected rather than silently loaded without its table.
+         */
         private fun parseBigrams(obj: JSONObject): FloatArray? {
             val arr = obj.optJSONArray("bigrams") ?: return null
-            if (arr.length() != BIGRAM_TABLE_SIZE) return null
             val table = FloatArray(BIGRAM_TABLE_SIZE)
             for (i in table.indices) {
                 val v = arr.getDouble(i).toFloat()
-                if (!v.isFinite()) return null
+                if (!v.isFinite()) throw JSONException("non-finite bigram score at $i")
                 table[i] = v
             }
             return table
         }
 
-        /** Optional frozen trigram table; null when absent or malformed. */
+        /**
+         * Optional frozen trigram table; null when absent. A malformed table
+         * throws so the model is rejected rather than silently loaded without
+         * its table.
+         */
         private fun parseTrigrams(obj: JSONObject): FloatArray? {
             val arr = obj.optJSONArray("trigrams") ?: return null
-            if (arr.length() != TRIGRAM_TABLE_SIZE) return null
             val table = FloatArray(TRIGRAM_TABLE_SIZE)
             for (i in table.indices) {
                 val v = arr.getDouble(i).toFloat()
-                if (!v.isFinite()) return null
+                if (!v.isFinite()) throw JSONException("non-finite trigram score at $i")
                 table[i] = v
             }
             return table
