@@ -59,6 +59,7 @@ import com.shade.keyboard.emoji.EmojiPredictionEngine
 import com.shade.keyboard.engine.GrammarEngine
 import com.shade.keyboard.engine.HeuristicSuggestionEngine
 import com.shade.keyboard.engine.CandidateRanker
+import com.shade.keyboard.keypresseffect.PressEffectModule
 import com.shade.keyboard.engine.NeuralSpellChecker
 import com.shade.keyboard.engine.TfliteCandidateRankingScorer
 import com.shade.keyboard.engine.TfliteContextEncoder
@@ -185,12 +186,19 @@ internal class PrefsApplier(private val svc: ShadeService) {
         kb.keyBorders = prefs.getBoolean("key_borders", true)
         kb.showHints = prefs.getBoolean("show_hints", true)
         kb.haptic = prefs.getBoolean("haptic", true)
-        kb.hapticStrength = when (prefs.getString("haptic_strength", "medium")) {
-            "light" -> 0
-            "strong" -> 2
-            else -> 1
+        // Gboard press-effect pipeline: the engine reads "haptic" / "sound" /
+        // "vibration_duration" itself. Seed the Gboard-equivalent duration
+        // once from the legacy haptic_strength selector, then the slider owns
+        // the value. The old per-effect strength mapping is retired.
+        if (!prefs.contains("vibration_duration")) {
+            val seeded = when (prefs.getString("haptic_strength", "medium")) {
+                "light" -> 30
+                "strong" -> 80
+                else -> 50
+            }
+            prefs.edit().putInt("vibration_duration", seeded).apply()
         }
-        kb.sound = prefs.getBoolean("sound", false)
+        PressEffectModule.refresh()
         kb.showPreview = prefs.getBoolean("popup_preview", true)
         kb.bgBitmap = bgBmp
 

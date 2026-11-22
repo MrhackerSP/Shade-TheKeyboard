@@ -63,6 +63,8 @@ import com.shade.keyboard.emoji.EmojiPredictionEngine
 import com.shade.keyboard.engine.GrammarEngine
 import com.shade.keyboard.engine.HeuristicSuggestionEngine
 import com.shade.keyboard.engine.CandidateRanker
+import com.shade.keyboard.keypresseffect.PressEffectModule
+import com.shade.keyboard.keypresseffect.PressEffectPlayer
 import com.shade.keyboard.engine.NeuralSpellChecker
 import com.shade.keyboard.engine.TfliteCandidateRankingScorer
 import com.shade.keyboard.engine.TfliteContextEncoder
@@ -408,6 +410,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         super.onCreate()
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         PrefsMigration.run(prefs)
+        // Gboard press-effect engine (vibration + key press sound). Installs
+        // the global PressEffectPlayer before any keyboard view can be built.
+        PressEffectModule.onCreate(this, prefs)
         // Runtime GIF API key (GIF panel setup card) overrides the build-time key.
         GifConfig.applyPrefs(prefs)
         dict = WordDictionary(this)
@@ -451,6 +456,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onDestroy() {
+        // Press-effect engine must not outlive the service (back to no-op).
+        PressEffectModule.onDestroy()
         // Wallpaper color listener (Material You) must not outlive the service.
         if (wallpaperListener != null && Build.VERSION.SDK_INT >= 27) {
             runCatching {
@@ -534,7 +541,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 setOnLongClickListener { v ->
                     val word = candidates.getOrNull(v.tag as Int) ?: ""
                     if (word.isEmpty()) return@setOnLongClickListener false
-                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    PressEffectPlayer.get().applyPressEffect(v, PressEffectPlayer.KIND_BASIC_TAP)
                     showRemoveSuggestionDialog(word)
                     true
                 }
@@ -1574,7 +1581,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         private val longPressRunnable = Runnable {
             longPressFired = true
             isFloatMode = true
-            kb.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            PressEffectPlayer.get().applyPressEffect(kb, PressEffectPlayer.KIND_BASIC_TAP)
         }
 
         override fun onTouch(v: View, event: MotionEvent): Boolean {
@@ -2610,11 +2617,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onTrackpadEnter() {
         if (emojiSearchOwnsKeys()) return
         kb.haptic = prefs.getBoolean("haptic", true)
-        kb.hapticStrength = when (prefs.getString("haptic_strength", "medium")) {
-            "light" -> 0
-            "strong" -> 2
-            else -> 1
-        }
+        PressEffectModule.refresh()
     }
 
     override fun onTrackpadExit() {

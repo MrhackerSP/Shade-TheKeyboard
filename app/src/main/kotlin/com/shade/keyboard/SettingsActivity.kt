@@ -40,6 +40,7 @@ import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.lifecycle.lifecycleScope
+import com.shade.keyboard.keypresseffect.PressEffectPlayer
 import com.shade.keyboard.migration.DictionaryImport
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
@@ -725,6 +726,15 @@ internal class SettingsAdapter(
     }
 
     internal class SliderVH(v: View) : RecyclerView.ViewHolder(v) {
+
+        /** Vibration duration gets Gboard's dual unit label via the engine. */
+        private fun labelFor(item: SettingsItem.Slider, value: Int): String {
+            if (item.key == "vibration_duration") {
+                runCatching { return PressEffectPlayer.get().formatVibrationLabel(value) }
+            }
+            return String.format(Locale.US, item.format, value)
+        }
+
         fun bind(item: SettingsItem.Slider, prefs: SharedPreferences, isLast: Boolean) {
             val c = itemView.context
             itemView.findViewById<TextView>(R.id.noir_title).text = c.getString(item.titleRes)
@@ -742,14 +752,20 @@ internal class SettingsAdapter(
             val steps = Math.round((raw - item.min).toFloat() / item.step)
             val aligned = (item.min + steps * item.step).coerceIn(item.min, item.max)
             slider.value = aligned.toFloat()
-            valueTv.text = String.format(Locale.US, item.format, aligned)
+            valueTv.text = labelFor(item, aligned)
 
             // Remove previous listeners to avoid stale callbacks on rebind.
             slider.clearOnChangeListeners()
             slider.clearOnSliderTouchListeners()
 
             slider.addOnChangeListener { _, value, fromUser ->
-                valueTv.text = String.format(Locale.US, item.format, value.toInt())
+                val v = value.toInt()
+                valueTv.text = labelFor(item, v)
+                if (item.key == "vibration_duration" && fromUser) {
+                    // Gboard's VibrationDurationPreference live preview: each
+                    // slider tick plays the effect immediately (pul.f).
+                    runCatching { PressEffectPlayer.get().playCustomVibration(v) }
+                }
             }
             slider.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
                 override fun onStartTrackingTouch(slider: Slider) {}

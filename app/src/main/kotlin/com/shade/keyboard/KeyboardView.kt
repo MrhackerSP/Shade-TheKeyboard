@@ -11,13 +11,10 @@ import android.graphics.PorterDuff
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
-import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.os.VibrationEffect
-import android.os.Vibrator
 import android.util.Log
 import android.util.SparseArray
 import android.view.Gravity
@@ -25,6 +22,7 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import androidx.core.graphics.ColorUtils
+import com.shade.keyboard.keypresseffect.PressEffectPlayer
 import com.shade.keyboard.motion.ShadeMotion
 import java.util.ArrayDeque
 import kotlin.math.abs
@@ -33,6 +31,12 @@ import kotlin.math.sqrt
 
 /** Finger speed (dp per ms) above which a slide on delete selects word by word instead of character by character. */
 private const val DELETE_FAST_DP_PER_MS = 0.55f
+
+/**
+ * Minimum interval between scrubbing/cursor haptics — Gboard's
+ * FreeCursorKeyboard `free_cursor_haptic_min_interval_millisec` parity.
+ */
+private const val FREE_CURSOR_HAPTIC_MIN_INTERVAL_MS = 50L
 
 /**
  * Distance (in key widths) the finger must travel from the down point before we treat
@@ -116,9 +120,10 @@ class KeyboardView(context: Context) : View(context) {
     var oneHandedWidth = 0.75f
         set(v) { field = v.coerceIn(0.5f, 0.95f); invalidate() }
     var haptic = true
-    /** 0 = light, 1 = medium (default, system keyboard tap), 2 = strong. */
-    var hapticStrength = 1
-    var sound = false
+    // Haptics and key sounds are driven entirely by the press-effect engine
+    // (com.shade.keyboard.keypresseffect) — Gboard's PressEffectPlayer port.
+    // The engine reads the "haptic" / "sound" / "vibration_duration" prefs
+    // itself, so the view carries no per-effect strength state anymore.
     var showPreview = true
     var shiftState = 0
         set(v) { field = v; invalidate() }
@@ -272,20 +277,6 @@ class KeyboardView(context: Context) : View(context) {
     private val burstPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
-    }
-
-    private val vibrator: Vibrator? by lazy {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE)
-            if (vm is android.os.VibratorManager) vm.defaultVibrator else null
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        }
-    }
-
-    private val audioManager by lazy {
-        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
 
     private class Pointer {
@@ -1038,7 +1029,7 @@ class KeyboardView(context: Context) : View(context) {
         if (item != altSel) {
             altSel = item
             popupLayer.setAccentSelection(item)
-            hapticTick()
+            textHandleHaptic()
         }
     }
 
@@ -1148,6 +1139,7 @@ class KeyboardView(context: Context) : View(context) {
                 val stepY = ((dy - trackpadLastSentY) / trackpadStep).toInt()
                 if (stepX != 0 || stepY != 0) {
                     listener?.onCursorMove(-stepX, -stepY)
+                    textHandleHaptic()
                     trackpadLastSentX += stepX * trackpadStep
                     trackpadLastSentY += stepY * trackpadStep
                 }
@@ -1160,7 +1152,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun enterTrackpad() {
         if (trackpadActive) return
         trackpadActive = true
-        hapticHeavy()
+        textHandleHaptic()
         listener?.onTrackpadEnter()
         invalidate()
     }
@@ -1362,7 +1354,7 @@ class KeyboardView(context: Context) : View(context) {
 
         p.longRunnable = null
         p.repeated = true
-        hapticHeavy()
+        hapticTick()
         listener?.onKey(Codes.DELETE)
 
         val repeat = object : Runnable {
@@ -1372,7 +1364,10 @@ class KeyboardView(context: Context) : View(context) {
                 if (p.key !== k) return
                 listener?.onKey(Codes.DELETE)
                 n++
-                if (haptic && n % 2 == 0) hapticTick()
+                // Gboard vibrates on every repeat event through the same tap
+                // pipeline (no separate cadence) — the engine applies the
+                // effect and stamps the rate-limiter clock.
+                hapticTick()
                 val next = if (n > 12) (repeatIntervalMs / 2).coerceAtLeast(18L) else repeatIntervalMs
                 handler.postDelayed(this, next)
             }
@@ -1418,7 +1413,7 @@ class KeyboardView(context: Context) : View(context) {
                     // Clear the live preview composing text so the first letter (if
                     // instant-typed) doesn't linger while the decoder hasn't run yet.
                     listener?.onGlidePreview(null)
-                    hapticTick()
+                    textHandleHaptic()
                 }
             }
 
@@ -1491,7 +1486,7 @@ class KeyboardView(context: Context) : View(context) {
                 deleteSlideAccum = 0f
                 deleteSlideSpeed = 0f
                 cancelLong(p)
-                hapticTick()
+                textHandleHaptic()
                 listener?.onDeleteSlideStart()
                 // The distance already travelled to cross the threshold counts as the first steps.
                 deleteSlideAccum = -dx - dp(16f)
@@ -1516,7 +1511,7 @@ class KeyboardView(context: Context) : View(context) {
                     val selected = listener?.onDeleteSlideStep(units, fast) ?: 0
                     if (selected != deleteSlideWordCount) {
                         deleteSlideWordCount = selected
-                        hapticTick()
+                        textHandleHaptic()
                         invalidate()
                     }
                 }
@@ -1614,6 +1609,11 @@ class KeyboardView(context: Context) : View(context) {
             dismissAlt()
             if (!cancel && s != null) listener?.onText(s)
         } else if (!cancel && k != null && !p.consumed && !p.swiping) {
+            // Gboard key-release path (pun.d kind=1 -> VIRTUAL_KEY_RELEASE with
+            // cutoff rate limiting). The engine stays silent whenever the
+            // resolved mode/prefs say so — including right after the press
+            // haptic, since both share one rate-limiter timestamp upstream.
+            PressEffectPlayer.get().applyPressEffect(this, PressEffectPlayer.KIND_KEY_RELEASE)
             fire(k)
         }
         if (k != null) invalidate(k)
@@ -1648,7 +1648,8 @@ class KeyboardView(context: Context) : View(context) {
     private fun longPress(p: Pointer) {
         val k = p.key ?: return
         p.longRunnable = null
-        if (k.kind == KeyKind.CHAR) hapticTick() else hapticHeavy()
+        // Gboard long-press listeners route through the basic tap effect too.
+        hapticTick()
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             p.consumed = true
             return
@@ -1682,83 +1683,46 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     // ------------------------------------------------------------------ haptics
+    // All haptics/sounds route through the press-effect engine — Gboard's
+    // PressEffectPlayer port (mode resolution, pref gates, primitive
+    // composition vs one-shot, cutoff rate limiting happen inside the engine).
 
+    /**
+     * Key-press feedback — Gboard `pun.g` + `pun.d(kind=0)` in one call:
+     * the mapped `AudioManager` press sound (when the sound pref is on)
+     * followed by the basic tap effect (primitive click on haptic-primitive
+     * hardware, duration one-shot otherwise, system `KEYBOARD_TAP` when the
+     * device's keyboard-vibration mode takes over).
+     */
     private fun feedback(k: Key) {
-        if (haptic) {
-            when {
-                k.kind == KeyKind.FUNC && k.code == Codes.SHIFT && shiftState == 2 ->
-                    hapticHeavy()
-                else -> hapticModern()
-            }
+        val keyId = when {
+            k.kind == KeyKind.SPACE -> PressEffectPlayer.KEY_ID_SPACE
+            k.kind == KeyKind.FUNC && k.code == Codes.DELETE -> PressEffectPlayer.KEY_ID_DELETE
+            k.kind == KeyKind.ENTER -> PressEffectPlayer.KEY_ID_ENTER
+            else -> 0
         }
-        if (sound) {
-            val am = audioManager
-            am.playSoundEffect(
-                when {
-                    k.kind == KeyKind.SPACE -> AudioManager.FX_KEYPRESS_SPACEBAR
-                    k.kind == KeyKind.FUNC && k.code == Codes.DELETE -> AudioManager.FX_KEYPRESS_DELETE
-                    k.kind == KeyKind.ENTER -> AudioManager.FX_KEYPRESS_RETURN
-                    else -> AudioManager.FX_KEYPRESS_STANDARD
-                }
-            )
-        }
+        PressEffectPlayer.get().playKeySound(this, keyId)
     }
 
-    @Suppress("DEPRECATION")
-    private fun hapticModern() {
-        // Predefined-effect constants are API 29+; guard them so the inlined
-        // constants are provably unreachable below Q. The fallback below still
-        // runs on older releases, matching the previous behavior exactly.
-        val played = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            when (hapticStrength) {
-                0 -> playPredefinedHaptic(VibrationEffect.EFFECT_TICK)
-                2 -> playPredefinedHaptic(VibrationEffect.EFFECT_CLICK)
-                else -> false
-            }
-        } else false
-        if (played) return
-        performHapticFeedback(
-            HapticFeedbackConstants.KEYBOARD_TAP,
-            HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
-        )
-    }
-
-    private fun playPredefinedHaptic(effect: Int): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
-        val v = vibrator ?: return false
-        return try {
-            v.vibrate(VibrationEffect.createPredefined(effect))
-            true
-        } catch (t: Exception) {
-            ShadeLog.w("KeyboardView", "predefined haptic failed", t, once = true)
-            false
-        }
-    }
-
-    @Suppress("DEPRECATION")
+    /**
+     * Tap-family effect for key repeats: Gboard vibrates on every repeat
+     * event through the same basic-tap pipeline (kind 0).
+     */
     private fun hapticTick() {
-        if (!haptic) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
-                return
-            } catch (e: Exception) { Log.w("KeyboardView", "Vibration tick failed", e) }
-        }
-        performHapticFeedback(
-            HapticFeedbackConstants.KEYBOARD_TAP,
-            HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
-        )
+        PressEffectPlayer.get().applyPressEffect(this, PressEffectPlayer.KIND_BASIC_TAP)
     }
 
-    private fun hapticHeavy() {
-        if (!haptic) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
-                return
-            } catch (e: Exception) { Log.w("KeyboardView", "Heavy vibration failed", e) }
-        }
-        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    /**
+     * Scrubbing / cursor / text-handle family (Gboard kind >= 3 ->
+     * `TEXT_HANDLE_MOVE`), throttled like Gboard's FreeCursorKeyboard
+     * `free_cursor_haptic_min_interval_millisec`.
+     */
+    private var lastTextHandleHapticAt = 0L
+    private fun textHandleHaptic() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastTextHandleHapticAt < FREE_CURSOR_HAPTIC_MIN_INTERVAL_MS) return
+        lastTextHandleHapticAt = now
+        PressEffectPlayer.get().applyPressEffect(this, PressEffectPlayer.KIND_TEXT_HANDLE)
     }
 
     override fun onDetachedFromWindow() {

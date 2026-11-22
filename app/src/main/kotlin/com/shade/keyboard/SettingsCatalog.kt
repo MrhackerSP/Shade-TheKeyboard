@@ -228,15 +228,14 @@ object SettingsCatalog {
                 listOf("trackpad", "cursor", "space bar")),
             SettingsItem.Toggle("haptic", R.string.pref_haptic, 0, true,
                 listOf("haptic", "vibrate", "vibration", "feedback")),
-            SettingsItem.Choice(
-                key = "haptic_strength", titleRes = R.string.pref_haptic_strength,
-                options = listOf(
-                    "light" to R.string.haptic_light,
-                    "medium" to R.string.haptic_medium,
-                    "strong" to R.string.haptic_strong
-                ),
-                default = "medium",
-                keywords = listOf("haptic", "vibration", "strong", "weak", "light", "medium")
+            // Gboard's VibrationDurationPreference: 0-100 slider. The same
+            // value is a duration in ms on legacy devices and a strength
+            // percentage on haptic-primitive hardware; the label switches
+            // accordingly (SliderVH renders it through the engine).
+            SettingsItem.Slider(
+                key = "vibration_duration", titleRes = R.string.pref_vibration_duration,
+                min = 0, max = 100, step = 1, default = 50, format = "%d",
+                keywords = listOf("haptic", "vibration", "strength", "duration", "strong", "weak")
             ),
             SettingsItem.Toggle("sound", R.string.pref_sound, 0, false,
                 listOf("sound", "click", "audio", "tone")),

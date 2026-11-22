@@ -87,9 +87,14 @@ class SettingsCatalogTest {
             choices.first { it.key == "one_handed" }.options.map { it.first }.toSet())
         assertEquals(setOf("off", "landscape", "always"),
             choices.first { it.key == "split_keyboard" }.options.map { it.first }.toSet())
-        assertEquals(setOf("light", "medium", "strong"),
-            choices.first { it.key == "haptic_strength" }.options.map { it.first }.toSet())
-        assertEquals("medium", choices.first { it.key == "haptic_strength" }.default)
+        // Gboard's VibrationDurationPreference replaced the old haptic_strength
+        // selector: 0-100 slider, default 50, step 1.
+        val vib = sliders.first { it.key == "vibration_duration" }
+        assertEquals(0, vib.min)
+        assertEquals(100, vib.max)
+        assertEquals(1, vib.step)
+        assertEquals(50, vib.default)
+        assertTrue(choices.none { it.key == "haptic_strength" })
     }
 
     @Test
