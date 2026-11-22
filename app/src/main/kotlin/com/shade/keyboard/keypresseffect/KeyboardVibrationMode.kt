@@ -2,7 +2,7 @@ package com.shade.keyboard.keypresseffect
 
 import android.content.Context
 import android.content.Intent
-import android.content.PackageManager
+import android.content.pm.PackageManager
 import android.os.Build
 
 /**
