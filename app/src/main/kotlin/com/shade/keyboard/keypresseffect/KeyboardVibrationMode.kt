@@ -89,7 +89,7 @@ object KeyboardVibrationMode {
         if (Build.VERSION.SDK_INT < 34) return null
         val intent = Intent(ACTION_KEYBOARD_VIBRATION_SETTINGS)
             .setPackage("com.android.settings")
-            .addFlags(0x10000000) // Intent.FLAG_ACTIVITY_NEW_TASK, as Gboard adds before use
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // as Gboard adds before use
         val appContext = try { context.getApplicationContext() } catch (t: Throwable) { context }
         return if (appContext.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {
             intent
