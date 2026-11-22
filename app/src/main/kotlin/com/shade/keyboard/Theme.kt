@@ -130,10 +130,11 @@ object Themes {
             val wc = WallpaperManager.getInstance(ctx)
                 .getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
             if (wc != null) MaterialYouPalette.Seeds(
-                // WallpaperColors getters already return @ColorInt ARGB ints.
-                primary = MaterialYouPalette.sanitize(wc.primaryColor),
-                secondary = wc.secondaryColor?.let { MaterialYouPalette.sanitize(it) },
-                tertiary = wc.tertiaryColor?.let { MaterialYouPalette.sanitize(it) }
+                // WallpaperColors getters return android.graphics.Color objects;
+                // toArgb() is a Color member method (API 26+), so no import is needed.
+                primary = MaterialYouPalette.sanitize(wc.primaryColor.toArgb()),
+                secondary = wc.secondaryColor?.let { MaterialYouPalette.sanitize(it.toArgb()) },
+                tertiary = wc.tertiaryColor?.let { MaterialYouPalette.sanitize(it.toArgb()) }
             ) else null
         }.getOrNull()
 
