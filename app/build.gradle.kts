@@ -179,7 +179,14 @@ tasks.register("verifyReleaseSigning") {
     }
 }
 
-tasks.named("assembleRelease") {
+// AGP creates variant tasks (including assembleRelease) inside afterEvaluate,
+// which runs AFTER this script's top level. A direct tasks.named() lookup here
+// therefore crashes configuration on Gradle 8.13+/9 ("Task with name
+// 'assembleRelease' not found in project ':app'") — for every command, not
+// just release builds. A matching rule is lazy: it attaches the finalize hook
+// the moment AGP registers the task, and is a safe no-op if the release
+// variant is ever absent.
+tasks.matching { it.name == "assembleRelease" }.configureEach {
     finalizedBy("verifyReleaseSigning")
 }
 
