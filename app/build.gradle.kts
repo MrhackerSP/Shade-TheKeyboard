@@ -45,6 +45,16 @@ android {
     }
 
     signingConfigs {
+        // The debug config doubles as the release fallback signer when no
+        // keystore.properties exists (see buildTypes.release). Give it the same
+        // signature-scheme discipline as the release config so the
+        // verifyReleaseSigning gate (v2 AND v3 required) also holds on the
+        // fallback path.
+        matching { it.name == "debug" }.configureEach {
+            enableV1Signing = false
+            enableV2Signing = true
+            enableV3Signing = true
+        }
         create("release") {
             val propsFile = rootProject.file("keystore.properties")
             if (propsFile.exists()) {
@@ -55,12 +65,15 @@ android {
                 storePassword = props["storePassword"] as String
                 keyAlias = props["keyAlias"] as String
                 keyPassword = props["keyPassword"] as String
-            } else {
-                storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
-                storePassword = "android"
-                keyAlias = "androiddebugkey"
-                keyPassword = "android"
             }
+            // No keystore.properties -> leave this config EMPTY; the release
+            // build type below then falls back to the debug signing config,
+            // whose keystore location AGP resolves itself. The previous
+            // hardcoded fallback (~/.android/debug.keystore) broke CI: AGP
+            // provisions the debug keystore wherever its own SDK config points
+            // (it honours ANDROID_USER_HOME), so validateSigningRelease failed
+            // on a fresh runner right after a green assembleDebug.
+            //
             // Signature-scheme discipline (mirrors the Expressive release line):
             // minSdk 26 installs with v2 alone, so v1 (jar signing) is dead weight
             // and a known downgrade surface; v2 is the integrity baseline and v3
@@ -80,7 +93,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig =
+                if (signingConfigs.getByName("release").storeFile != null)
+                    signingConfigs.getByName("release")
+                else
+                    signingConfigs.getByName("debug")
         }
         debug {
             isMinifyEnabled = false
@@ -145,8 +162,14 @@ kotlin {
 tasks.register("verifyReleaseSigning") {
     group = "verification"
     description = "Verifies the release APK with apksigner (v2 + v3 schemes required)."
+    // Resolve the APK location as a provider at CONFIGURATION time, never
+    // inside doLast: `layout` is a Project member, so referencing it in the
+    // action drags the whole Project object into the task closure, which the
+    // configuration cache refuses to serialize ("cannot serialize object of
+    // type 'DefaultProject'") and fails the build when storing.
+    val apkProvider = layout.buildDirectory.file("outputs/apk/release/app-release.apk")
     doLast {
-        val apk = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
+        val apk = apkProvider.get().asFile
         require(apk.exists()) {
             "Release APK not found at ${apk.path} — assembleRelease must run before verifyReleaseSigning."
         }
@@ -170,8 +193,11 @@ tasks.register("verifyReleaseSigning") {
         val exit = proc.waitFor()
         println(output.trim())
         require(exit == 0) { "apksigner verify failed (exit $exit) for ${apk.name}." }
+        // apksigner >= build-tools 35 prints the scheme name in parentheses
+        // ("Verified using v2 scheme (APK Signature Scheme v2): true"); older
+        // versions print "Verified using v2 scheme: true". Allow both.
         fun schemeOk(scheme: Int) =
-            output.contains(Regex("Verified using v$scheme scheme\\s*:\\s*true", RegexOption.IGNORE_CASE))
+            output.contains(Regex("Verified using v$scheme scheme.*:\\s*true", RegexOption.IGNORE_CASE))
         require(schemeOk(2) && schemeOk(3)) {
             "Release APK must verify with v2 AND v3 signature schemes. apksigner reported:\n$output"
         }
