@@ -228,15 +228,22 @@ open class PressEffectPlayerImpl(
     override fun playCustomVibration(value: Int) {
         val v = vibrator ?: return
         try {
-            val effect = if (!primitiveGate(v)) {
-                VibrationEffect.createOneShot(value.toLong(), VibrationEffect.DEFAULT_AMPLITUDE)
-            } else {
+            // Inline SDK gate (lint-visible; an opaque helper check is not):
+            // upstream `k(Vibrator)` = SDK >= 30 && SDK >= vibration_effect_min_sdk
+            // && CLICK primitive supported. Branch bodies are upstream `f(I)`
+            // verbatim: composition at value*0.01f, else one-shot of `value` ms.
+            val effect = if (SDK_INT >= 30 &&
+                SDK_INT >= PressEffectFlags.vibrationEffectMinSdk &&
+                primitiveGate(v)
+            ) {
                 VibrationEffect.startComposition()
                     .addPrimitive(
                         VibrationEffect.Composition.PRIMITIVE_CLICK,
                         value * PRIMITIVE_SCALE_STEP
                     )
                     .compose()
+            } else {
+                VibrationEffect.createOneShot(value.toLong(), VibrationEffect.DEFAULT_AMPLITUDE)
             }
             if (SDK_INT < 33) {
                 v.vibrate(effect)
