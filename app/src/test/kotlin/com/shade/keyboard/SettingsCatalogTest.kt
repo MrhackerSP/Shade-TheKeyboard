@@ -110,7 +110,8 @@ class SettingsCatalogTest {
             listOf("color_bg", "color_key", "color_keyfn", "color_text", "color_accent"),
             colors.map { it.key }
         )
-        // Autos are the DARK theme tokens that Themes.custom() falls back to.
+        // Autos are the DARK theme tokens the override layer falls back to
+        // (ThemeOverrides.apply with an unset slot keeps the base).
         assertEquals(0xFF1C1C1E.toInt(), colors.first { it.key == "color_bg" }.autoColor)
         assertEquals(0xFF3C3C40.toInt(), colors.first { it.key == "color_key" }.autoColor)
         assertEquals(0xFF2C2C2E.toInt(), colors.first { it.key == "color_keyfn" }.autoColor)
@@ -173,6 +174,16 @@ class SettingsCatalogTest {
         assertEquals(300, sliderDefault("longpress_delay"))       // getInt("longpress_delay", 300)
         assertEquals(350, sliderDefault("repeat_delay"))          // getInt("repeat_delay", 350)
         assertEquals(40, sliderDefault("repeat_interval"))        // getInt("repeat_interval", 40)
+        // Colors & background (Expressive port) — PrefsApplier.applyPrefs().
+        assertEquals(100, sliderDefault("key_opacity"))           // getInt("key_opacity", 100)
+        assertEquals(0, sliderDefault("bg_transparency"))         // getInt("bg_transparency", 0)
+        assertEquals(100, sliderDefault("photo_zoom"))            // getInt("photo_zoom", 100)
+        assertEquals(100, sliderDefault("photo_width"))           // getInt("photo_width", 100)
+        assertEquals(100, sliderDefault("photo_height"))          // getInt("photo_height", 100)
+        assertEquals(0, sliderDefault("photo_x"))                 // getInt("photo_x", 0)
+        assertEquals(0, sliderDefault("photo_y"))                 // getInt("photo_y", 0)
+        assertEquals(35, sliderDefault("bg_dim"))                 // getInt("bg_dim", 35)
+        assertEquals(0, sliderDefault("bg_blur"))                 // getInt("bg_blur", 0)
     }
 
     // ── Search ───────────────────────────────────────────────────────────

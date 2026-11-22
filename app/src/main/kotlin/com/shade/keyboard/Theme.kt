@@ -4,22 +4,13 @@ import android.app.WallpaperManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.Configuration
-import android.graphics.Color
 import android.os.Build
 import androidx.annotation.RequiresApi
-import androidx.core.graphics.ColorUtils
+import androidx.core.graphics.toArgb
 
-class KbTheme(
-    val bg: Int,
-    val key: Int,
-    val keyFn: Int,
-    val pressed: Int,
-    val text: Int,
-    val hint: Int,
-    val accent: Int,
-    val accentText: Int,
-    val popupBg: Int
-)
+// KbTheme now lives in ThemeEngine.kt (pure Kotlin, unit-tested on the JVM)
+// together with the design presets and the manual-color override layer ported
+// from Expressive-Keyboard's "Colors & background".
 
 object Themes {
     val LIGHT = KbTheme(
@@ -73,43 +64,54 @@ object Themes {
         return (t == "material" || t == "dynamic") && Build.VERSION.SDK_INT >= 31
     }
 
+    /**
+     * Resolution order (Expressive's "Colors & background" model):
+     *
+     *  1. Design preset (`design` pref) — replaces the palette outright.
+     *  2. The theme selector — system/light/dark/amoled/material(-you).
+     *     The legacy "custom" value keeps resolving as base light/dark; its
+     *     old job (applying the manual colors) is now done by the override
+     *     layer below, which applies on top of ANY theme.
+     *  3. Manual color overrides (`color_bg` / `color_key` / `color_keyfn` /
+     *     `color_text` / `color_accent`), each optional, on top of the base.
+     */
     fun resolve(ctx: Context, prefs: SharedPreferences): KbTheme {
         val night = isNight(ctx)
-        val base = if (night) DARK else LIGHT
-        return when (prefs.getString("theme", "system")) {
-            "light" -> LIGHT
-            "dark" -> DARK
-            "amoled" -> AMOLED
-            // "dynamic" is the legacy pref value for wallpaper theming; "material"
-            // is the catalog label. Both resolve through the same Material You path.
-            "dynamic" -> if (Build.VERSION.SDK_INT >= 31) materialYou(ctx, night) else base
-            "material" -> if (Build.VERSION.SDK_INT >= 31) materialYou(ctx, night) else base
-            "custom" -> custom(prefs, base)
-            else -> base
-        }
+        val base = DesignPresets.resolve(prefs.getString("design", null), night)
+            ?: when (prefs.getString("theme", "system")) {
+                "light" -> LIGHT
+                "dark" -> DARK
+                "amoled" -> AMOLED
+                // "dynamic" is the legacy pref value for wallpaper theming; "material"
+                // is the catalog label. Both resolve through the same Material You path.
+                "dynamic" -> if (Build.VERSION.SDK_INT >= 31) materialYou(ctx, night) else base(night)
+                "material" -> if (Build.VERSION.SDK_INT >= 31) materialYou(ctx, night) else base(night)
+                // Legacy "custom" = manual colors over plain light/dark; the override
+                // layer below applies the same color_* prefs, so this is identical
+                // to the old custom() output.
+                "custom" -> base(night)
+                else -> base(night)
+            }
+        return overrides(prefs).applyTo(base)
     }
 
-    private fun parse(s: String?, def: Int): Int {
-        if (s.isNullOrBlank()) return def
-        val t = s.trim()
-        return try { Color.parseColor(if (t.startsWith("#")) t else "#$t") } catch (t: Exception) { ShadeLog.w("Theme", "theme color parse failed", t, once = true); def }
-    }
+    /** Base light/dark palette for selectors that ignore the mode switch. */
+    private fun base(night: Boolean): KbTheme = if (night) DARK else LIGHT
 
-    private fun custom(p: SharedPreferences, base: KbTheme): KbTheme {
-        val bg = parse(p.getString("color_bg", null), base.bg)
-        val key = parse(p.getString("color_key", null), base.key)
-        val keyFn = parse(p.getString("color_keyfn", null), base.keyFn)
-        val text = parse(p.getString("color_text", null), base.text)
-        val accent = parse(p.getString("color_accent", null), base.accent)
-        return KbTheme(
-            bg = bg, key = key, keyFn = keyFn,
-            pressed = ColorUtils.blendARGB(key, accent, 0.35f),
-            text = text,
-            hint = ColorUtils.setAlphaComponent(text, 0x99),
-            accent = accent,
-            accentText = if (ColorUtils.calculateLuminance(accent) > 0.5) Color.BLACK else Color.WHITE,
-            popupBg = key
-        )
+    /** Reads the five manual color prefs; null = auto (keep the base slot). */
+    fun overrides(prefs: SharedPreferences): ThemeOverrides = ThemeOverrides(
+        bg = parsePref(prefs, "color_bg"),
+        key = parsePref(prefs, "color_key"),
+        keyFn = parsePref(prefs, "color_keyfn"),
+        text = parsePref(prefs, "color_text"),
+        accent = parsePref(prefs, "color_accent")
+    )
+
+    private fun parsePref(prefs: SharedPreferences, key: String): Int? {
+        val s = prefs.getString(key, null) ?: return null
+        val argb = ColorMath.parseHex(s) ?: return null
+        // 8-digit hex keeps its alpha (parity with the old Color.parseColor path).
+        return if (argb == 0) null else argb
     }
 
     /**
@@ -141,7 +143,7 @@ object Themes {
         if (fromWallpaper != null && MaterialYouPalette.contrastSafe(fromWallpaper)) {
             return fromWallpaper
         }
-        return runCatching { dynamic(ctx, night) }.getOrElse { if (night) DARK else LIGHT }
+        return runCatching { dynamic(ctx, night) }.getOrElse { base(night) }
     }
 
     @RequiresApi(31)

@@ -200,7 +200,10 @@ class OnlineRankerTrainer(context: Context) {
         private const val L2_LAMBDA = 1e-4f
         private const val MAX_NEGATIVES = 3
         private const val NEG_WEIGHT = 0.5f
-        private const val SCHEMA_VERSION = 1
+        // 2 — feature layout changed to the real ranker_en.tflite contract
+        //     (RankingFeatureExtractor rewrite): persisted weights learned on
+        //     the old self-invented layout are meaningless now and are reset.
+        private const val SCHEMA_VERSION = 2
         private const val WEIGHTS_KEY = "weights"
         private const val BIAS_KEY = "bias"
         private const val SCHEMA_VERSION_KEY = "schema_version"

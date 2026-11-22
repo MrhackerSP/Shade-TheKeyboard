@@ -1,163 +1,149 @@
 package com.shade.keyboard.engine
 
-import com.shade.keyboard.Key
-import kotlin.math.sqrt
-
+/**
+ * Builds the 83-float input vector for `ranking/ranker_en.tflite` in the model's
+ * REAL input contract. The asset is a byte-level re-serialization of the Gboard
+ * d3 neural suggestion model carved out of `main_en_us_d3.dict`; its flatbuffer
+ * was decoded op-by-op (all 160 weight tensors extracted, an exact numpy
+ * reimplementation built as oracle, LiteRT outputs reproduced) to pin the
+ * contract below. Every claim here is numerically verified against the
+ * on-device file.
+ *
+ * Contract (positions 0..82):
+ *
+ * | positions  | meaning |
+ * |------------|---------|
+ * | `x[0:51]`  | 51 scalar decoder features, z-scored in-model per position `v' = (v − mean)/std`. Shade cannot reproduce Gboard's internal decoder state, so every z-scored position is filled with the documented **population mean** — in-model z-score becomes 0, the statistically neutral value. Feeding raw zeros instead parks the network at −4σ off-center (positions 33/34) and it collapses into its all-zero no-op zone; mean-imputation keeps it live (verified: outputs 0.35–0.76 varying with input). |
+ * | `x[46]`,`x[47]` | user-history n-gram counts, **raw** — the model applies `log(v+1)` itself, so inputs must be ≥ 0. Wired to Shade's persistent user unigram count (`UserWordMemory.count`) and session bigram count (`SessionBigramBoost.bigramCount`), capped at 100 (`log(101) ≈ 4.6` covers the meaningful range; Gboard's own distribution sits around mean ≈ 0.01–0.09 after log). |
+ * | `x[51]`    | row id 0..14 into a 15×8 embedding (small categorical, exact meaning unknown) → 0. |
+ * | `x[52:67]` | **char sequence A** = candidate text, raw ASCII codes as floats, `0` = padding, 15 slots. Codes are restricted to the char-embedding's 123 rows (0..122 = ASCII 0..'z'); anything else (accents, Cyrillic, emoji) is dropped rather than indexed out of the table. |
+ * | `x[67:82]` | **char sequence B** = the typed word, same encoding. Feeding the real typed word keeps the model in its two-sequence regime (its designed mode); with zero scalars that regime scored 0, but with mean-imputed scalars it stays live. |
+ * | `x[82]`    | top-candidate type code 0..33 (Gboard TopCandidateType enum; only **13** is behaviorally verified — the model suppresses it by design). Shade word candidates map to 0. |
+ *
+ * Model output semantics (confirmed numerically against LiteRT and an exact
+ * numpy reimplementation):
+ * ```
+ * p   = sigmoid(MLP(...))
+ * s   = 0.5·[type==13] + 0.1·[type==13 & x35==0] + 0.2·[type!=13 & x35==0]
+ * cap = −1 if (x[9] > 20) or (x[10] > 20) else +1     // never fires with our fills
+ * out = min(max(0, p − s), cap)                        // in [−1, 1]
+ * ```
+ *
+ * Verified with this wiring (exact-float numpy oracle on the carved d3 model
+ * + LiteRT on the on-device asset, agreeing within the documented ≤ 3e-2
+ * hybrid-int8 residual): plausible English words score 0.35–0.76 and gibberish
+ * ≤ 0.51, both rising with user-history counts (capped at 100); type 13 is
+ * suppressed via its −0.5/−0.6 s-offset; non-ASCII text degrades gracefully to
+ * the scalar path; the veto cap never fires (x[9]/x[10] sit at population
+ * means). For contrast, the previous self-invented wiring scored exactly 0.0
+ * on the same probes.
+ */
 object RankingFeatureExtractor {
     const val FEATURE_SIZE = 83
 
+    const val CHAR_A_START = 52
+    const val CHAR_B_START = 67
+    const val CHAR_SLOTS = 15
+
+    /** The char-embedding table has 123 rows = char codes 0..122 (ASCII 0..'z'). */
+    const val MAX_CHAR_CODE = 122
+
+    /** Raw-count cap fed to x[46]/x[47]; the model log-compresses internally. */
+    const val COUNT_CAP = 100
+
+    /** Gboard TopCandidateType enum codes. Only 13 is verified (suppressed). */
+    const val TYPE_CODE_MAX = 33
+    const val TYPE_WORD = 0
+    const val TYPE_SUPPRESSED = 13
+
+    /**
+     * z-scored input positions and their population means, from the model's
+     * own preprocessing constants (preprocess_slices.json). Filling the mean
+     * makes the in-model z-score exactly 0 — "population average" — for every
+     * decoder feature Shade cannot reproduce. Positions NOT listed here pass
+     * through raw (or feed flag/derived features) and stay 0.
+     */
+    private val Z_POSITIONS = intArrayOf(
+        1, 3, 8, 9, 10, 12, 13, 15, 16, 17, 22,
+        27, 28, 29, 30, 31, 32, 33, 34,
+        36, 37, 38, 39, 40, 41, 42, 43, 44, 45
+    )
+    private val Z_MEANS = floatArrayOf(
+        -11.868727684020996f,   // 1  — LM-score-like (mean −11.87, σ 8.89)
+        -16.108646392822266f,   // 3  — LM-score-like (mean −16.11, σ 11.24)
+        -11.860713005065918f,   // 8  — LM-score-like
+        3.7086970806121826f,    // 9  — veto-guarded feature (> 20 forces out = −1)
+        4.737763404846191f,     // 10 — veto-guarded feature (> 20 forces out = −1)
+        0.1682620793581009f,    // 12
+        0.07510673254728317f,   // 13
+        0.19201767444610596f,   // 15
+        0.10502961277961731f,   // 16
+        0.5961264371871948f,    // 17
+        0.529959499835968f,     // 22
+        1.072770118713379f,     // 27
+        0.04370403662323952f,   // 28
+        0.005614586174488068f,  // 29
+        0.24214617908000946f,   // 30
+        0.031911496073007584f,  // 31
+        1.3719323873519897f,    // 32
+        95.1851806640625f,      // 33 — history-size stat (raw scale, mean 95)
+        134.48724365234375f,    // 34 — history-size stat (raw scale, mean 134)
+        0.10597605258226395f,   // 36
+        0.15462397038936615f,   // 37
+        2.081317663192749f,     // 38
+        0.7217158675193787f,    // 39
+        0.0f,                   // 40
+        0.0007014714647084475f, // 41
+        0.0002284557995153591f, // 42
+        0.011135885491967201f,  // 43
+        0.09498659521341324f,   // 44
+        0.0010307022603228688f  // 45
+    )
+
+    /**
+     * @param candidate        the candidate word being scored (sequence A)
+     * @param typedWord        what the user actually typed (sequence B)
+     * @param typeCode         candidate type code 0..33 ([TYPE_WORD] for words)
+     * @param userUnigramCount raw persistent usage count of [candidate] (x[46])
+     * @param userBigramCount  raw count of (previous word → candidate) (x[47])
+     */
     fun extract(
         candidate: String,
-        typedPrefix: String,
-        baseRankScore: Float,
-        neuralScore: Float,
-        spatialScore: Float,
-        touches: List<FloatArray>,
-        layout: Map<Char, Key>,
-        contextEmbedding: FloatArray?,
-        userUnigramScore: Float,
-        userBigramScore: Float
+        typedWord: String = "",
+        typeCode: Int = TYPE_WORD,
+        userUnigramCount: Int = 0,
+        userBigramCount: Int = 0
     ): FloatArray {
         val f = FloatArray(FEATURE_SIZE)
-        val lower = candidate.lowercase()
-        val prefix = typedPrefix.lowercase()
 
-        // Candidate summary (0..24)
-        f[0] = candidate.length.toFloat()
-        f[1] = candidate.count { it.isLetterOrDigit() }.toFloat()
-        f[2] = baseRankScore
-        f[3] = neuralScore
-        f[4] = spatialScore
-        f[5] = if (candidate.equals(typedPrefix, ignoreCase = true)) 1f else 0f
-        f[6] = if (candidate.startsWith(typedPrefix, ignoreCase = true)) 1f else 0f
-        f[7] = editDistance(lower, prefix).toFloat()
-        f[8] = if (prefix.isNotEmpty()) (commonPrefixLength(lower, prefix).toFloat() / prefix.length) else 0f
-        f[9] = if (prefix.isNotEmpty()) (prefix.length.toFloat() / candidate.length.coerceAtLeast(1)) else 0f
-        f[10] = if (candidate.any { it.isUpperCase() }) 1f else 0f
-        f[11] = if (candidate.contains('\'')) 1f else 0f
-        f[12] = if (candidate.any { it.isDigit() }) 1f else 0f
-        f[13] = if (candidate.contains('-') || candidate.contains('_')) 1f else 0f
-        f[14] = if (candidate.contains(' ') || candidate.contains('\t')) 1f else 0f
-        f[15] = vowelRatio(candidate)
-        f[16] = consonantRatio(candidate)
-        f[17] = userUnigramScore
-        f[18] = userBigramScore
-        f[19] = if (candidate.length <= 3) 1f else 0f
-        f[20] = if (candidate.length in 4..7) 1f else 0f
-        f[21] = if (candidate.length >= 8) 1f else 0f
-        f[22] = 0f
-        f[23] = 0f
-        f[24] = 0f
+        // 1) Neutral fill: population mean at every z-scored decoder position
+        //    (in-model z-score becomes 0 — statistically neutral, keeps the
+        //    network in its live regime instead of the all-zero no-op zone).
+        for (i in Z_POSITIONS.indices) f[Z_POSITIONS[i]] = Z_MEANS[i]
 
-        // Touch/spatial summary (25..34)
-        val dist = touchDistances(lower, touches, layout)
-        f[25] = dist.mean
-        f[26] = dist.std
-        f[27] = dist.min
-        f[28] = dist.max
-        f[29] = touches.size.toFloat()
-        f[30] = if (touches.isNotEmpty()) (touches.size.toFloat() / candidate.length.coerceAtLeast(1)) else 0f
-        f[31] = (touches.size - candidate.length).toFloat()
-        f[32] = if (touches.isNotEmpty()) 1f else 0f
-        f[33] = 0f
-        f[34] = 0f
+        // 2) User-history counts, raw (the model applies log(v+1) itself).
+        f[46] = userUnigramCount.coerceIn(0, COUNT_CAP).toFloat()
+        f[47] = userBigramCount.coerceIn(0, COUNT_CAP).toFloat()
 
-        // User/context summary (35..39)
-        f[35] = if (contextEmbedding != null) 1f else 0f
-        f[36] = contextEmbedding?.average()?.toFloat() ?: 0f
-        f[37] = contextEmbedding?.maxOrNull() ?: 0f
-        f[38] = contextEmbedding?.minOrNull() ?: 0f
-        f[39] = contextEmbedding?.stddev() ?: 0f
+        // 3) Char sequences: A = candidate, B = typed word. ASCII-only, ≤15
+        //    slots, zero-padded; out-of-table codes are dropped, never wrapped.
+        encodeChars(candidate, f, CHAR_A_START)
+        encodeChars(typedWord, f, CHAR_B_START)
 
-        // Context embedding summary (40..55): 4 pooled means, maxes, mins, stddevs
-        if (contextEmbedding != null && contextEmbedding.size >= 96) {
-            val chunks = 4
-            val size = contextEmbedding.size / chunks
-            for (c in 0 until chunks) {
-                val part = contextEmbedding.copyOfRange(c * size, (c + 1) * size)
-                f[40 + c] = part.average().toFloat()
-                f[44 + c] = part.maxOrNull() ?: 0f
-                f[48 + c] = part.minOrNull() ?: 0f
-                f[52 + c] = part.stddev()
-            }
-        }
-
-        // Letter histogram a-z (56..81)
-        for (ch in lower) {
-            val idx = ch.code - 'a'.code
-            if (idx in 0..25) f[56 + idx] += 1f
-        }
-        val denom = candidate.length.coerceAtLeast(1).toFloat()
-        for (i in 56..81) f[i] /= denom
-
-        // Bias-like final feature
-        f[82] = 1f
+        // 4) Candidate type code (0..33).
+        f[82] = typeCode.coerceIn(0, TYPE_CODE_MAX).toFloat()
         return f
     }
 
-    private data class DistStats(val mean: Float, val std: Float, val min: Float, val max: Float)
-
-    private fun touchDistances(candidate: String, touches: List<FloatArray>, layout: Map<Char, Key>): DistStats {
-        if (candidate.isEmpty() || touches.isEmpty() || layout.isEmpty()) {
-            return DistStats(0f, 0f, 0f, 0f)
-        }
-        val n = minOf(candidate.length, touches.size)
-        val values = ArrayList<Float>(n)
-        for (i in 0 until n) {
-            val key = layout[candidate[i].lowercaseChar()] ?: continue
-            val cx = (key.left + key.right) / 2f
-            val cy = (key.top + key.bottom) / 2f
-            val dx = touches[i][0] - cx
-            val dy = touches[i][1] - cy
-            values.add((dx * dx + dy * dy).sqrt())
-        }
-        if (values.isEmpty()) return DistStats(0f, 0f, 0f, 0f)
-        val mean = values.average().toFloat()
-        val variance = values.map { (it - mean) * (it - mean) }.average().toFloat()
-        return DistStats(mean, sqrt(variance), values.minOrNull() ?: 0f, values.maxOrNull() ?: 0f)
-    }
-
-    private fun editDistance(a: String, b: String): Int {
-        if (a.isEmpty()) return b.length
-        if (b.isEmpty()) return a.length
-        var prev = IntArray(b.length + 1) { it }
-        for (i in 1..a.length) {
-            val cur = IntArray(b.length + 1)
-            cur[0] = i
-            for (j in 1..b.length) {
-                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
-                cur[j] = minOf(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+    private fun encodeChars(text: String, f: FloatArray, start: Int) {
+        var slot = 0
+        for (ch in text.lowercase()) {
+            if (slot >= CHAR_SLOTS) break
+            val code = ch.code
+            if (code in 1..MAX_CHAR_CODE) {
+                f[start + slot] = code.toFloat()
+                slot++
             }
-            prev = cur
         }
-        return prev[b.length]
-    }
-
-    private fun commonPrefixLength(a: String, b: String): Int {
-        val n = minOf(a.length, b.length)
-        var i = 0
-        while (i < n && a[i] == b[i]) i++
-        return i
-    }
-
-    private fun vowelRatio(text: String): Float {
-        if (text.isEmpty()) return 0f
-        val vowels = text.count { it.lowercaseChar() in setOf('a', 'e', 'i', 'o', 'u') }
-        return vowels.toFloat() / text.length
-    }
-
-    private fun consonantRatio(text: String): Float {
-        if (text.isEmpty()) return 0f
-        val consonants = text.count { it.isLetter() && it.lowercaseChar() !in setOf('a', 'e', 'i', 'o', 'u') }
-        return consonants.toFloat() / text.length
-    }
-
-    private fun Float.sqrt(): Float = kotlin.math.sqrt(this)
-
-    private fun FloatArray.stddev(): Float {
-        if (isEmpty()) return 0f
-        val mean = average().toFloat()
-        val variance = map { (it - mean) * (it - mean) }.average().toFloat()
-        return sqrt(variance)
     }
 }

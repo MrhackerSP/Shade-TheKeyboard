@@ -6,11 +6,16 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.ImageDecoder
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.util.AtomicFile
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -43,6 +48,7 @@ import com.google.android.material.slider.Slider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Locale
 
 // ============================================================================
@@ -72,6 +78,9 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var importLauncher: ActivityResultLauncher<Array<String>>
     // Learned-word migration picker (SAF); the result flows into runWordImport().
     private lateinit var wordImportLauncher: ActivityResultLauncher<Array<String>>
+    // Background photo picker (Expressive's "Colors & background"). The result
+    // is downscaled, recompressed and written atomically by importBackground().
+    private lateinit var bgImageLauncher: ActivityResultLauncher<String>
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -88,6 +97,17 @@ class SettingsActivity : AppCompatActivity() {
         }
         wordImportLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) runWordImport(uri)
+        }
+        bgImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                val ok = withContext(Dispatchers.IO) { importBackground(uri) }
+                if (ok) {
+                    prefs.edit().putLong(PrefsApplier.BG_VERSION_PREF, System.currentTimeMillis()).apply()
+                } else {
+                    Toast.makeText(this@SettingsActivity, R.string.toast_bg_pick_failed, Toast.LENGTH_LONG).show()
+                }
+            }
         }
 
         setContentView(R.layout.activity_settings_noir)
@@ -253,16 +273,98 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ── Color picker sheet ─────────────────────────────────────────────────
+    // ── Colors & background (Expressive port) ─────────────────────────────
+
+    /** Opens the gallery picker for the keyboard background photo. */
+    internal fun pickBackgroundImage() {
+        runCatching { bgImageLauncher.launch("image/*") }
+            .onFailure {
+                Log.w("SettingsActivity", "background picker unavailable", it)
+                Toast.makeText(this, R.string.toast_bg_pick_failed, Toast.LENGTH_LONG).show()
+            }
+    }
+
+    /** Deletes the background photo and clears the version stamp. */
+    internal fun removeBackgroundImage() {
+        if (prefs.getLong(PrefsApplier.BG_VERSION_PREF, 0L) == 0L) {
+            Toast.makeText(this, R.string.toast_bg_removed_none, Toast.LENGTH_SHORT).show()
+            return
+        }
+        File(filesDir, PrefsApplier.BG_IMAGE_FILE).delete()
+        prefs.edit().putLong(PrefsApplier.BG_VERSION_PREF, 0L).apply()
+        Toast.makeText(this, R.string.toast_bg_removed, Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Expressive's resetColors(): manual colors, design preset, key opacity,
+     * transparency and the whole photo frame go back to their defaults.
+     */
+    internal fun resetColorsAndBackground(prefs: SharedPreferences) {
+        val keys = listOf(
+            "color_bg", "color_key", "color_keyfn", "color_text", "color_accent",
+            "design", "key_opacity", "bg_transparency",
+            "photo_fit", "photo_zoom", "photo_width", "photo_height", "photo_x", "photo_y",
+            "bg_dim", "bg_blur"
+        )
+        prefs.edit().also { ed -> keys.forEach { ed.remove(it) } }.apply()
+        Toast.makeText(this, R.string.toast_colors_reset, Toast.LENGTH_SHORT).show()
+        adapter.rebuild()
+    }
+
+    /**
+     * Copies the picked image into filesDir as a downscaled JPEG
+     * (port of Expressive's importBackground): ImageDecoder with a 1600 px
+     * longest-edge cap on API 28+, double-step BitmapFactory sampling below.
+     * The write is atomic (rename-on-commit) so the keyboard never decodes a
+     * half-written file.
+     */
+    private fun importBackground(uri: Uri): Boolean = runCatching {
+        val bmp = if (Build.VERSION.SDK_INT >= 28) {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, uri)) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                val edge = maxOf(info.size.width, info.size.height)
+                if (edge > 1600) decoder.setTargetSize(
+                    (info.size.width * (1600f / edge)).toInt().coerceAtLeast(1),
+                    (info.size.height * (1600f / edge)).toInt().coerceAtLeast(1)
+                )
+            }
+        } else {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
+            if (maxSide <= 0) return false // non-local return: runCatching is inline
+            var sample = 1
+            while (maxSide / (sample * 2) >= 1600) sample *= 2
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+        } ?: return false
+
+        val file = AtomicFile(File(filesDir, PrefsApplier.BG_IMAGE_FILE))
+        try {
+            val stream = file.startWrite()
+            try {
+                check(bmp.compress(Bitmap.CompressFormat.JPEG, 88, stream))
+                file.finishWrite(stream)
+            } catch (error: Exception) {
+                file.failWrite(stream)
+                throw error
+            }
+        } finally {
+            bmp.recycle()
+        }
+        true
+    }.getOrDefault(false)
+
+    // ── Color picker sheet ─────────────────────────────────────────
 
     /**
      * Bottom-anchored HSV picker for the catalog's color rows. Shows the
      * current color in a preview bar, a saturation/brightness square, a hue
      * rail, a preset grid (the row's auto color first so "back to default" is
      * one tap) and a hex field, all kept in sync. Saving stores a normalized
-     * "#RRGGBB" under [key] — the same keys Themes.custom() reads. Custom
-     * colors only take effect when the theme is "custom", so picking a color
-     * also switches the theme (with a toast) instead of silently doing nothing.
+     * "#RRGGBB" under [key] — the same keys Themes.overrides() reads. As in
+     * Expressive's "Colors & background", the override layers on top of the
+     * active theme; "Reset colors" clears all overrides.
      */
     // Dialog content is detached from any root; null root is the dialog idiom.
     @SuppressLint("InflateParams")
@@ -385,13 +487,10 @@ class SettingsActivity : AppCompatActivity() {
                 Toast.makeText(this, R.string.color_invalid_hex, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            val ed = prefs.edit()
-            ed.putString(key, norm)
-            if (prefs.getString("theme", "system") != "custom") {
-                ed.putString("theme", "custom")
-                Toast.makeText(this, R.string.color_theme_switched, Toast.LENGTH_SHORT).show()
-            }
-            ed.apply()
+            // Expressive semantics: the override applies on top of the ACTIVE
+            // theme (no forced switch to the legacy "custom" theme). Unset
+            // slots keep the base; "Reset colors" clears everything.
+            prefs.edit().putString(key, norm).apply()
             adapter.rebuild()
             dialog.dismiss()
         }

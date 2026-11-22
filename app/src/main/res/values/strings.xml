@@ -217,6 +217,39 @@
     <string name="color_theme_switched">Theme switched to Custom so colors apply</string>
     <string name="theme_custom">Custom</string>
 
+    <!-- Colors & background (Expressive port) -->
+    <string name="pref_design">Design</string>
+    <string name="design_default">Default</string>
+    <string name="design_classic">Classic</string>
+    <string name="design_glass">Liquid Glass</string>
+    <string name="design_neon">Neon</string>
+    <string name="design_neumorph">Neumorphism</string>
+    <string name="design_samsung">Samsung One UI</string>
+    <string name="design_nothing">Nothing</string>
+    <string name="pref_key_opacity">Key opacity</string>
+    <string name="pref_bg_transparency">Background transparency</string>
+    <string name="action_bg_pick">Choose background image</string>
+    <string name="action_bg_pick_sub">A photo from your gallery under the keys</string>
+    <string name="action_bg_remove">Remove background image</string>
+    <string name="action_bg_remove_sub">Back to the plain theme background</string>
+    <string name="pref_photo_fit">Photo placement</string>
+    <string name="fit_cover">Fill</string>
+    <string name="fit_fit">Fit</string>
+    <string name="fit_stretch">Stretch</string>
+    <string name="pref_photo_zoom">Photo zoom</string>
+    <string name="pref_photo_width">Photo width</string>
+    <string name="pref_photo_height">Photo height</string>
+    <string name="pref_photo_x">Photo shift horizontal</string>
+    <string name="pref_photo_y">Photo shift vertical</string>
+    <string name="pref_bg_dim">Photo dimming</string>
+    <string name="pref_bg_blur">Photo blur</string>
+    <string name="action_reset_colors">Reset colors &amp; background</string>
+    <string name="action_reset_colors_sub">Accent, manual colors, design, image, transparency</string>
+    <string name="toast_bg_pick_failed">Couldn\'t open that image</string>
+    <string name="toast_bg_removed">Background image removed</string>
+    <string name="toast_bg_removed_none">No background image is set</string>
+    <string name="toast_colors_reset">Colors &amp; background reset</string>
+
     <!-- Toggle / slider / action labels used by the M3 settings tree.
          Some reuse existing strings (pref_theme, pref_key_borders, etc.);
          the ones below are new. -->

@@ -121,4 +121,28 @@ object ColorMath {
     /** True when the two colors are perceptually the same opaque color. */
     fun sameColor(a: Int, b: Int): Boolean =
         (a and 0xFFFFFF) == (b and 0xFFFFFF)
+
+    // ── Composition helpers (theme engine) ─────────────────────────────────
+
+    /**
+     * Linear sRGB blend, port of androidx ColorUtils.blendARGB (round each
+     * channel with +0.5 truncation). Lets the pure theme engine produce
+     * exactly the pressed-color math the renderer used to get from the
+     * androidx call.
+     */
+    fun blendArgb(color1: Int, color2: Int, ratio: Float): Int {
+        val inverse = 1f - ratio
+        val a = (color1 ushr 24 and 0xFF) * inverse + (color2 ushr 24 and 0xFF) * ratio
+        val r = (color1 ushr 16 and 0xFF) * inverse + (color2 ushr 16 and 0xFF) * ratio
+        val g = (color1 ushr 8 and 0xFF) * inverse + (color2 ushr 8 and 0xFF) * ratio
+        val b = (color1 and 0xFF) * inverse + (color2 and 0xFF) * ratio
+        return (a + 0.5f).toInt() shl 24 or
+            ((r + 0.5f).toInt() shl 16) or
+            ((g + 0.5f).toInt() shl 8) or
+            (b + 0.5f).toInt()
+    }
+
+    /** Replaces the 8 alpha bits, keeping the RGB channels. */
+    fun withAlpha(argb: Int, alpha: Int): Int =
+        (argb and 0x00FFFFFF) or ((alpha and 0xFF) shl 24)
 }

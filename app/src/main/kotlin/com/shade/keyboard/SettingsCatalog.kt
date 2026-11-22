@@ -91,6 +91,21 @@ object SettingsCatalog {
                 keywords = listOf("theme", "dark", "light", "amoled", "night", "mode", "custom",
                     "material", "you", "wallpaper", "monet", "dynamic")
             ),
+            SettingsItem.Choice(
+                key = "design", titleRes = R.string.pref_design,
+                options = listOf(
+                    "" to R.string.design_default,
+                    "classic" to R.string.design_classic,
+                    "glass" to R.string.design_glass,
+                    "neon" to R.string.design_neon,
+                    "neumorph" to R.string.design_neumorph,
+                    "samsung" to R.string.design_samsung,
+                    "nothing" to R.string.design_nothing
+                ),
+                default = "",
+                keywords = listOf("design", "style", "preset", "skin", "classic", "glass",
+                    "neon", "neumorphism", "samsung", "nothing", "look")
+            ),
             SettingsItem.Color(
                 "color_bg", R.string.color_bg, 0xFF1C1C1E.toInt(),
                 listOf("background", "bg", "canvas", "color")
@@ -111,6 +126,43 @@ object SettingsCatalog {
                 "color_accent", R.string.color_accent, 0xFF8AB4F8.toInt(),
                 listOf("accent", "highlight", "suggestion", "color")
             ),
+            SettingsItem.Slider("key_opacity", R.string.pref_key_opacity, 20, 100, 5, 100, "%d%%",
+                listOf("key opacity", "opacity", "translucent", "transparent", "keys", "glass")),
+            SettingsItem.Slider("bg_transparency", R.string.pref_bg_transparency, 0, 100, 5, 0, "%d%%",
+                listOf("background transparency", "see through", "seethrough", "transparent", "translucent", "opacity")),
+            SettingsItem.Action(R.string.action_bg_pick, R.string.action_bg_pick_sub,
+                listOf("background image", "photo", "wallpaper", "picture", "gallery", "image")
+            ) { ctx, _ -> (ctx as? SettingsActivity)?.pickBackgroundImage() },
+            SettingsItem.Action(R.string.action_bg_remove, R.string.action_bg_remove_sub,
+                listOf("background image", "remove", "delete", "photo", "picture")
+            ) { ctx, _ -> (ctx as? SettingsActivity)?.removeBackgroundImage() },
+            SettingsItem.Choice(
+                key = "photo_fit", titleRes = R.string.pref_photo_fit,
+                options = listOf(
+                    "cover" to R.string.fit_cover,
+                    "fit" to R.string.fit_fit,
+                    "stretch" to R.string.fit_stretch
+                ),
+                default = "cover",
+                keywords = listOf("photo placement", "fit", "cover", "stretch", "fill", "crop", "image")
+            ),
+            SettingsItem.Slider("photo_zoom", R.string.pref_photo_zoom, 50, 300, 5, 100, "%d%%",
+                listOf("photo zoom", "zoom", "scale", "image", "magnify")),
+            SettingsItem.Slider("photo_width", R.string.pref_photo_width, 50, 200, 5, 100, "%d%%",
+                listOf("photo width", "width", "image", "resize")),
+            SettingsItem.Slider("photo_height", R.string.pref_photo_height, 50, 200, 5, 100, "%d%%",
+                listOf("photo height", "height", "image", "resize")),
+            SettingsItem.Slider("photo_x", R.string.pref_photo_x, -100, 100, 5, 0, "%d%%",
+                listOf("photo shift", "pan", "move", "horizontal", "image", "position")),
+            SettingsItem.Slider("photo_y", R.string.pref_photo_y, -100, 100, 5, 0, "%d%%",
+                listOf("photo shift", "pan", "move", "vertical", "image", "position")),
+            SettingsItem.Slider("bg_dim", R.string.pref_bg_dim, 0, 90, 5, 35, "%d%%",
+                listOf("dim", "dimming", "darken", "readability", "photo", "image")),
+            SettingsItem.Slider("bg_blur", R.string.pref_bg_blur, 0, 24, 1, 0, "%ddp",
+                listOf("blur", "frosted", "photo", "image", "soft")),
+            SettingsItem.Action(R.string.action_reset_colors, R.string.action_reset_colors_sub,
+                listOf("reset", "restore", "colors", "background", "design", "default")
+            ) { ctx, prefs -> (ctx as? SettingsActivity)?.resetColorsAndBackground(prefs) },
             SettingsItem.Toggle("key_borders", R.string.pref_key_borders, 0, true,
                 listOf("border", "outline", "separator", "edge")),
             SettingsItem.Toggle("show_hints", R.string.pref_show_hints, 0, true,

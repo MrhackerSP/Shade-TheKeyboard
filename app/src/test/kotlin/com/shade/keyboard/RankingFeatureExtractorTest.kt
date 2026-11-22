@@ -10,15 +10,22 @@ class RankingFeatureExtractorTest {
     fun featureVectorHasExpectedSize() {
         val features = RankingFeatureExtractor.extract(
             candidate = "hello",
-            typedPrefix = "he",
-            baseRankScore = 1f,
-            neuralScore = 0.5f,
-            spatialScore = 0.2f,
-            touches = emptyList(),
-            layout = emptyMap(),
-            contextEmbedding = FloatArray(96) { 0.1f },
-            userUnigramScore = 0f,
-            userBigramScore = 0f
+            typedWord = "he"
+        )
+        assertEquals(RankingFeatureExtractor.FEATURE_SIZE, features.size)
+        assertTrue(features.all { it.isFinite() })
+    }
+
+    @Test
+    fun featureVectorIsFiniteForAdversarialInput() {
+        // Out-of-table characters, huge counts and out-of-range type codes all
+        // degrade gracefully — the vector stays finite and contract-sized.
+        val features = RankingFeatureExtractor.extract(
+            candidate = "π✨🚀ï♥",
+            typedWord = "键盘⌨️",
+            typeCode = 999,
+            userUnigramCount = 10_000,
+            userBigramCount = -10
         )
         assertEquals(RankingFeatureExtractor.FEATURE_SIZE, features.size)
         assertTrue(features.all { it.isFinite() })

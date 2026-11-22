@@ -109,6 +109,15 @@ import java.util.ArrayDeque
  */
 internal class PrefsApplier(private val svc: ShadeService) {
 
+    companion object {
+        /** The picked background photo, written atomically by SettingsActivity. */
+        internal const val BG_IMAGE_FILE = "keyboard_background.jpg"
+        /** Pre-Expressive-port background file name (adopted once, then ignored). */
+        internal const val LEGACY_BG_FILE = "bg.jpg"
+        /** Timestamp pref bumping whenever the background image changes; 0 = none. */
+        internal const val BG_VERSION_PREF = "bg_image_version"
+    }
+
     internal fun applyPrefs() { with(svc) {
         if (!svc.kbReady()) return
         kbTheme = Themes.resolve(this, prefs)
@@ -185,6 +194,22 @@ internal class PrefsApplier(private val svc: ShadeService) {
         kb.showPreview = prefs.getBoolean("popup_preview", true)
         kb.bgBitmap = bgBmp
 
+        // Expressive "Colors & background" port: background image placement,
+        // dim, key opacity and the see-through sheet.
+        kb.bgFit = when (prefs.getString("photo_fit", "cover")) {
+            "fit" -> BackgroundMath.Fit.FIT
+            "stretch" -> BackgroundMath.Fit.STRETCH
+            else -> BackgroundMath.Fit.COVER
+        }
+        kb.bgZoom = prefs.getInt("photo_zoom", 100) / 100f
+        kb.bgWidthF = prefs.getInt("photo_width", 100) / 100f
+        kb.bgHeightF = prefs.getInt("photo_height", 100) / 100f
+        kb.bgPanX = prefs.getInt("photo_x", 0) / 100f
+        kb.bgPanY = prefs.getInt("photo_y", 0) / 100f
+        kb.bgDimAlpha = BackgroundMath.dimAlpha(prefs.getInt("bg_dim", 35))
+        kb.bgKeyAlpha = BackgroundMath.keyAlpha(prefs.getInt("key_opacity", 100))
+        kb.bgTransparency = prefs.getInt("bg_transparency", 0)
+
         val side = when (prefs.getString("one_handed", "off")) {
             "left" -> 1; "right" -> 2; else -> 0
         }
@@ -199,7 +224,7 @@ internal class PrefsApplier(private val svc: ShadeService) {
         if (svc.gifControllerReady()) gifController.bar.setTheme(kbTheme)
         svc.translateBar?.setTheme(kbTheme)
 
-        root.setBackgroundColor(kbTheme.bg)
+        root.setBackgroundColor(BackgroundMath.bgArgb(kbTheme.bg, prefs.getInt("bg_transparency", 0)))
         toggle.setTextColor(kbTheme.hint)
         for (tv in slots) tv.setTextColor(kbTheme.text)
         for (tv in slotOlds) tv.setTextColor(kbTheme.text)
@@ -224,19 +249,58 @@ internal class PrefsApplier(private val svc: ShadeService) {
     }}
 
     internal fun loadBackground() { with(svc) {
-        val f = File(filesDir, "bg.jpg")
-        if (f.exists() == false) { bgBmp = null; bgStamp = -1L; return }
-        if (f.lastModified() == bgStamp && bgBmp != null) return
+        // Expressive-style versioned background image: the settings screen
+        // writes filesDir/keyboard_background.jpg atomically and stamps
+        // `bg_image_version` with a timestamp; the cache here invalidates on
+        // version change (the old lastModified stamp needed a file probe on
+        // every apply). The legacy bg.jpg path is adopted once so any image
+        // a user placed there survives the pipeline swap.
+        var version = prefs.getLong("bg_image_version", 0L)
+        if (version == 0L) {
+            val legacy = File(filesDir, LEGACY_BG_FILE)
+            if (legacy.exists()) {
+                if (legacy.renameTo(File(filesDir, BG_IMAGE_FILE))) {
+                    version = legacy.lastModified()
+                    prefs.edit().putLong("bg_image_version", version).apply()
+                }
+            }
+        }
+        if (version == 0L) { bgBmp = null; bgStamp = -1L; return }
+        if (version == bgStamp && bgBmp != null) return
         try {
+            val f = File(filesDir, BG_IMAGE_FILE)
+            if (!f.exists()) { bgBmp = null; bgStamp = -1L; return }
             val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(f.path, o)
-            var sample = 1
-            while (o.outWidth / sample > 1400) sample *= 2
-            val o2 = BitmapFactory.Options().apply { inSampleSize = sample }
-            bgBmp = BitmapFactory.decodeFile(f.path, o2)
-            bgStamp = f.lastModified()
+            val o2 = BitmapFactory.Options().apply {
+                inSampleSize = BackgroundMath.decodeSampleSize(o.outWidth, o.outHeight)
+            }
+            var bmp: Bitmap? = BitmapFactory.decodeFile(f.path, o2)
+            // Expressive blurs the photo layer on the GPU (API 31+); bake the
+            // blur into the bitmap instead — it only recomputes when the
+            // image or the slider changes.
+            val blur = prefs.getInt("bg_blur", 0)
+            if (bmp != null && blur > 0) bmp = blurBitmap(bmp, blur)
+            bgBmp = bmp
+            bgStamp = version
         } catch (t: Exception) { ShadeLog.w("ShadeService", "background image decode failed", t, once = true); bgBmp = null }
     }}
+
+    /** CPU box blur over the decoded pixels (Expressive's photo blur knob). */
+    private fun blurBitmap(bmp: Bitmap, blurDp: Int): Bitmap? = try {
+        val screenW = svc.resources.displayMetrics.widthPixels.coerceAtLeast(1)
+        // Expressive applies the blur at view scale (dp); approximate the
+        // same visual strength by scaling the radius to the bitmap's width.
+        val radius = ((blurDp.toFloat() * svc.resources.displayMetrics.density) *
+            bmp.width.toFloat() / screenW).toInt().coerceIn(1, 24)
+        val px = IntArray(bmp.width * bmp.height)
+        bmp.getPixels(px, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+        val blurred = BackgroundMath.boxBlurPx(px, bmp.width, bmp.height, radius)
+        Bitmap.createBitmap(blurred, bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+    } catch (t: Throwable) {
+        ShadeLog.w("ShadeService", "background blur failed", t, once = true)
+        null
+    } ?: bmp
 
     /** Applies the current [keyboardOffsetY] as a translation on the root view. */
     internal fun applyKeyboardOffset() { with(svc) {

@@ -30,8 +30,13 @@ android {
         applicationId = "com.shade.keyboard"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        // Release-line discipline: versionName must track the GitHub release
+        // tag (Updater.kt compares `releases/latest` tag vs this versionName —
+        // a local versionName GREATER than the latest tag silently suppresses
+        // every update). The published prerelease was "0.5" (Beta), so the
+        // next cut is 0.6; bump both numbers together with each tag.
+        versionCode = 6
+        versionName = "0.6"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -56,6 +61,14 @@ android {
                 keyAlias = "androiddebugkey"
                 keyPassword = "android"
             }
+            // Signature-scheme discipline (mirrors the Expressive release line):
+            // minSdk 26 installs with v2 alone, so v1 (jar signing) is dead weight
+            // and a known downgrade surface; v2 is the integrity baseline and v3
+            // adds the signed certificate chain so key rotation stays possible
+            // later without shipping a new applicationId.
+            enableV1Signing = false
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 
@@ -122,6 +135,52 @@ kotlin {
     compilerOptions {
         freeCompilerArgs.add("-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi")
     }
+}
+
+// Release gate: the published APK must verify under apksigner with the v2 AND
+// v3 schemes actually enabled. Runs automatically after assembleRelease, so a
+// signing regression fails the build instead of surfacing as an un-installable
+// or downgrade-able artifact. Uses the build-tools apksigner directly (no AGP
+// internal API), highest installed build-tools version wins.
+tasks.register("verifyReleaseSigning") {
+    group = "verification"
+    description = "Verifies the release APK with apksigner (v2 + v3 schemes required)."
+    doLast {
+        val apk = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
+        require(apk.exists()) {
+            "Release APK not found at ${apk.path} — assembleRelease must run before verifyReleaseSigning."
+        }
+        val sdkRoot = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+        require(!sdkRoot.isNullOrBlank()) {
+            "ANDROID_HOME / ANDROID_SDK_ROOT is not set — cannot locate apksigner for release verification."
+        }
+        val buildToolsDir = File(sdkRoot, "build-tools")
+        val apksigner = buildToolsDir.listFiles()
+            ?.sortedByDescending { it.name }
+            ?.firstNotNullOfOrNull { dir ->
+                listOf("apksigner", "apksigner.bat").map { File(dir, it) }.firstOrNull { it.isFile }
+            }
+        require(apksigner != null) {
+            "apksigner not found under ${buildToolsDir.path} — install build-tools via the SDK manager."
+        }
+        val proc = ProcessBuilder(apksigner.absolutePath, "verify", "--verbose", apk.absolutePath)
+            .redirectErrorStream(true)
+            .start()
+        val output = proc.inputStream.bufferedReader().readText()
+        val exit = proc.waitFor()
+        println(output.trim())
+        require(exit == 0) { "apksigner verify failed (exit $exit) for ${apk.name}." }
+        fun schemeOk(scheme: Int) =
+            output.contains(Regex("Verified using v$scheme scheme\\s*:\\s*true", RegexOption.IGNORE_CASE))
+        require(schemeOk(2) && schemeOk(3)) {
+            "Release APK must verify with v2 AND v3 signature schemes. apksigner reported:\n$output"
+        }
+        println("verifyReleaseSigning: ${apk.name} verified (v2 + v3 schemes, certs printed above).")
+    }
+}
+
+tasks.named("assembleRelease") {
+    finalizedBy("verifyReleaseSigning")
 }
 
 dependencies {

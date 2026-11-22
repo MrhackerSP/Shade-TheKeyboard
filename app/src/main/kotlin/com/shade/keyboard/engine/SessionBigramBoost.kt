@@ -68,6 +68,24 @@ class SessionBigramBoost {
         return (pairCount.toFloat() / totalCount.toFloat()).coerceIn(0f, 1f)
     }
 
+    /**
+     * Raw unigram observation count for [word] this session (0 if unseen).
+     * Exposed for the neural ranking features, which need real counts —
+     * the model log-compresses them itself.
+     */
+    fun unigramCount(word: String): Int =
+        unigram[word.trim().lowercase()]?.get() ?: 0
+
+    /**
+     * Raw (prev, word) co-occurrence count this session (0 if never observed).
+     */
+    fun bigramCount(prev: String?, word: String): Int {
+        if (prev.isNullOrBlank()) return 0
+        val p = prev.trim().lowercase()
+        val w = word.trim().lowercase()
+        return bigram[p]?.get(w)?.get() ?: 0
+    }
+
     fun clear() {
         unigram.clear()
         bigram.clear()

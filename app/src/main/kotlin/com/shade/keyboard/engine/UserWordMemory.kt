@@ -41,6 +41,13 @@ class UserWordMemory(context: Context) {
     }
 
     /**
+     * Raw persistent usage count of [word] (0 if never used). Unlike [score]
+     * this is NOT normalized to [0, 1] — the neural ranking features need the
+     * real count (the model log-compresses it itself).
+     */
+    fun count(word: String): Int = State.get(word)
+
+    /**
      * Snapshot of all user words with positive scores.
      * Returned map: word (lowercased) -> score in [0, 1].
      */

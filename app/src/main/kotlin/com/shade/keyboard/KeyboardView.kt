@@ -5,7 +5,9 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.PorterDuff
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
@@ -142,6 +144,23 @@ class KeyboardView(context: Context) : View(context) {
             field = v
             invalidate()
         }
+
+    // ── Background appearance knobs (Expressive "Colors & background" port).
+    // Defaults keep the old rendering: COVER fit, 0x55 dim overlay over the
+    // image, opaque keys (the dim overlay owns readability over photos, which
+    // replaces the old hardcoded 0xCC key softening).
+    var bgFit = BackgroundMath.Fit.COVER
+    var bgZoom = 1f
+    var bgWidthF = 1f
+    var bgHeightF = 1f
+    var bgPanX = 0f
+    var bgPanY = 0f
+    /** Dim overlay alpha (0..255) drawn over the background image. */
+    var bgDimAlpha = 0x55
+    /** Key fill alpha multiplier (0..255); 255 = opaque keys. */
+    var bgKeyAlpha = 0xFF
+    /** 0..100 percent — how see-through the whole keyboard sheet is. */
+    var bgTransparency = 0
 
     var trackpadEnabled = true
     /** Glide (swipe) typing: when off, swipes behave like plain taps. */
@@ -536,16 +555,23 @@ class KeyboardView(context: Context) : View(context) {
     // ------------------------------------------------------------------ drawing
 
     override fun onDraw(c: Canvas) {
-        c.drawColor(kbTheme.bg)
+        // See-through background: the canvas must not blend with the previous
+        // frame or translucent draws accumulate — clear first, then draw the
+        // alpha-reduced background (Expressive's bg_transparency).
+        if (bgTransparency > 0) c.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        c.drawColor(BackgroundMath.bgArgb(kbTheme.bg, bgTransparency))
         val bmp = bgBitmap?.takeIf { !it.isRecycled }
         if (bmp != null) {
-            val scale = maxOf(width.toFloat() / bmp.width, height.toFloat() / bmp.height)
-            val dw = bmp.width * scale
-            val dh = bmp.height * scale
-            dst.set((width - dw) / 2f, (height - dh) / 2f, (width + dw) / 2f, (height + dh) / 2f)
+            val f = BackgroundMath.frame(
+                bgFit, bmp.width, bmp.height, width, height,
+                bgZoom, bgWidthF, bgHeightF, bgPanX, bgPanY
+            )
+            dst.set(f[0], f[1], f[0] + f[2], f[1] + f[3])
             c.drawBitmap(bmp, null, dst, null)
-            fill.color = ColorUtils.setAlphaComponent(kbTheme.bg, 0x55)
-            c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
+            if (bgDimAlpha > 0) {
+                fill.color = ColorUtils.setAlphaComponent(kbTheme.bg, bgDimAlpha)
+                c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
+            }
         }
 
         pressedKeys.clear()
@@ -562,7 +588,7 @@ class KeyboardView(context: Context) : View(context) {
         val gy = dp(3f)
         val radius = dp(7f)
         val outerRadius = dp(24f)
-        val combinedAlpha = ((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255)
+        val combinedAlpha = (((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255) * bgKeyAlpha) / 255
         val pressDown = dp(0.7f)
 
         for (row in rows) for (k in row) {
@@ -612,7 +638,6 @@ class KeyboardView(context: Context) : View(context) {
                 k.kind == KeyKind.FUNC -> kbTheme.keyFn
                 else -> kbTheme.key
             }
-            if (bmp != null && !isPressed) baseCol = ColorUtils.setAlphaComponent(baseCol, 0xCC)
             val col = if (isPressed) {
                 ColorUtils.blendARGB(baseCol, kbTheme.pressed, pressAmt)
             } else {

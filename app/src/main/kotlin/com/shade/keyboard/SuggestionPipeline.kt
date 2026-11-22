@@ -112,44 +112,26 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
     internal fun learnedRankCandidates(
         candidates: List<String>,
         typedPrefix: String,
-        touches: List<FloatArray>,
-        layout: Map<Char, Key>?,
         contextWords: List<String>
     ): List<String> { with(svc) {
         val scorer = rankingScorer ?: return candidates
         if (candidates.size <= 1) return candidates
 
-        val embedding = contextEmbeddingForCurrentLocale(contextWords)
-        val contextText = contextWords.joinToString(" ")
-        val neuralScores = neural
-            ?.predictNext(contextText, typedPrefix, 12)
-            ?.associate { it.first.lowercase() to it.second }
-            .orEmpty()
+        // Neural ranker features (contract of ranking/ranker_en.tflite, see
+        // RankingFeatureExtractor): candidate chars vs typed chars, persistent
+        // user unigram count and session bigram count, type code 0 (words).
         val prev1 = contextWords.lastOrNull()
-        val prev2 = contextWords.dropLast(1).lastOrNull()
-        val userBigramScores = dict.bigramModel
-            ?.predict(prev2, prev1, 32)
-            ?.associate { it.first.lowercase() to it.second }
-            .orEmpty()
         val modelWeight = if (dictIds().split(',').firstOrNull()?.trim()?.equals("en", ignoreCase = true) == true) 0.32f else 0.12f
 
         val ranked = candidates.take(8).mapIndexed { index, candidate ->
             val base = 1f / (index + 1)
-            val neural = neuralScores[candidate.lowercase()] ?: (base * 0.25f)
-            val spatial = if (layout != null) SpatialScorer.score(candidate, touches, layout) else 0f
             val features = RankingFeatureExtractor.extract(
                 candidate = candidate,
-                typedPrefix = typedPrefix,
-                baseRankScore = base,
-                neuralScore = neural,
-                spatialScore = spatial,
-                touches = touches,
-                layout = layout ?: emptyMap(),
-                contextEmbedding = embedding,
-                userUnigramScore = userWordMemory.score(candidate),
-                userBigramScore = userBigramScores[candidate.lowercase()] ?: 0f
+                typedWord = typedPrefix,
+                typeCode = RankingFeatureExtractor.TYPE_WORD,
+                userUnigramCount = userWordMemory.count(candidate),
+                userBigramCount = sessionBigramBoost.bigramCount(prev1, candidate)
             )
-            val modelScore = 0f
             candidate to (base to features)
         }
 
@@ -273,8 +255,6 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                             learnedRankCandidates(
                                 candidates = merged,
                                 typedPrefix = "",
-                                touches = emptyList(),
-                                layout = null,
                                 contextWords = contextWords
                             )
                         }
@@ -386,8 +366,6 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                         learnedRankCandidates(
                             candidates = ranked,
                             typedPrefix = prefix,
-                            touches = touches,
-                            layout = layout,
                             contextWords = contextWords
                         )
                     }
