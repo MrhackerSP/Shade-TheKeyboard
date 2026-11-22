@@ -6,7 +6,6 @@ import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.os.Build
 import androidx.annotation.RequiresApi
-import androidx.core.graphics.toArgb
 
 // KbTheme now lives in ThemeEngine.kt (pure Kotlin, unit-tested on the JVM)
 // together with the design presets and the manual-color override layer ported
@@ -131,9 +130,10 @@ object Themes {
             val wc = WallpaperManager.getInstance(ctx)
                 .getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
             if (wc != null) MaterialYouPalette.Seeds(
-                primary = MaterialYouPalette.sanitize(wc.primaryColor.toArgb()),
-                secondary = wc.secondaryColor?.let { MaterialYouPalette.sanitize(it.toArgb()) },
-                tertiary = wc.tertiaryColor?.let { MaterialYouPalette.sanitize(it.toArgb()) }
+                // WallpaperColors getters already return @ColorInt ARGB ints.
+                primary = MaterialYouPalette.sanitize(wc.primaryColor),
+                secondary = wc.secondaryColor?.let { MaterialYouPalette.sanitize(it) },
+                tertiary = wc.tertiaryColor?.let { MaterialYouPalette.sanitize(it) }
             ) else null
         }.getOrNull()
 
