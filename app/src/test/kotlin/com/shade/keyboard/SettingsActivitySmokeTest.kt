@@ -49,7 +49,7 @@ class SettingsActivitySmokeTest {
         val activity = buildActivity()
         val adapter = activity.adapter
         assertEquals(collapsedCount(), adapter.itemCount)
-        assertEquals(SettingsCatalog.SECTION_APPEARANCE, adapter.sectionAt(0)!!.id)
+        assertEquals(SettingsCatalog.SECTION_LANGUAGES, adapter.sectionAt(0)!!.id)
         assertTrue(SettingsCatalog.sections.all { adapter.isSectionCollapsed(it.id) })
         assertTrue(adapter.itemAt(1) == null) // next row is another header, not a child
         activity.finish()

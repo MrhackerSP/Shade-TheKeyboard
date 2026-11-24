@@ -176,16 +176,31 @@
     <!-- Category titles + subtitles (home page cards) -->
 
     <!-- Section headers (inside detail pages) -->
-    <string name="section_appearance">Appearance</string>
+    <string name="section_appearance">Theme &amp; appearance</string>
     <string name="section_colors">Colors</string>
     <string name="section_background">Background photo</string>
-    <string name="section_layout">Keys &amp; layout</string>
-    <string name="section_typing">Typing</string>
-    <string name="section_feedback">Feedback &amp; timing</string>
-    <string name="section_media">Emoji, GIF &amp; voice</string>
-    <string name="section_learning">Learning &amp; privacy</string>
-    <string name="section_backup">Data &amp; backup</string>
-    <string name="section_about">About</string>
+    <string name="section_layout">Layout &amp; size</string>
+    <string name="section_typing">Typing &amp; correction</string>
+    <string name="section_feedback">Sound &amp; vibration</string>
+    <string name="section_media">GIF, voice &amp; tools</string>
+    <string name="section_learning">Privacy &amp; personalization</string>
+    <string name="section_backup">Backup &amp; restore</string>
+    <string name="section_about">About &amp; updates</string>
+    <string name="section_languages">Languages &amp; layouts</string>
+    <string name="section_suggestions">Suggestions &amp; prediction</string>
+    <string name="section_gestures">Gestures &amp; key press</string>
+    <string name="section_learning_engine">Learning engine (advanced)</string>
+    <string name="action_languages">Languages</string>
+    <string name="action_languages_sub">Dictionaries used for suggestions and correction</string>
+    <string name="lang_en">English</string>
+    <string name="lang_hi">Hindi</string>
+    <string name="lang_hinglish">Hinglish</string>
+    <string name="pref_layout">Keyboard layout</string>
+    <string name="layout_qwerty">QWERTY</string>
+    <string name="layout_qwertz">QWERTZ</string>
+    <string name="layout_azerty">AZERTY</string>
+    <string name="layout_dvorak">Dvorak</string>
+    <string name="layout_colemak">Colemak</string>
     <string name="state_expanded">Expanded</string>
     <string name="state_collapsed">Collapsed</string>
 

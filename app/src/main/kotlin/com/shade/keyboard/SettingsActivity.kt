@@ -319,6 +319,31 @@ class SettingsActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    /**
+     * Multi-select for the dictionary languages (`dictionaries` is a string
+     * set, so a single-value Choice row cannot edit it). Ids not offered here
+     * are preserved, and an empty selection falls back to English.
+     */
+    internal fun showLanguagesDialog(prefs: SharedPreferences) {
+        val ids = arrayOf("en", "hi", "hinglish")
+        val labels = arrayOf(
+            getString(R.string.lang_en), getString(R.string.lang_hi), getString(R.string.lang_hinglish)
+        )
+        val current = prefs.getStringSet("dictionaries", setOf("en")) ?: setOf("en")
+        val checked = BooleanArray(ids.size) { ids[it] in current }
+        AlertDialog.Builder(this, R.style.ShadeDialogTheme)
+            .setTitle(getString(R.string.action_languages))
+            .setMultiChoiceItems(labels, checked) { _, which, isChecked -> checked[which] = isChecked }
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val picked = ids.filterIndexed { i, _ -> checked[i] }.toMutableSet()
+                picked.addAll(current - ids.toSet())
+                if (picked.isEmpty()) picked.add("en")
+                prefs.edit().putStringSet("dictionaries", picked).apply()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     internal fun confirmClearLearned() {
         AlertDialog.Builder(this, R.style.ShadeDialogTheme)
             .setTitle(getString(R.string.action_clear_learned))

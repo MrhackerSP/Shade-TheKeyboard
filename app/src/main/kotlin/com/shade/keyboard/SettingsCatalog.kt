@@ -80,8 +80,109 @@ object SettingsCatalog {
     const val SECTION_LAYOUT = 7
     const val SECTION_FEEDBACK = 8
     const val SECTION_LEARNING = 9
+    const val SECTION_LANGUAGES = 10
+    const val SECTION_SUGGESTIONS = 11
+    const val SECTION_GESTURES = 12
+    const val SECTION_ENGINE = 13
 
     val sections: List<Section> = listOf(
+
+        // 1 ── Languages & layouts
+        Section(SECTION_LANGUAGES, R.string.section_languages, listOf(
+            SettingsItem.Action(R.string.action_languages, R.string.action_languages_sub,
+                listOf("language", "languages", "dictionary", "english", "hindi", "hinglish", "locale")
+            ) { ctx, prefs -> (ctx as? SettingsActivity)?.showLanguagesDialog(prefs) },
+            SettingsItem.Choice(
+                key = "layout", titleRes = R.string.pref_layout,
+                options = listOf(
+                    "qwerty" to R.string.layout_qwerty,
+                    "qwertz" to R.string.layout_qwertz,
+                    "azerty" to R.string.layout_azerty,
+                    "dvorak" to R.string.layout_dvorak,
+                    "colemak" to R.string.layout_colemak
+                ),
+                default = "qwerty",
+                keywords = listOf("layout", "qwerty", "qwertz", "azerty", "dvorak", "colemak", "arrangement")
+            ),
+            SettingsItem.Toggle("number_row", R.string.pref_number_row, 0, false,
+                listOf("number", "digit", "123", "row"))
+        )),
+
+        // 2 ── Typing & correction
+        Section(SECTION_TYPING, R.string.section_typing, listOf(
+            SettingsItem.Toggle("autocorrect", R.string.pref_autocorrect, 0, true,
+                listOf("autocorrect", "typo", "spell", "correct", "fix")),
+            SettingsItem.Toggle("smart_correction", R.string.pref_smart_correction, 0, true,
+                listOf("smart", "correction", "swipe")),
+            SettingsItem.Toggle("block_offensive", R.string.pref_block_offensive,
+                R.string.pref_block_offensive_sum, true,
+                listOf("offensive", "profanity", "swear", "censor", "filter", "vulgar")),
+            SettingsItem.Toggle("auto_caps", R.string.pref_auto_caps, 0, true,
+                listOf("capital", "caps", "shift", "uppercase")),
+            SettingsItem.Toggle("double_space", R.string.pref_double_space, 0, true,
+                listOf("double", "space", "period", "full stop"))
+        )),
+
+        // 3 ── Suggestions & prediction
+        Section(SECTION_SUGGESTIONS, R.string.section_suggestions, listOf(
+            SettingsItem.Toggle("suggestions", R.string.pref_suggestions, 0, true,
+                listOf("suggestion", "predict", "autocomplete", "candidate")),
+            SettingsItem.Toggle("neural_predictions", R.string.pref_neural, 0, true,
+                listOf("neural", "ai", "model", "smart")),
+            SettingsItem.Toggle("phrase_suggestions", R.string.pref_phrase_sugg,
+                R.string.pref_phrase_sugg_sum, false,
+                listOf("phrase", "multi word", "good morning")),
+            SettingsItem.Toggle("emoji_suggestions", R.string.pref_emoji_suggestions, 0, true,
+                listOf("emoji", "smiley", "suggestion")),
+            SettingsItem.Toggle("autofill_chips", R.string.pref_autofill_chips,
+                R.string.pref_autofill_chips_sum, true,
+                listOf("autofill", "password", "chip", "address", "card"))
+        )),
+
+        // 4 ── Gestures & key press
+        Section(SECTION_GESTURES, R.string.section_gestures, listOf(
+            SettingsItem.Toggle("glide_typing", R.string.pref_glide_typing,
+                R.string.pref_glide_typing_sub, true,
+                listOf("glide", "swipe", "slide", "finger")),
+            SettingsItem.Toggle("trackpad_mode", R.string.pref_trackpad, 0, true,
+                listOf("trackpad", "cursor", "space bar")),
+            SettingsItem.Slider("longpress_delay", R.string.pref_longpress_delay, 200, 700, 10, 300, "%dms",
+                listOf("long press", "delay", "hold")),
+            SettingsItem.Slider("repeat_delay", R.string.pref_repeat_delay, 150, 700, 10, 350, "%dms",
+                listOf("repeat", "delay", "backspace", "hold")),
+            SettingsItem.Slider("repeat_interval", R.string.pref_repeat_interval, 20, 100, 5, 40, "%dms",
+                listOf("repeat", "interval", "speed", "backspace"))
+        )),
+
+        // 5 ── Layout & size
+        Section(SECTION_LAYOUT, R.string.section_layout, listOf(
+            SettingsItem.Slider("key_height", R.string.pref_key_height, 36, 70, 1, 50, "%ddp",
+                listOf("height", "size", "big", "small", "tall")),
+            SettingsItem.Choice(
+                key = "one_handed", titleRes = R.string.pref_one_handed,
+                options = listOf(
+                    "off" to R.string.one_handed_off,
+                    "left" to R.string.one_handed_left,
+                    "right" to R.string.one_handed_right
+                ),
+                default = "off",
+                keywords = listOf("one hand", "one-handed", "thumb", "left", "right", "reach")
+            ),
+            SettingsItem.Choice(
+                key = "split_keyboard", titleRes = R.string.pref_split_keyboard,
+                options = listOf(
+                    "off" to R.string.split_off,
+                    "landscape" to R.string.split_landscape,
+                    "always" to R.string.split_always
+                ),
+                default = "off",
+                keywords = listOf("split", "tablet", "landscape", "halves")
+            ),
+            SettingsItem.Toggle("toolbar_open_default", R.string.pref_toolbar_open, 0, false,
+                listOf("toolbar", "default", "open", "strip"))
+        )),
+
+        // 6 ── Theme & appearance
         Section(SECTION_APPEARANCE, R.string.section_appearance, listOf(
             SettingsItem.Choice(
                 key = "theme", titleRes = R.string.pref_theme,
@@ -117,7 +218,9 @@ object SettingsCatalog {
             SettingsItem.Toggle("show_hints", R.string.pref_show_hints, 0, true,
                 listOf("hint", "accent letters", "long press", "popup letters")),
             SettingsItem.Toggle("popup_preview", R.string.pref_popup_preview, 0, true,
-                listOf("popup", "preview", "bubble", "key press"))
+                listOf("popup", "preview", "bubble", "key press")),
+            SettingsItem.Toggle("typing_burst", R.string.pref_typing_burst, 0, false,
+                listOf("burst", "animation", "effect", "flash"))
         )),
 
         Section(SECTION_COLORS, R.string.section_colors, listOf(
@@ -183,64 +286,7 @@ object SettingsCatalog {
                 listOf("blur", "frosted", "photo", "image", "soft"))
         )),
 
-        Section(SECTION_LAYOUT, R.string.section_layout, listOf(
-            SettingsItem.Slider("key_height", R.string.pref_key_height, 36, 70, 1, 50, "%ddp",
-                listOf("height", "size", "big", "small", "tall")),
-            SettingsItem.Choice(
-                key = "one_handed", titleRes = R.string.pref_one_handed,
-                options = listOf(
-                    "off" to R.string.one_handed_off,
-                    "left" to R.string.one_handed_left,
-                    "right" to R.string.one_handed_right
-                ),
-                default = "off",
-                keywords = listOf("one hand", "one-handed", "thumb", "left", "right", "reach")
-            ),
-            SettingsItem.Choice(
-                key = "split_keyboard", titleRes = R.string.pref_split_keyboard,
-                options = listOf(
-                    "off" to R.string.split_off,
-                    "landscape" to R.string.split_landscape,
-                    "always" to R.string.split_always
-                ),
-                default = "off",
-                keywords = listOf("split", "tablet", "landscape", "halves")
-            ),
-            SettingsItem.Toggle("toolbar_open_default", R.string.pref_toolbar_open, 0, false,
-                listOf("toolbar", "default", "open", "strip")),
-            SettingsItem.Toggle("number_row", R.string.pref_number_row, 0, false,
-                listOf("number", "digit", "123", "row"))
-        )),
-
-        Section(SECTION_TYPING, R.string.section_typing, listOf(
-            SettingsItem.Toggle("autocorrect", R.string.pref_autocorrect, 0, true,
-                listOf("autocorrect", "typo", "spell", "correct", "fix")),
-            SettingsItem.Toggle("block_offensive", R.string.pref_block_offensive,
-                R.string.pref_block_offensive_sum, true,
-                listOf("offensive", "profanity", "swear", "censor", "filter", "vulgar")),
-            SettingsItem.Toggle("suggestions", R.string.pref_suggestions, 0, true,
-                listOf("suggestion", "predict", "autocomplete", "candidate")),
-            SettingsItem.Toggle("neural_predictions", R.string.pref_neural, 0, true,
-                listOf("neural", "ai", "model", "smart")),
-            SettingsItem.Toggle("phrase_suggestions", R.string.pref_phrase_sugg,
-                R.string.pref_phrase_sugg_sum, false,
-                listOf("phrase", "multi word", "good morning")),
-            SettingsItem.Toggle("smart_correction", R.string.pref_smart_correction, 0, true,
-                listOf("smart", "correction", "swipe")),
-            SettingsItem.Toggle("auto_caps", R.string.pref_auto_caps, 0, true,
-                listOf("capital", "caps", "shift", "uppercase")),
-            SettingsItem.Toggle("double_space", R.string.pref_double_space, 0, true,
-                listOf("double", "space", "period", "full stop")),
-            SettingsItem.Toggle("autofill_chips", R.string.pref_autofill_chips,
-                R.string.pref_autofill_chips_sum, true,
-                listOf("autofill", "password", "chip", "address", "card")),
-            SettingsItem.Toggle("glide_typing", R.string.pref_glide_typing,
-                R.string.pref_glide_typing_sub, true,
-                listOf("glide", "swipe", "slide", "finger")),
-            SettingsItem.Toggle("trackpad_mode", R.string.pref_trackpad, 0, true,
-                listOf("trackpad", "cursor", "space bar"))
-        )),
-
+        // 7 ── Sound & vibration
         Section(SECTION_FEEDBACK, R.string.section_feedback, listOf(
             SettingsItem.Toggle("haptic", R.string.pref_haptic, 0, true,
                 listOf("haptic", "vibrate", "vibration", "feedback")),
@@ -254,20 +300,11 @@ object SettingsCatalog {
                 keywords = listOf("haptic", "vibration", "strength", "duration", "strong", "weak")
             ),
             SettingsItem.Toggle("sound", R.string.pref_sound, 0, false,
-                listOf("sound", "click", "audio", "tone")),
-            SettingsItem.Toggle("typing_burst", R.string.pref_typing_burst, 0, false,
-                listOf("burst", "animation", "effect", "flash")),
-            SettingsItem.Slider("longpress_delay", R.string.pref_longpress_delay, 200, 700, 10, 300, "%dms",
-                listOf("long press", "delay", "hold")),
-            SettingsItem.Slider("repeat_delay", R.string.pref_repeat_delay, 150, 700, 10, 350, "%dms",
-                listOf("repeat", "delay", "backspace", "hold")),
-            SettingsItem.Slider("repeat_interval", R.string.pref_repeat_interval, 20, 100, 5, 40, "%dms",
-                listOf("repeat", "interval", "speed", "backspace"))
+                listOf("sound", "click", "audio", "tone"))
         )),
 
+        // 8 ── GIF, voice & tools
         Section(SECTION_MEDIA, R.string.section_media, listOf(
-            SettingsItem.Toggle("emoji_suggestions", R.string.pref_emoji_suggestions, 0, true,
-                listOf("emoji", "smiley", "suggestion")),
             SettingsItem.Toggle("gif_enabled", R.string.pref_gif, 0, true,
                 listOf("gif", "sticker", "animated")),
             SettingsItem.Action(R.string.pref_gif_api_key, R.string.pref_gif_api_key_sum,
@@ -280,12 +317,31 @@ object SettingsCatalog {
                 listOf("voice", "dictation", "microphone", "speech", "mic")),
             SettingsItem.Toggle("voice_on_device", R.string.pref_voice_on_device,
                 R.string.pref_voice_on_device_sum, true,
-                listOf("voice", "offline", "on-device", "speech", "recognition"))
+                listOf("voice", "offline", "on-device", "speech", "recognition")),
+            SettingsItem.Toggle("clipboard_history", R.string.pref_clipboard_history, 0, true,
+                listOf("clipboard", "history", "copy", "paste"))
         )),
 
+        // 9 ── Privacy & personalization
         Section(SECTION_LEARNING, R.string.section_learning, listOf(
             SettingsItem.Toggle("learn_words", R.string.pref_learn_words, 0, true,
                 listOf("learn", "word", "dictionary")),
+            SettingsItem.Toggle("incognito", R.string.pref_incognito, 0, false,
+                listOf("incognito", "private", "privacy")),
+            SettingsItem.Toggle("contribute_data", R.string.pref_contribute_data, 0, false,
+                listOf("contribute", "training", "export", "share")),
+            SettingsItem.Toggle("typing_insights", R.string.settings_typing, 0, false,
+                listOf("insights", "stats", "analytics", "wpm")),
+            SettingsItem.Action(R.string.action_typing_stats, 0,
+                listOf("typing stats", "insights", "analytics")
+            ) { ctx, _ -> (ctx as? SettingsActivity)?.openTypingStats() },
+            SettingsItem.Action(R.string.action_clear_learned, R.string.action_clear_learned_sub,
+                listOf("clear", "reset", "delete", "learned")
+            ) { ctx, _ -> (ctx as? SettingsActivity)?.confirmClearLearned() }
+        )),
+
+        // 10 ── Learning engine (advanced)
+        Section(SECTION_ENGINE, R.string.section_learning_engine, listOf(
             SettingsItem.Toggle("learning_adaptive", R.string.pref_learning_adaptive,
                 R.string.pref_learning_adaptive_sum, true,
                 listOf("recency", "frequent", "adaptive", "learning")),
@@ -306,16 +362,11 @@ object SettingsCatalog {
                 listOf("correction", "memory", "personal", "autocorrect", "learning")),
             SettingsItem.Toggle("learning_touch", R.string.pref_learning_touch,
                 R.string.pref_learning_touch_sum, true,
-                listOf("touch", "bias", "finger", "aim", "accuracy", "learning")),
-            SettingsItem.Toggle("incognito", R.string.pref_incognito, 0, false,
-                listOf("incognito", "private", "privacy"))
+                listOf("touch", "bias", "finger", "aim", "accuracy", "learning"))
         )),
 
+        // 11 ── Backup & restore
         Section(SECTION_BACKUP, R.string.section_backup, listOf(
-            SettingsItem.Toggle("clipboard_history", R.string.pref_clipboard_history, 0, true,
-                listOf("clipboard", "history", "copy", "paste")),
-            SettingsItem.Toggle("contribute_data", R.string.pref_contribute_data, 0, false,
-                listOf("contribute", "training", "export", "share")),
             SettingsItem.Info(R.string.info_backup),
             SettingsItem.Action(R.string.action_export, R.string.action_export_sub,
                 listOf("backup", "export", "save")
@@ -325,19 +376,12 @@ object SettingsCatalog {
             ) { ctx, _ -> (ctx as? SettingsActivity)?.startImport() },
             SettingsItem.Action(R.string.action_import_words, R.string.action_import_words_sub,
                 listOf("import", "words", "dictionary", "migrate", "switch", "learned")
-            ) { ctx, _ -> (ctx as? SettingsActivity)?.startWordImport() },
-            SettingsItem.Action(R.string.action_clear_learned, R.string.action_clear_learned_sub,
-                listOf("clear", "reset", "delete", "learned")
-            ) { ctx, _ -> (ctx as? SettingsActivity)?.confirmClearLearned() }
+            ) { ctx, _ -> (ctx as? SettingsActivity)?.startWordImport() }
         )),
 
+        // 12 ── About & updates
         Section(SECTION_ABOUT, R.string.section_about, listOf(
             SettingsItem.Info(R.string.info_about),
-            SettingsItem.Toggle("typing_insights", R.string.settings_typing, 0, false,
-                listOf("insights", "stats", "analytics", "wpm")),
-            SettingsItem.Action(R.string.action_typing_stats, 0,
-                listOf("typing stats", "insights", "analytics")
-            ) { ctx, _ -> (ctx as? SettingsActivity)?.openTypingStats() },
             SettingsItem.Toggle("auto_update_check", R.string.pref_auto_update, 0, false,
                 listOf("update", "auto", "check", "version")),
             SettingsItem.Action(R.string.action_check_update, 0,

@@ -28,14 +28,18 @@ class SettingsCatalogTest {
         assertEquals(ids.size, ids.toSet().size)
         assertEquals(
             listOf(
+                SettingsCatalog.SECTION_LANGUAGES,
+                SettingsCatalog.SECTION_TYPING,
+                SettingsCatalog.SECTION_SUGGESTIONS,
+                SettingsCatalog.SECTION_GESTURES,
+                SettingsCatalog.SECTION_LAYOUT,
                 SettingsCatalog.SECTION_APPEARANCE,
                 SettingsCatalog.SECTION_COLORS,
                 SettingsCatalog.SECTION_BACKGROUND,
-                SettingsCatalog.SECTION_LAYOUT,
-                SettingsCatalog.SECTION_TYPING,
                 SettingsCatalog.SECTION_FEEDBACK,
                 SettingsCatalog.SECTION_MEDIA,
                 SettingsCatalog.SECTION_LEARNING,
+                SettingsCatalog.SECTION_ENGINE,
                 SettingsCatalog.SECTION_BACKUP,
                 SettingsCatalog.SECTION_ABOUT
             ),
@@ -55,7 +59,37 @@ class SettingsCatalogTest {
     fun longChoices_areTheOnesThatNeedAPicker() {
         // >3 options render as a value row + dialog; ≤3 as a segmented control.
         val long = choices.filter { it.options.size > 3 }.map { it.key }.toSet()
-        assertEquals(setOf("theme", "design"), long)
+        assertEquals(setOf("theme", "design", "layout"), long)
+    }
+
+    @Test
+    fun layoutChoice_onlyOffersKnownLayouts() {
+        val layout = choices.first { it.key == "layout" }
+        assertEquals("qwerty", layout.default)
+        assertTrue(layout.options.map { it.first }.all { it in Layouts.LAYOUT_IDS })
+    }
+
+    @Test
+    fun settings_liveInTheirIntendedSections() {
+        fun keysIn(id: Int) = SettingsCatalog.section(id)!!.items.mapNotNull {
+            when (it) {
+                is SettingsItem.Toggle -> it.key
+                is SettingsItem.Slider -> it.key
+                is SettingsItem.Choice -> it.key
+                is SettingsItem.Color -> it.key
+                else -> null
+            }
+        }.toSet()
+        assertTrue("number_row" in keysIn(SettingsCatalog.SECTION_LANGUAGES))
+        assertTrue("layout" in keysIn(SettingsCatalog.SECTION_LANGUAGES))
+        assertTrue("emoji_suggestions" in keysIn(SettingsCatalog.SECTION_SUGGESTIONS))
+        assertTrue("glide_typing" in keysIn(SettingsCatalog.SECTION_GESTURES))
+        assertTrue("repeat_delay" in keysIn(SettingsCatalog.SECTION_GESTURES))
+        assertTrue("clipboard_history" in keysIn(SettingsCatalog.SECTION_MEDIA))
+        assertTrue("contribute_data" in keysIn(SettingsCatalog.SECTION_LEARNING))
+        assertTrue("typing_insights" in keysIn(SettingsCatalog.SECTION_LEARNING))
+        assertTrue("learning_ranker" in keysIn(SettingsCatalog.SECTION_ENGINE))
+        assertTrue("typing_insights" !in keysIn(SettingsCatalog.SECTION_ABOUT))
     }
 
     @Test
