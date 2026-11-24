@@ -1,19 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Noir palette for the Shade settings UI: pitch black surfaces, white type,
-  hairline dividers. Monochrome is mode-independent, so there is no
-  values-night variant of this file.
+  hairline dividers. Monochrome is mode-independent, so there is deliberately
+  no values-night variant of this file (or of the ShadeSettings theme).
+
+  Contrast on #000000: secondary 8.9:1, tertiary 5.3:1 (both pass AA for small
+  text); outline 3.0:1 (passes the 3:1 bar for control boundaries).
 -->
 <resources>
     <color name="noir_background">#000000</color>
     <color name="noir_sheet">#0B0B0B</color>
     <color name="noir_field">#141414</color>
-    <color name="noir_field_stroke">#232323</color>
     <color name="noir_text">#FFFFFF</color>
     <color name="noir_on_button">#000000</color>
-    <color name="noir_text_secondary">#9E9E9E</color>
-    <color name="noir_text_tertiary">#6E6E6E</color>
-    <color name="noir_divider">#161616</color>
-    <color name="noir_outline">#2E2E2E</color>
+    <color name="noir_text_secondary">#A8A8A8</color>
+    <color name="noir_text_tertiary">#808080</color>
+    <color name="noir_divider">#1F1F1F</color>
+    <color name="noir_outline">#595959</color>
+    <color name="noir_track">#333333</color>
+    <color name="noir_ripple">#33FFFFFF</color>
     <color name="noir_control_normal">#6B6B6B</color>
 </resources>

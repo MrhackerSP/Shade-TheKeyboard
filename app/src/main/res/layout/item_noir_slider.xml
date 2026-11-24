@@ -1,11 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Slider row: title + live value, thin monochrome track below. -->
-<!-- Row ripple over the card background is intentional layering. -->
+<!-- Slider row: title + live value, 2dp monochrome track below (Widget.Noir.Slider via the theme). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools" tools:ignore="Overdraw"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:background="?attr/selectableItemBackground">
+    android:orientation="vertical">
 
     <LinearLayout
         android:layout_width="match_parent"

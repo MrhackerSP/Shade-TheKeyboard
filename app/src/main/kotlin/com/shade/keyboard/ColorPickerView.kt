@@ -35,6 +35,10 @@ class ColorPickerView @JvmOverloads constructor(
     private var sat = 1f
     private var valueOf = 1f
 
+    /** Which control the current gesture started on; it keeps that control until release. */
+    private enum class Drag { NONE, SQUARE, HUE }
+    private var drag = Drag.NONE
+
     private val density = resources.displayMetrics.density
     private fun dp(v: Float) = v * density
 
@@ -170,21 +174,49 @@ class ColorPickerView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
-                val x = event.x.coerceIn(0f, width.toFloat())
-                if (event.y <= svRect.bottom) {
-                    sat = ((x / width.toFloat()).coerceIn(0f, 1f))
-                    valueOf = 1f - ((event.y - svRect.top) / svRect.height()).coerceIn(0f, 1f)
-                } else if (event.y >= railRect.top) {
-                    hue = ((x / width.toFloat()).coerceIn(0f, 1f)) * 360f
+            MotionEvent.ACTION_DOWN -> {
+                // Pick the control by where the finger LANDS. The sheet scrolls on small
+                // screens; without this a vertical drag in the square scrolls the sheet.
+                parent?.requestDisallowInterceptTouchEvent(true)
+                drag = when {
+                    event.y <= svRect.bottom -> Drag.SQUARE
+                    event.y >= railRect.top -> Drag.HUE
+                    else -> Drag.NONE           // the gap between square and rail
                 }
-                invalidate()
-                onColorChanged?.invoke(hue, sat, valueOf)
-                if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
+                if (drag == Drag.NONE) return true
+                applyTouch(event)
+                return true
+            }
+            MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+                // Previously the target was re-derived from y on every MOVE, so dragging
+                // the square cursor below its edge suddenly started changing the hue.
+                if (drag != Drag.NONE) applyTouch(event)
+                if (event.actionMasked == MotionEvent.ACTION_UP) {
+                    drag = Drag.NONE
+                    performClick()
+                }
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                drag = Drag.NONE
                 return true
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    private fun applyTouch(event: MotionEvent) {
+        val x = (event.x / width.toFloat()).coerceIn(0f, 1f)
+        when (drag) {
+            Drag.SQUARE -> {
+                sat = x
+                valueOf = 1f - ((event.y - svRect.top) / svRect.height()).coerceIn(0f, 1f)
+            }
+            Drag.HUE -> hue = x * 360f
+            Drag.NONE -> return
+        }
+        invalidate()
+        onColorChanged?.invoke(hue, sat, valueOf)
     }
 
     override fun performClick(): Boolean {

@@ -3,7 +3,7 @@
     <string name="ime_name">Shade</string>
     <string name="settings_title">Shade settings</string>
 
-    <string name="setup_intro">A private, open keyboard. Typing, suggestions and learning all happen on your device — no internet permission, no tracking. (Voice typing runs on the device whenever your phone offers an offline recognizer.)</string>
+    <string name="setup_intro">A private, open keyboard. Typing, suggestions and learning all happen on your device and there is no tracking. The internet is used only for the update check and GIF search, and only if you turn them on. (Voice typing runs on the device whenever your phone offers an offline recognizer.)</string>
     <string name="step1">1. Enable Shade</string>
     <string name="step2">2. Switch to Shade</string>
     <string name="step3">3. Try it here</string>
@@ -86,6 +86,8 @@
     <string name="backup_pass_title_import">Backup passphrase</string>
     <string name="backup_pass_warning">Choose a passphrase of at least 8 characters. Keep it safe: without it this backup cannot be restored.</string>
     <string name="backup_pass_hint">Passphrase</string>
+    <string name="backup_pass_confirm_hint">Repeat passphrase</string>
+    <string name="backup_pass_mismatch">The passphrases do not match</string>
     <string name="backup_pass_short">Enter a passphrase of at least 8 characters</string>
 
     <!-- Adaptive learning -->
@@ -171,17 +173,21 @@
 
     <!-- ─────────────── M3 Settings UI strings ─────────────── -->
 
-    <!-- Top-level -->
-    <string name="settings_subtitle">Keyboard settings</string>
-
     <!-- Category titles + subtitles (home page cards) -->
 
     <!-- Section headers (inside detail pages) -->
     <string name="section_appearance">Appearance</string>
+    <string name="section_colors">Colors</string>
+    <string name="section_background">Background photo</string>
+    <string name="section_layout">Keys &amp; layout</string>
     <string name="section_typing">Typing</string>
-    <string name="section_languages">Languages &amp; data</string>
-    <string name="section_backup">Backup</string>
+    <string name="section_feedback">Feedback &amp; timing</string>
+    <string name="section_media">Emoji, GIF &amp; voice</string>
+    <string name="section_learning">Learning &amp; privacy</string>
+    <string name="section_backup">Data &amp; backup</string>
     <string name="section_about">About</string>
+    <string name="state_expanded">Expanded</string>
+    <string name="state_collapsed">Collapsed</string>
 
 
     <!-- Theme options -->
@@ -213,7 +219,6 @@
     <string name="color_picker_desc">Color picker: drag in the square to set saturation and brightness, use the bar below to set the hue</string>
     <string name="color_hex_hint">Hex code, e.g. #7C4DFF</string>
     <string name="color_invalid_hex">Not a valid color code</string>
-    <string name="color_theme_switched">Theme switched to Custom so colors apply</string>
     <string name="theme_custom">Custom</string>
 
     <!-- Colors & background -->
@@ -282,6 +287,8 @@
     <string name="import_words_failed">Could not read the selected file</string>
     <string name="action_clear_learned">Clear learned data</string>
     <string name="action_clear_learned_sub">Delete all adaptive learning and user words</string>
+    <string name="clear_confirm_button">Clear</string>
+    <string name="toast_learned_cleared">Learned data cleared</string>
 
     <!-- Info cards -->
     <string name="info_backup">Backups are encrypted with your passphrase and stored only on this device. Nothing is uploaded.</string>

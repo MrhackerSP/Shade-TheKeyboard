@@ -1,14 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Color picker sheet (bottom-anchored dialog, monochrome chrome):
-  preview bar with hex readout, HSV square + hue rail, preset grid,
+  preview bar with hex readout, HSV square + hue rail, one row of gray presets,
   hex field, and Reset / Cancel / Apply actions.
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_noir_sheet"
+    android:overScrollMode="ifContentScrolls"
+    android:scrollbars="none">
+
+<LinearLayout
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="@drawable/bg_noir_sheet"
     android:paddingStart="20dp"
     android:paddingEnd="20dp"
     android:paddingTop="20dp"
@@ -60,12 +66,12 @@
         android:singleLine="true"
         android:importantForAutofill="no" />
 
-    <GridLayout
+    <LinearLayout
         android:id="@+id/picker_presets"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
-        android:columnCount="8" />
+        android:orientation="horizontal" />
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -116,3 +122,5 @@
     </LinearLayout>
 
 </LinearLayout>
+
+</ScrollView>

@@ -16,8 +16,8 @@ import org.robolectric.shadows.ShadowDialog
 
 /**
  * Drives the redesigned (Noir) settings activity on the JVM: render, measure
- * and bind every row type, collapse/expand sections, search, and open the
- * color picker sheet. Any binding crash (wrong view id, missing resource,
+ * and bind every row type, collapse/expand sections (the screen opens fully
+ * collapsed), search, and open the color picker sheet. Any binding crash (wrong view id, missing resource,
  * theme problem) fails here before it can fail on a device.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -30,35 +30,61 @@ class SettingsActivitySmokeTest {
 
     private fun measureAndLayout(rv: RecyclerView) {
         val w = View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY)
-        val h = View.MeasureSpec.makeMeasureSpec(2000, View.MeasureSpec.EXACTLY)
+        // Tall enough that every row of the expanded catalog is created and bound.
+        val h = View.MeasureSpec.makeMeasureSpec(30000, View.MeasureSpec.EXACTLY)
         rv.measure(w, h)
-        rv.layout(0, 0, 1080, 2000)
+        rv.layout(0, 0, 1080, 30000)
     }
 
-    private fun fullCatalogCount(): Int =
-        1 + SettingsCatalog.sections.sumOf { 1 + it.items.size }
+    /** The screen opens as a short index: one header per section, nothing expanded. */
+    private fun collapsedCount(): Int = SettingsCatalog.sections.size
+
+    private fun expandedCount(): Int = SettingsCatalog.sections.sumOf { 1 + it.items.size }
+
+    private fun expandAll(activity: SettingsActivity) =
+        SettingsCatalog.sections.forEach { activity.adapter.expand(it.id) }
 
     @Test
-    fun renders_fullCatalog_withHeroAndSections() {
+    fun opensFullyCollapsed_withOneHeaderPerSection() {
         val activity = buildActivity()
         val adapter = activity.adapter
-        assertEquals(fullCatalogCount(), adapter.itemCount)
-
-        // Row 0 is the hero, row 1 the first section header, row 2 its first child.
-        assertTrue(adapter.sectionAt(1) != null)
-        assertEquals(SettingsCatalog.SECTION_APPEARANCE, adapter.sectionAt(1)!!.id)
-        assertTrue(adapter.itemAt(2) != null)
+        assertEquals(collapsedCount(), adapter.itemCount)
+        assertEquals(SettingsCatalog.SECTION_APPEARANCE, adapter.sectionAt(0)!!.id)
+        assertTrue(SettingsCatalog.sections.all { adapter.isSectionCollapsed(it.id) })
+        assertTrue(adapter.itemAt(1) == null) // next row is another header, not a child
         activity.finish()
     }
 
     @Test
-    fun measureLayout_bindsEveryVisibleRowType_withoutCrashing() {
+    fun expandingEverything_rendersFullCatalog() {
         val activity = buildActivity()
+        expandAll(activity)
+        assertEquals(expandedCount(), activity.adapter.itemCount)
+        assertTrue(activity.adapter.itemAt(1) != null)
+        activity.finish()
+    }
+
+    @Test
+    fun measureLayout_bindsEveryRowType_withoutCrashing() {
+        val activity = buildActivity()
+        expandAll(activity)
         val rv = activity.findViewById<RecyclerView>(R.id.noir_list)
         measureAndLayout(rv)
-        // The appearance section (top of the list) covers hero, section header,
-        // toggle, choice, color, slider rows — all bound during layout above.
+        // Every toggle, slider, choice, color, action and info row is bound above.
         assertTrue(rv.childCount > 0)
+        activity.finish()
+    }
+
+    @Test
+    fun longChoice_rendersAsValueRow_notSegments() {
+        val activity = buildActivity()
+        activity.adapter.expand(SettingsCatalog.SECTION_APPEARANCE)
+        val rv = activity.findViewById<RecyclerView>(R.id.noir_list)
+        measureAndLayout(rv)
+        // Row 0 = header, row 1 = the theme choice (six options).
+        val row = rv.findViewHolderForAdapterPosition(1)!!.itemView
+        assertEquals(View.VISIBLE, row.findViewById<View>(R.id.noir_choice_value).visibility)
+        assertEquals(View.GONE, row.findViewById<View>(R.id.noir_group).visibility)
         activity.finish()
     }
 
@@ -67,16 +93,33 @@ class SettingsActivitySmokeTest {
         val activity = buildActivity()
         val adapter = activity.adapter
         val before = adapter.itemCount
-        val appearanceChildren = SettingsCatalog
+        val children = SettingsCatalog
             .section(SettingsCatalog.SECTION_APPEARANCE)!!.items.size
-
-        adapter.collapse(SettingsCatalog.SECTION_APPEARANCE)
-        assertTrue(adapter.isSectionCollapsed(SettingsCatalog.SECTION_APPEARANCE))
-        assertEquals(before - appearanceChildren, adapter.itemCount)
 
         adapter.expand(SettingsCatalog.SECTION_APPEARANCE)
         assertFalse(adapter.isSectionCollapsed(SettingsCatalog.SECTION_APPEARANCE))
+        assertEquals(before + children, adapter.itemCount)
+
+        adapter.collapse(SettingsCatalog.SECTION_APPEARANCE)
+        assertTrue(adapter.isSectionCollapsed(SettingsCatalog.SECTION_APPEARANCE))
         assertEquals(before, adapter.itemCount)
+        activity.finish()
+    }
+
+    @Test
+    fun expandedSections_roundTripThroughSavedState() {
+        val activity = buildActivity()
+        val adapter = activity.adapter
+        adapter.expand(SettingsCatalog.SECTION_TYPING)
+        adapter.expand(SettingsCatalog.SECTION_BACKUP)
+        val saved = adapter.expandedIds()
+        assertEquals(setOf(SettingsCatalog.SECTION_TYPING, SettingsCatalog.SECTION_BACKUP), saved.toSet())
+
+        adapter.setExpanded(intArrayOf())
+        assertEquals(collapsedCount(), adapter.itemCount)
+        adapter.setExpanded(saved)
+        assertFalse(adapter.isSectionCollapsed(SettingsCatalog.SECTION_TYPING))
+        assertTrue(adapter.isSectionCollapsed(SettingsCatalog.SECTION_APPEARANCE))
         activity.finish()
     }
 
@@ -94,7 +137,7 @@ class SettingsActivitySmokeTest {
         assertEquals(1, adapter.itemCount) // the "no results" info row
 
         adapter.applySearch("")
-        assertEquals(fullCatalogCount(), adapter.itemCount)
+        assertEquals(collapsedCount(), adapter.itemCount) // back to the collapsed index
         activity.finish()
     }
 
@@ -107,7 +150,7 @@ class SettingsActivitySmokeTest {
         val adapter = activity.adapter
         assertTrue(adapter.itemAt(0) is SettingsItem.Toggle)
         input.setText("")
-        assertEquals(fullCatalogCount(), adapter.itemCount)
+        assertEquals(collapsedCount(), adapter.itemCount)
         activity.finish()
     }
 

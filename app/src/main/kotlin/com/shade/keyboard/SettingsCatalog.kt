@@ -69,11 +69,17 @@ object SettingsCatalog {
 
     data class Section(val id: Int, val titleRes: Int, val items: List<SettingsItem>)
 
+    // Ids only need to be unique; display order is the order in [sections].
     const val SECTION_APPEARANCE = 0
     const val SECTION_TYPING = 1
-    const val SECTION_LANGUAGES = 2
+    const val SECTION_MEDIA = 2
     const val SECTION_BACKUP = 3
     const val SECTION_ABOUT = 4
+    const val SECTION_COLORS = 5
+    const val SECTION_BACKGROUND = 6
+    const val SECTION_LAYOUT = 7
+    const val SECTION_FEEDBACK = 8
+    const val SECTION_LEARNING = 9
 
     val sections: List<Section> = listOf(
         Section(SECTION_APPEARANCE, R.string.section_appearance, listOf(
@@ -106,6 +112,15 @@ object SettingsCatalog {
                 keywords = listOf("design", "style", "preset", "skin", "classic", "glass",
                     "neon", "neumorphism", "rounded", "dot", "look")
             ),
+            SettingsItem.Toggle("key_borders", R.string.pref_key_borders, 0, true,
+                listOf("border", "outline", "separator", "edge")),
+            SettingsItem.Toggle("show_hints", R.string.pref_show_hints, 0, true,
+                listOf("hint", "accent letters", "long press", "popup letters")),
+            SettingsItem.Toggle("popup_preview", R.string.pref_popup_preview, 0, true,
+                listOf("popup", "preview", "bubble", "key press"))
+        )),
+
+        Section(SECTION_COLORS, R.string.section_colors, listOf(
             SettingsItem.Color(
                 "color_bg", R.string.color_bg, 0xFF1C1C1E.toInt(),
                 listOf("background", "bg", "canvas", "color")
@@ -130,6 +145,12 @@ object SettingsCatalog {
                 listOf("key opacity", "opacity", "translucent", "transparent", "keys", "glass")),
             SettingsItem.Slider("bg_transparency", R.string.pref_bg_transparency, 0, 100, 5, 0, "%d%%",
                 listOf("background transparency", "see through", "seethrough", "transparent", "translucent", "opacity")),
+            SettingsItem.Action(R.string.action_reset_colors, R.string.action_reset_colors_sub,
+                listOf("reset", "restore", "colors", "background", "design", "default")
+            ) { ctx, prefs -> (ctx as? SettingsActivity)?.resetColorsAndBackground(prefs) }
+        )),
+
+        Section(SECTION_BACKGROUND, R.string.section_background, listOf(
             SettingsItem.Action(R.string.action_bg_pick, R.string.action_bg_pick_sub,
                 listOf("background image", "photo", "wallpaper", "picture", "gallery", "image")
             ) { ctx, _ -> (ctx as? SettingsActivity)?.pickBackgroundImage() },
@@ -159,16 +180,10 @@ object SettingsCatalog {
             SettingsItem.Slider("bg_dim", R.string.pref_bg_dim, 0, 90, 5, 35, "%d%%",
                 listOf("dim", "dimming", "darken", "readability", "photo", "image")),
             SettingsItem.Slider("bg_blur", R.string.pref_bg_blur, 0, 24, 1, 0, "%ddp",
-                listOf("blur", "frosted", "photo", "image", "soft")),
-            SettingsItem.Action(R.string.action_reset_colors, R.string.action_reset_colors_sub,
-                listOf("reset", "restore", "colors", "background", "design", "default")
-            ) { ctx, prefs -> (ctx as? SettingsActivity)?.resetColorsAndBackground(prefs) },
-            SettingsItem.Toggle("key_borders", R.string.pref_key_borders, 0, true,
-                listOf("border", "outline", "separator", "edge")),
-            SettingsItem.Toggle("show_hints", R.string.pref_show_hints, 0, true,
-                listOf("hint", "accent letters", "long press", "popup letters")),
-            SettingsItem.Toggle("popup_preview", R.string.pref_popup_preview, 0, true,
-                listOf("popup", "preview", "bubble", "key press")),
+                listOf("blur", "frosted", "photo", "image", "soft"))
+        )),
+
+        Section(SECTION_LAYOUT, R.string.section_layout, listOf(
             SettingsItem.Slider("key_height", R.string.pref_key_height, 36, 70, 1, 50, "%ddp",
                 listOf("height", "size", "big", "small", "tall")),
             SettingsItem.Choice(
@@ -216,8 +231,6 @@ object SettingsCatalog {
                 listOf("capital", "caps", "shift", "uppercase")),
             SettingsItem.Toggle("double_space", R.string.pref_double_space, 0, true,
                 listOf("double", "space", "period", "full stop")),
-            SettingsItem.Toggle("learn_words", R.string.pref_learn_words, 0, true,
-                listOf("learn", "word", "dictionary")),
             SettingsItem.Toggle("autofill_chips", R.string.pref_autofill_chips,
                 R.string.pref_autofill_chips_sum, true,
                 listOf("autofill", "password", "chip", "address", "card")),
@@ -225,7 +238,10 @@ object SettingsCatalog {
                 R.string.pref_glide_typing_sub, true,
                 listOf("glide", "swipe", "slide", "finger")),
             SettingsItem.Toggle("trackpad_mode", R.string.pref_trackpad, 0, true,
-                listOf("trackpad", "cursor", "space bar")),
+                listOf("trackpad", "cursor", "space bar"))
+        )),
+
+        Section(SECTION_FEEDBACK, R.string.section_feedback, listOf(
             SettingsItem.Toggle("haptic", R.string.pref_haptic, 0, true,
                 listOf("haptic", "vibrate", "vibration", "feedback")),
             // Vibration strength: 0-100 slider. The same
@@ -249,7 +265,7 @@ object SettingsCatalog {
                 listOf("repeat", "interval", "speed", "backspace"))
         )),
 
-        Section(SECTION_LANGUAGES, R.string.section_languages, listOf(
+        Section(SECTION_MEDIA, R.string.section_media, listOf(
             SettingsItem.Toggle("emoji_suggestions", R.string.pref_emoji_suggestions, 0, true,
                 listOf("emoji", "smiley", "suggestion")),
             SettingsItem.Toggle("gif_enabled", R.string.pref_gif, 0, true,
@@ -264,7 +280,12 @@ object SettingsCatalog {
                 listOf("voice", "dictation", "microphone", "speech", "mic")),
             SettingsItem.Toggle("voice_on_device", R.string.pref_voice_on_device,
                 R.string.pref_voice_on_device_sum, true,
-                listOf("voice", "offline", "on-device", "speech", "recognition")),
+                listOf("voice", "offline", "on-device", "speech", "recognition"))
+        )),
+
+        Section(SECTION_LEARNING, R.string.section_learning, listOf(
+            SettingsItem.Toggle("learn_words", R.string.pref_learn_words, 0, true,
+                listOf("learn", "word", "dictionary")),
             SettingsItem.Toggle("learning_adaptive", R.string.pref_learning_adaptive,
                 R.string.pref_learning_adaptive_sum, true,
                 listOf("recency", "frequent", "adaptive", "learning")),
@@ -330,15 +351,40 @@ object SettingsCatalog {
     fun section(id: Int): Section? = sections.firstOrNull { it.id == id }
 
     /**
-     * Pure keyword search: the query matches when any keyword is a substring
-     * of it or vice versa (so "glides" finds "glide", "vibrate" finds "vibration").
-     * Empty query → no results (the UI shows the full catalog instead).
+     * Keyword search. Empty query → no results (the UI shows the full catalog).
+     *
+     * A keyword hits when it contains the query, or — for keywords of 4+
+     * letters, so "ai"/"bg"/"fn" cannot match half the alphabet — when the
+     * query contains it ("glides" finds "glide"). A one-letter query only
+     * matches keywords that START with it; otherwise typing "s" returned most
+     * of the catalog. When [titleOf] is supplied (the UI passes
+     * Context.getString) the visible title is searched too, so a row is always
+     * findable by the words printed on it.
      */
-    fun search(query: String): List<SettingsItem> {
+    fun search(query: String, titleOf: ((Int) -> String)? = null): List<SettingsItem> {
         val q = query.trim().lowercase()
         if (q.isEmpty()) return emptyList()
         return flat().filter { item ->
-            item.keywords.any { kw -> kw.contains(q) || q.contains(kw) }
+            item.keywords.any { kw -> keywordHit(kw, q) } || titleHit(item, q, titleOf)
         }
+    }
+
+    private fun keywordHit(kw: String, q: String): Boolean = when {
+        q.length == 1 -> kw.startsWith(q)
+        kw.contains(q) -> true
+        else -> kw.length >= 4 && q.contains(kw)
+    }
+
+    private fun titleHit(item: SettingsItem, q: String, titleOf: ((Int) -> String)?): Boolean {
+        if (titleOf == null || q.length < 2) return false
+        val res = when (item) {
+            is SettingsItem.Toggle -> item.titleRes
+            is SettingsItem.Slider -> item.titleRes
+            is SettingsItem.Choice -> item.titleRes
+            is SettingsItem.Color -> item.titleRes
+            is SettingsItem.Action -> item.titleRes
+            is SettingsItem.Info -> return false
+        }
+        return titleOf(res).lowercase().contains(q)
     }
 }

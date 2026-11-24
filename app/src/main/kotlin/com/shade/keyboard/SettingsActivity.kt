@@ -28,7 +28,6 @@ import android.view.Window
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -38,7 +37,13 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.core.view.AccessibilityDelegateCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.SimpleItemAnimator
 import androidx.lifecycle.lifecycleScope
 import com.shade.keyboard.gif.GifConfig
 import com.shade.keyboard.keypresseffect.PressEffectPlayer
@@ -48,6 +53,7 @@ import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -57,8 +63,8 @@ import java.util.Locale
 // Shade settings — "Noir" redesign.
 //
 // One pitch-black screen, white type, hairline dividers, no cards, no page
-// navigation: all sections are collapsible groups on a single list, and the
-// search field is always pinned at the top. Color rows open an HSV picker
+// navigation: all sections are collapsible groups on a single list that opens
+// fully collapsed, and a compact header with the search field stays pinned. Color rows open an HSV picker
 // sheet (saturation/brightness square + hue rail) built entirely in-project.
 //
 // All SharedPreferences keys and defaults match what ShadeService.applyPrefs()
@@ -117,9 +123,30 @@ class SettingsActivity : AppCompatActivity() {
         list = findViewById(R.id.noir_list)
         searchInput = findViewById(R.id.noir_search_input)
 
+        findViewById<TextView>(R.id.noir_header_version).apply {
+            val version = try {
+                packageManager.getPackageInfo(packageName, 0).versionName
+            } catch (t: Exception) { ShadeLog.w("SettingsActivity", "version lookup failed", t, once = true); null }
+            if (!version.isNullOrBlank()) {
+                text = "v$version"
+                visibility = View.VISIBLE
+            }
+        }
+
         adapter = SettingsAdapter(this, prefs)
+        savedInstanceState?.getIntArray(STATE_EXPANDED)?.let { adapter.setExpanded(it) }
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
+        // A header "change" animation cross-fades two copies of the row, which
+        // reads as a flicker when the chevron flips.
+        (list.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+
+        // The IME's search key used to do nothing, leaving the keyboard up.
+        searchInput.setOnEditorActionListener { v, _, _ ->
+            v.clearFocus()
+            WindowCompat.getInsetsController(window, v).hide(WindowInsetsCompat.Type.ime())
+            true
+        }
 
         searchInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -138,7 +165,31 @@ class SettingsActivity : AppCompatActivity() {
         adapter.rebuild()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Rotation recreates the activity; keep the sections the person opened.
+        outState.putIntArray(STATE_EXPANDED, adapter.expandedIds())
+    }
+
     private fun dp(v: Float): Float = v * resources.displayMetrics.density
+
+    /** Brings an expanded section's header to the top so its rows are in view. */
+    internal fun scrollRowToTop(position: Int) {
+        (list.layoutManager as? LinearLayoutManager)?.scrollToPositionWithOffset(position, 0)
+    }
+
+    private fun passphraseField(hintRes: Int) = EditText(this).apply {
+        hint = getString(hintRes)
+        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        setSingleLine(true)
+    }
+
+    /** AlertDialog.setView() puts the view edge to edge; give inputs the dialog's own gutters. */
+    private fun dialogBody(vararg fields: View): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(20f).toInt(), dp(8f).toInt(), dp(20f).toInt(), 0)
+        fields.forEach { addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
+    }
 
     // ── Backup / restore / update actions ─────────────────────────────────
 
@@ -185,15 +236,14 @@ class SettingsActivity : AppCompatActivity() {
 
     /** Asks for the backup passphrase, then runs Backup.export / Backup.import on IO. */
     private fun askBackupPassphrase(isExport: Boolean, uri: Uri) {
-        val input = EditText(this).apply {
-            hint = getString(R.string.backup_pass_hint)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setSingleLine(true)
-        }
+        val input = passphraseField(R.string.backup_pass_hint)
+        // A typo in the only passphrase makes the backup permanently unreadable,
+        // so exports ask twice.
+        val confirm = if (isExport) passphraseField(R.string.backup_pass_confirm_hint) else null
         val dialog = AlertDialog.Builder(this, R.style.ShadeDialogTheme)
             .setTitle(getString(if (isExport) R.string.backup_pass_title_export else R.string.backup_pass_title_import))
             .setMessage(getString(R.string.backup_pass_warning))
-            .setView(input)
+            .setView(if (confirm != null) dialogBody(input, confirm) else dialogBody(input))
             .setPositiveButton(android.R.string.ok, null)
             .setNegativeButton(android.R.string.cancel, null)
             .create()
@@ -202,6 +252,10 @@ class SettingsActivity : AppCompatActivity() {
                 val pass = input.text.toString()
                 if (isExport && pass.length < 8) {
                     Toast.makeText(this, R.string.backup_pass_short, Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                if (isExport && pass != confirm?.text?.toString()) {
+                    Toast.makeText(this, R.string.backup_pass_mismatch, Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
                 dialog.dismiss()
@@ -246,7 +300,7 @@ class SettingsActivity : AppCompatActivity() {
         val dialog = AlertDialog.Builder(this, R.style.ShadeDialogTheme)
             .setTitle(getString(R.string.pref_gif_api_key))
             .setMessage(getString(R.string.pref_gif_api_key_sum))
-            .setView(input)
+            .setView(dialogBody(input))
             .setPositiveButton(R.string.gif_key_save, null)
             .setNegativeButton(android.R.string.cancel, null)
             .create()
@@ -269,7 +323,7 @@ class SettingsActivity : AppCompatActivity() {
         AlertDialog.Builder(this, R.style.ShadeDialogTheme)
             .setTitle(getString(R.string.action_clear_learned))
             .setMessage(getString(R.string.action_clear_learned_sub))
-            .setPositiveButton(android.R.string.ok) { _, _ ->
+            .setPositiveButton(R.string.clear_confirm_button) { _, _ ->
                 lifecycleScope.launch(Dispatchers.IO) {
                     try {
                         LearningDataCleaner.clearAll(applicationContext)
@@ -279,7 +333,8 @@ class SettingsActivity : AppCompatActivity() {
                         java.io.File(applicationContext.filesDir, "ngram.json").delete()
                     } catch (e: Exception) { Log.w("SettingsActivity", "Failed to clear learned data", e) }
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@SettingsActivity, R.string.backup_done, Toast.LENGTH_SHORT).show()
+                        // Was R.string.backup_done ("Backup saved") — wrong message for a wipe.
+                        Toast.makeText(this@SettingsActivity, R.string.toast_learned_cleared, Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -287,8 +342,11 @@ class SettingsActivity : AppCompatActivity() {
             .show()
     }
 
+    private var updateCheck: Job? = null
+
     internal fun checkForUpdates() {
-        lifecycleScope.launch {
+        if (updateCheck?.isActive == true) return
+        updateCheck = lifecycleScope.launch {
             Updater.check(this@SettingsActivity)
             val info = Updater.available
             if (info != null) {
@@ -334,8 +392,9 @@ class SettingsActivity : AppCompatActivity() {
 
     /**
      * Resets colors and background: manual colors, design preset, key
-     * opacity, transparency and the whole photo frame go back to their
-     * defaults.
+     * opacity, transparency, the whole photo frame AND the photo itself go
+     * back to their defaults (the row's subtitle promises "image"; previously
+     * the picture stayed behind).
      */
     internal fun resetColorsAndBackground(prefs: SharedPreferences) {
         val keys = listOf(
@@ -344,7 +403,10 @@ class SettingsActivity : AppCompatActivity() {
             "photo_fit", "photo_zoom", "photo_width", "photo_height", "photo_x", "photo_y",
             "bg_dim", "bg_blur"
         )
-        prefs.edit().also { ed -> keys.forEach { ed.remove(it) } }.apply()
+        File(filesDir, PrefsApplier.BG_IMAGE_FILE).delete()
+        prefs.edit().also { ed -> keys.forEach { ed.remove(it) } }
+            .putLong(PrefsApplier.BG_VERSION_PREF, 0L)
+            .apply()
         Toast.makeText(this, R.string.toast_colors_reset, Toast.LENGTH_SHORT).show()
         adapter.rebuild()
     }
@@ -412,7 +474,7 @@ class SettingsActivity : AppCompatActivity() {
         val previewHex = view.findViewById<TextView>(R.id.picker_preview_hex)
         val picker = view.findViewById<ColorPickerView>(R.id.color_picker_view)
         val hexInput = view.findViewById<EditText>(R.id.picker_hex)
-        val presetsGrid = view.findViewById<GridLayout>(R.id.picker_presets)
+        val presets = view.findViewById<LinearLayout>(R.id.picker_presets)
         val btnReset = view.findViewById<TextView>(R.id.picker_reset)
 
         view.findViewById<TextView>(R.id.picker_title).text = getString(titleRes)
@@ -461,27 +523,25 @@ class SettingsActivity : AppCompatActivity() {
         })
         renderPreview()
 
-        // Preset grid: the auto color first, then monochrome anchors and a few
-        // useful hues for custom keyboard colors.
+        // One row of presets: the auto color first (so "back to default" is a
+        // single tap), then black → white. Anything else is one drag away on the
+        // picker itself, so the sheet carries no color swatches of its own.
         val palette = linkedSetOf(
             autoColor,
-            0xFF000000.toInt(), 0xFFFFFFFF.toInt(),
-            0xFF1C1C1E.toInt(), 0xFF2C2C2E.toInt(), 0xFF3C3C40.toInt(),
+            0xFF000000.toInt(), 0xFF1C1C1E.toInt(), 0xFF2C2C2E.toInt(),
             0xFF48484A.toInt(), 0xFF8E8E93.toInt(), 0xFFC7C7CC.toInt(),
-            0xFFEDEDED.toInt(),
-            0xFF8AB4F8.toInt(), 0xFF4285F4.toInt(), 0xFF7C4DFF.toInt(),
-            0xFF34A853.toInt(), 0xFFF9AB2B.toInt(), 0xFFF28B82.toInt()
+            0xFFFFFFFF.toInt()
         )
-        val cellPx = dp(40f).toInt()
-        val dotPx = dp(34f).toInt()
+        val dotPx = dp(28f).toInt()
+        val outline = getColor(R.color.noir_outline)
         for (c in palette) {
             val cell = FrameLayout(this)
-            cell.setPadding(dp(5f).toInt(), dp(5f).toInt(), dp(5f).toInt(), dp(5f).toInt())
+            cell.contentDescription = ColorMath.formatHex(c)
             val dot = View(this)
             dot.background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(c)
-                setStroke(dp(1f).toInt(), 0xFF2E2E2E.toInt())
+                setStroke(dp(1f).toInt(), outline)
             }
             cell.addView(dot, FrameLayout.LayoutParams(dotPx, dotPx, Gravity.CENTER))
             cell.setOnClickListener {
@@ -492,11 +552,8 @@ class SettingsActivity : AppCompatActivity() {
                 syncing = false
                 renderPreview()
             }
-            presetsGrid.addView(cell, GridLayout.LayoutParams().apply {
-                width = cellPx
-                height = cellPx
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-            })
+            // Weighted cells: eight fixed 40dp cells (320dp) overflowed phones narrower than 360dp.
+            presets.addView(cell, LinearLayout.LayoutParams(0, dp(40f).toInt(), 1f))
         }
 
         val dialog = Dialog(this)
@@ -507,6 +564,8 @@ class SettingsActivity : AppCompatActivity() {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.BOTTOM)
+            // Without this the keyboard covers the hex field this sheet exists for.
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             setWindowAnimations(R.style.SheetDialogAnimation)
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             attributes = attributes?.apply { dimAmount = 0.6f }
@@ -534,11 +593,16 @@ class SettingsActivity : AppCompatActivity() {
         }
         dialog.show()
     }
+
+    private companion object {
+        const val STATE_EXPANDED = "expanded_sections"
+    }
 }
 
 // ============================================================================
-// Adapter — one flat RecyclerView with a hero header, collapsible section
-// headers and child rows. Search swaps the whole list for matching items.
+// Adapter — one flat RecyclerView of collapsible section headers and child
+// rows. Every section starts collapsed, so the screen opens as a short index
+// instead of a 100-row wall; search swaps the whole list for matching items.
 // ============================================================================
 
 internal class SettingsAdapter(
@@ -547,14 +611,13 @@ internal class SettingsAdapter(
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private sealed class Row {
-        object Hero : Row()
         class Section(val def: SettingsCatalog.Section) : Row()
         class Child(val def: SettingsCatalog.Section, val item: SettingsItem, val isLast: Boolean) : Row()
         class Empty(val textRes: Int) : Row()
     }
 
     private val rows = ArrayList<Row>()
-    private val collapsed = HashSet<Int>()
+    private val collapsed = HashSet<Int>(SettingsCatalog.sections.map { it.id })
     private var searching = false
 
     internal val TYPE_SECTION = 0
@@ -564,7 +627,6 @@ internal class SettingsAdapter(
     internal val TYPE_CHOICE = 4
     internal val TYPE_COLOR = 5
     internal val TYPE_INFO = 6
-    internal val TYPE_HERO = 7
     internal val TYPE_EMPTY = 8
 
     init {
@@ -578,11 +640,10 @@ internal class SettingsAdapter(
         rows.clear()
         if (q.isEmpty()) {
             searching = false
-            rows.add(Row.Hero)
             appendCatalog()
         } else {
             searching = true
-            val results = SettingsCatalog.search(q)
+            val results = SettingsCatalog.search(q) { ctx.getString(it) }
             if (results.isEmpty()) {
                 rows.add(Row.Empty(R.string.info_no_results))
             } else {
@@ -601,7 +662,6 @@ internal class SettingsAdapter(
             applySearch(searchInputQuery())
             return
         }
-        rows.add(Row.Hero)
         appendCatalog()
         notifyDataSetChanged()
     }
@@ -649,6 +709,7 @@ internal class SettingsAdapter(
         rows.addAll(headerPos + 1, children)
         notifyItemRangeInserted(headerPos + 1, children.size)
         notifyItemChanged(headerPos)
+        ctx.scrollRowToTop(headerPos)
     }
 
     fun toggleSection(sectionId: Int) {
@@ -656,6 +717,18 @@ internal class SettingsAdapter(
     }
 
     fun isSectionCollapsed(sectionId: Int): Boolean = sectionId in collapsed
+
+    /** Ids of the sections currently open, for saving across rotation. */
+    fun expandedIds(): IntArray =
+        SettingsCatalog.sections.map { it.id }.filter { it !in collapsed }.toIntArray()
+
+    /** Restores [expandedIds]; every other section is collapsed. */
+    fun setExpanded(ids: IntArray) {
+        collapsed.clear()
+        collapsed.addAll(SettingsCatalog.sections.map { it.id })
+        ids.forEach { collapsed.remove(it) }
+        rebuild()
+    }
 
     /** The item rendered at [position], or null for structural rows. */
     internal fun itemAt(position: Int): SettingsItem? =
@@ -667,7 +740,6 @@ internal class SettingsAdapter(
     // ── RecyclerView plumbing ────────────────────────────────────────────
 
     override fun getItemViewType(position: Int): Int = when (val r = rows[position]) {
-        is Row.Hero -> TYPE_HERO
         is Row.Section -> TYPE_SECTION
         is Row.Empty -> TYPE_EMPTY
         is Row.Child -> when (r.item) {
@@ -685,7 +757,6 @@ internal class SettingsAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         val inf = LayoutInflater.from(ctx)
         return when (viewType) {
-            TYPE_HERO -> HeroVH(inf.inflate(R.layout.item_noir_hero, parent, false))
             TYPE_SECTION -> SectionVH(inf.inflate(R.layout.item_noir_section, parent, false))
             TYPE_TOGGLE -> ToggleVH(inf.inflate(R.layout.item_noir_toggle, parent, false))
             TYPE_SLIDER -> SliderVH(inf.inflate(R.layout.item_noir_slider, parent, false))
@@ -700,7 +771,6 @@ internal class SettingsAdapter(
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         when (val row = rows[position]) {
-            is Row.Hero -> (holder as HeroVH).bind()
             is Row.Section -> (holder as SectionVH).bind(row.def, row.def.id in collapsed) { id ->
                 toggleSection(id)
             }
@@ -718,24 +788,16 @@ internal class SettingsAdapter(
 
     // ── ViewHolders ──────────────────────────────────────────────────────
 
-    internal class HeroVH(v: View) : RecyclerView.ViewHolder(v) {
-        fun bind() {
-            val c = itemView.context
-            val sub = itemView.findViewById<TextView>(R.id.noir_hero_sub)
-            val version = try {
-                c.packageManager.getPackageInfo(c.packageName, 0).versionName
-            } catch (t: Exception) { ShadeLog.w("SettingsActivity", "version lookup failed", t, once = true); null }
-            sub.text = if (version.isNullOrBlank()) c.getString(R.string.settings_subtitle)
-            else "${c.getString(R.string.settings_subtitle)}  ·  v$version"
-        }
-    }
-
     internal class SectionVH(v: View) : RecyclerView.ViewHolder(v) {
         fun bind(def: SettingsCatalog.Section, isCollapsed: Boolean, onToggle: (Int) -> Unit) {
-            itemView.findViewById<TextView>(R.id.noir_section_title).text =
-                itemView.context.getString(def.titleRes)
-            val arrow = itemView.findViewById<View>(R.id.noir_section_arrow)
-            arrow.rotation = if (isCollapsed) 0f else 90f
+            val c = itemView.context
+            itemView.findViewById<TextView>(R.id.noir_section_title).text = c.getString(def.titleRes)
+            itemView.findViewById<View>(R.id.noir_section_arrow).rotation = if (isCollapsed) 0f else 90f
+            // TalkBack otherwise reads a header with no hint that it opens.
+            ViewCompat.setStateDescription(
+                itemView,
+                c.getString(if (isCollapsed) R.string.state_collapsed else R.string.state_expanded)
+            )
             itemView.setOnClickListener { onToggle(def.id) }
         }
     }
@@ -758,6 +820,16 @@ internal class SettingsAdapter(
                 prefs.edit().putBoolean(item.key, checked).apply()
             }
             itemView.setOnClickListener { sw.isChecked = !sw.isChecked }
+            // The switch itself is hidden from accessibility (the whole row is the
+            // target), so the row must announce itself as a switch with its state.
+            ViewCompat.setAccessibilityDelegate(itemView, object : AccessibilityDelegateCompat() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.className = "android.widget.Switch"
+                    info.isCheckable = true
+                    info.isChecked = sw.isChecked
+                }
+            })
             itemView.bindDivider(isLast)
         }
     }
@@ -787,6 +859,12 @@ internal class SettingsAdapter(
             val valueTv = itemView.findViewById<TextView>(R.id.noir_value)
             val slider = itemView.findViewById<Slider>(R.id.noir_slider)
 
+            // Detach the previous row's listeners FIRST: on a recycled holder,
+            // assigning the new value below would otherwise fire the old item's
+            // callbacks against this row.
+            slider.clearOnChangeListeners()
+            slider.clearOnSliderTouchListeners()
+
             slider.valueFrom = item.min.toFloat()
             slider.valueTo = item.max.toFloat()
             slider.stepSize = item.step.toFloat()
@@ -800,10 +878,7 @@ internal class SettingsAdapter(
             slider.value = aligned.toFloat()
             valueTv.text = labelFor(item, aligned, prefs.contains(item.key))
 
-            // Remove previous listeners to avoid stale callbacks on rebind.
-            slider.clearOnChangeListeners()
-            slider.clearOnSliderTouchListeners()
-
+            var touching = false
             slider.addOnChangeListener { _, value, fromUser ->
                 val v = value.toInt()
                 // Dragging the slider is by definition choosing a custom
@@ -814,10 +889,14 @@ internal class SettingsAdapter(
                     // immediately.
                     runCatching { PressEffectPlayer.get().playCustomVibration(v) }
                 }
+                // Touch drags save on release (below); a change that arrives with
+                // no touch — TalkBack/D-pad adjustments — used to be lost entirely.
+                if (fromUser && !touching) prefs.edit().putInt(item.key, v).apply()
             }
             slider.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) {}
+                override fun onStartTrackingTouch(slider: Slider) { touching = true }
                 override fun onStopTrackingTouch(slider: Slider) {
+                    touching = false
                     prefs.edit().putInt(item.key, slider.value.toInt()).apply()
                 }
             })
@@ -840,46 +919,98 @@ internal class SettingsAdapter(
     }
 
     internal class ChoiceVH(v: View) : RecyclerView.ViewHolder(v) {
+
+        private companion object {
+            /** Up to this many options fit side by side as a segmented control. */
+            const val SEGMENT_MAX = 3
+        }
+
         fun bind(item: SettingsItem.Choice, prefs: SharedPreferences, isLast: Boolean) {
             val c = itemView.context
             itemView.findViewById<TextView>(R.id.noir_title).text = c.getString(item.titleRes)
             val group = itemView.findViewById<MaterialButtonToggleGroup>(R.id.noir_group)
-            group.removeAllViews()
+            val valueTv = itemView.findViewById<TextView>(R.id.noir_choice_value)
+            val chevron = itemView.findViewById<View>(R.id.noir_choice_chevron)
+
+            // A stored value that is no longer an option (renamed/legacy pref)
+            // used to leave NOTHING selected; fall back to the default.
+            val current = prefs.getString(item.key, item.default)
+                ?.takeIf { v -> item.options.any { it.first == v } } ?: item.default
+
             group.clearOnButtonCheckedListeners()
+            group.removeAllViews()
+
+            if (item.options.size > SEGMENT_MAX) {
+                // Six theme names or seven design names cannot share one phone-wide
+                // row without wrapping mid-word: show the value, pick from a list.
+                group.visibility = View.GONE
+                valueTv.visibility = View.VISIBLE
+                chevron.visibility = View.VISIBLE
+                valueTv.text = labelOf(item, current)
+                itemView.isClickable = true
+                itemView.setOnClickListener {
+                    val saved = prefs.getString(item.key, item.default)
+                    val now = item.options.indexOfFirst { it.first == saved }.coerceAtLeast(0)
+                    val labels = item.options.map { c.getString(it.second) }.toTypedArray()
+                    AlertDialog.Builder(c, R.style.ShadeDialogTheme)
+                        .setTitle(c.getString(item.titleRes))
+                        .setSingleChoiceItems(labels, now) { dialog, which ->
+                            prefs.edit().putString(item.key, item.options[which].first).apply()
+                            valueTv.text = labels[which]
+                            dialog.dismiss()
+                        }
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show()
+                }
+            } else {
+                valueTv.visibility = View.GONE
+                chevron.visibility = View.GONE
+                group.visibility = View.VISIBLE
+                itemView.setOnClickListener(null)
+                itemView.isClickable = false
+                bindSegments(item, prefs, group, current)
+            }
+            itemView.bindDivider(isLast)
+        }
+
+        private fun labelOf(item: SettingsItem.Choice, value: String): String {
+            val res = item.options.firstOrNull { it.first == value }?.second ?: item.options.first().second
+            return itemView.context.getString(res)
+        }
+
+        private fun bindSegments(
+            item: SettingsItem.Choice, prefs: SharedPreferences,
+            group: MaterialButtonToggleGroup, current: String
+        ) {
+            val c = itemView.context
             // singleSelection is FALSE by default in Material 1.12: without this, tapping a new
             // option leaves the old one checked, and tapping the checked one deselects it.
             group.isSingleSelection = true
             group.isSelectionRequired = true
 
-            val current = prefs.getString(item.key, item.default)
-            var checkedId = View.NO_ID
+            val white = c.getColor(R.color.noir_text)
+            val black = c.getColor(R.color.noir_on_button)
+            val checkedState = intArrayOf(android.R.attr.state_checked)
             item.options.forEach { (value, labelRes) ->
                 val btn = MaterialButton(c, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
                     text = c.getString(labelRes)
                     id = View.generateViewId()
                     isAllCaps = false
+                    maxLines = 1
                     textSize = 14f
                     stateListAnimator = null
                     insetTop = 0
                     insetBottom = 0
                     strokeWidth = c.dp(1f).toInt()
-                    strokeColor = ColorStateList.valueOf(0xFF2E2E2E.toInt())
-                    rippleColor = ColorStateList.valueOf(0x33FFFFFF.toInt())
+                    strokeColor = ColorStateList.valueOf(c.getColor(R.color.noir_outline))
+                    rippleColor = ColorStateList.valueOf(c.getColor(R.color.noir_ripple))
                     backgroundTintList = ColorStateList(
-                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                        intArrayOf(0xFFFFFFFF.toInt(), 0x00000000)
+                        arrayOf(checkedState, intArrayOf()),
+                        intArrayOf(white, Color.TRANSPARENT)
                     )
-                    setTextColor(
-                        ColorStateList(
-                            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                            intArrayOf(0xFF000000.toInt(), 0xFFFFFFFF.toInt())
-                        )
-                    )
+                    setTextColor(ColorStateList(arrayOf(checkedState, intArrayOf()), intArrayOf(black, white)))
                     minimumHeight = c.dp(44f).toInt()
-                    if (value == current) {
-                        isChecked = true
-                        checkedId = id
-                    }
+                    if (value == current) isChecked = true
                 }
                 group.addView(btn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             }
@@ -887,12 +1018,10 @@ internal class SettingsAdapter(
                 if (isChecked) {
                     val idx = g.indexOfChild(g.findViewById(checkedId))
                     if (idx in item.options.indices) {
-                        val (value, _) = item.options[idx]
-                        prefs.edit().putString(item.key, value).apply()
+                        prefs.edit().putString(item.key, item.options[idx].first).apply()
                     }
                 }
             }
-            itemView.bindDivider(isLast)
         }
     }
 
@@ -915,7 +1044,7 @@ internal class SettingsAdapter(
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = c.dp(8f)
                 setColor(shown)
-                setStroke(c.dp(1f).toInt(), 0xFF2E2E2E.toInt())
+                setStroke(c.dp(1f).toInt(), c.getColor(R.color.noir_outline))
             }
             itemView.setOnClickListener {
                 (c as? SettingsActivity)?.showColorPicker(item.key, item.titleRes, item.autoColor)

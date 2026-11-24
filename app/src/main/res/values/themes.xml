@@ -88,13 +88,29 @@
         <item name="android:statusBarColor">@color/noir_background</item>
         <item name="android:navigationBarColor">@color/noir_background</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowBackground">@color/noir_background</item>
         <item name="colorControlNormal">@color/noir_control_normal</item>
         <item name="colorControlActivated">@color/noir_text</item>
         <item name="colorControlHighlight">#22FFFFFF</item>
         <!-- MaterialSwitch + Slider + MaterialButtonToggleGroup use these -->
         <item name="materialSwitchStyle">@style/Widget.Material3.CompoundButton.Switch</item>
-        <item name="sliderStyle">@style/Widget.Material3.Slider</item>
+        <item name="sliderStyle">@style/Widget.Noir.Slider</item>
+    </style>
+
+    <!-- Minimal slider: 2dp white track, small thumb, no tick marks (a stepped
+         Material slider otherwise draws one dot per step — up to 100 of them)
+         and no value bubble (the row already shows the live value). -->
+    <style name="Widget.Noir.Slider" parent="Widget.Material3.Slider">
+        <item name="tickVisible">false</item>
+        <item name="labelBehavior">gone</item>
+        <item name="trackHeight">2dp</item>
+        <item name="thumbRadius">7dp</item>
+        <item name="haloRadius">18dp</item>
+        <item name="thumbColor">@color/noir_text</item>
+        <item name="trackColorActive">@color/noir_text</item>
+        <item name="trackColorInactive">@color/noir_track</item>
+        <item name="haloColor">@color/noir_ripple</item>
     </style>
 
     <!-- Slide-up/down window animation for the color picker sheet. -->

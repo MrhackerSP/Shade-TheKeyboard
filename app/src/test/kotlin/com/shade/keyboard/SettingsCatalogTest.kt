@@ -23,20 +23,39 @@ class SettingsCatalogTest {
     // ── Structure ────────────────────────────────────────────────────────
 
     @Test
-    fun sections_areFiveWithUniqueIds() {
-        assertEquals(5, SettingsCatalog.sections.size)
+    fun sections_haveUniqueIds_inDisplayOrder() {
         val ids = SettingsCatalog.sections.map { it.id }
         assertEquals(ids.size, ids.toSet().size)
         assertEquals(
             listOf(
                 SettingsCatalog.SECTION_APPEARANCE,
+                SettingsCatalog.SECTION_COLORS,
+                SettingsCatalog.SECTION_BACKGROUND,
+                SettingsCatalog.SECTION_LAYOUT,
                 SettingsCatalog.SECTION_TYPING,
-                SettingsCatalog.SECTION_LANGUAGES,
+                SettingsCatalog.SECTION_FEEDBACK,
+                SettingsCatalog.SECTION_MEDIA,
+                SettingsCatalog.SECTION_LEARNING,
                 SettingsCatalog.SECTION_BACKUP,
                 SettingsCatalog.SECTION_ABOUT
             ),
             ids
         )
+    }
+
+    @Test
+    fun noSectionIsAWall() {
+        // The old Appearance section held 31 rows. Keep every group scannable.
+        for (s in SettingsCatalog.sections) {
+            assertTrue("section ${s.id} has ${s.items.size} rows", s.items.size <= 14)
+        }
+    }
+
+    @Test
+    fun longChoices_areTheOnesThatNeedAPicker() {
+        // >3 options render as a value row + dialog; ≤3 as a segmented control.
+        val long = choices.filter { it.options.size > 3 }.map { it.key }.toSet()
+        assertEquals(setOf("theme", "design"), long)
     }
 
     @Test
@@ -234,6 +253,29 @@ class SettingsCatalogTest {
         val colorKeys = results.filterIsInstance<SettingsItem.Color>().map { it.key }
         assertEquals(setOf("color_bg", "color_key", "color_keyfn", "color_text", "color_accent"),
             colorKeys.toSet())
+    }
+
+    @Test
+    fun search_singleLetter_onlyMatchesKeywordPrefixes() {
+        val hits = SettingsCatalog.search("a")
+        assertTrue(hits.isNotEmpty())
+        assertTrue(hits.all { item -> item.keywords.any { it.startsWith("a") } })
+    }
+
+    @Test
+    fun search_shortKeywordsDoNotMatchInsideLongerWords() {
+        // "ai" is a keyword of the neural toggle; "fair" must not find it.
+        val hits = SettingsCatalog.search("fair")
+        assertTrue(hits.none { it is SettingsItem.Toggle && it.key == "neural_predictions" })
+    }
+
+    @Test
+    fun search_matchesVisibleTitles_whenAResolverIsSupplied() {
+        val titles = { res: Int -> if (res == R.string.pref_autocorrect) "Zebra title" else "" }
+        val hits = SettingsCatalog.search("zebra", titles)
+        assertEquals(1, hits.size)
+        assertTrue(hits[0] is SettingsItem.Toggle && (hits[0] as SettingsItem.Toggle).key == "autocorrect")
+        assertTrue(SettingsCatalog.search("zebra").isEmpty())
     }
 
     @Test

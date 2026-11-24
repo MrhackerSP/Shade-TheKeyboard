@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Shade settings — Noir redesign.
-  Pitch-black canvas, white type, hairline dividers. A pinned search field on
-  top and one flat RecyclerView below: hero title, collapsible section headers
-  and setting rows. No cards, no icons, no page navigation.
+  Shade settings — Noir.
+  Pitch-black canvas, white type, hairline dividers. A compact pinned header
+  (title + version, then search) above one flat RecyclerView of collapsible
+  sections. No cards, no icons, no page navigation.
 -->
 <!-- Explicit background: keeps the noir surface color behind translucent system bars. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools" tools:ignore="Overdraw"
@@ -13,17 +13,48 @@
     android:background="@color/noir_background"
     android:fitsSystemWindows="true">
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="4dp">
+
+        <TextView
+            android:id="@+id/noir_header_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/settings_title"
+            android:textColor="@color/noir_text"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/noir_header_version"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:textColor="@color/noir_text_tertiary"
+            android:textSize="12sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
     <EditText
         android:id="@+id/noir_search_input"
         android:layout_width="match_parent"
-        android:layout_height="54dp"
+        android:layout_height="44dp"
         android:layout_marginHorizontal="16dp"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="8dp"
         android:layout_marginBottom="8dp"
         android:background="@drawable/bg_noir_search"
         android:drawableStart="@drawable/ic_search"
-        android:drawablePadding="12dp"
-        android:paddingHorizontal="18dp"
+        android:drawableTint="@color/noir_text_tertiary"
+        android:drawablePadding="10dp"
+        android:paddingHorizontal="14dp"
         android:hint="@string/settings_search_hint"
         android:textColorHint="@color/noir_text_tertiary"
         android:textColor="@color/noir_text"
@@ -33,11 +64,6 @@
         android:maxLines="1"
         android:singleLine="true"
         android:importantForAutofill="no" />
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@color/noir_divider" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/noir_list"
