@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android:windowLightNavigationBar is an API 27 attribute while minSdk is
+     26, and lintDebug runs with abortOnError, so it lives in this -v27
+     overlay instead of the base ShadeSettings theme. On API 26 the default
+     (false) already draws light icons on the black navigation bar. -->
+<resources>
+    <style name="ShadeSettings" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

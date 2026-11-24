@@ -88,7 +88,6 @@
         <item name="android:statusBarColor">@color/noir_background</item>
         <item name="android:navigationBarColor">@color/noir_background</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowBackground">@color/noir_background</item>
         <item name="colorControlNormal">@color/noir_control_normal</item>
         <item name="colorControlActivated">@color/noir_text</item>
