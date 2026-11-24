@@ -405,7 +405,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         super.onCreate()
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         PrefsMigration.run(prefs)
-        // Gboard press-effect engine (vibration + key press sound). Installs
+        // Press-effect engine (vibration + key press sound). Installs
         // the global PressEffectPlayer before any keyboard view can be built.
         PressEffectModule.onCreate(this, prefs)
         // Runtime GIF API key (GIF panel setup card) overrides the build-time key.

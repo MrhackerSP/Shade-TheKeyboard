@@ -162,8 +162,8 @@
     <string name="translator_enter_hint">Press ⏎ to insert the translation</string>
     <string name="pref_translator">Translator</string>
     <string name="pref_gif">GIF search (online)</string>
-    <string name="pref_gif_api_key">GIF API key (Klipy)</string>
-    <string name="pref_gif_api_key_sum">Paste your free Klipy API key for GIF search — leave empty to use the built-in key. The key stays on this device.</string>
+    <string name="pref_gif_api_key">GIF API key</string>
+    <string name="pref_gif_api_key_sum">Paste your free GIF API key — leave empty to use the built-in key. The key stays on this device.</string>
 
     <!-- Onboarding -->
     <string name="try_keyboard">Try the keyboard</string>
@@ -216,15 +216,15 @@
     <string name="color_theme_switched">Theme switched to Custom so colors apply</string>
     <string name="theme_custom">Custom</string>
 
-    <!-- Colors & background (Expressive port) -->
+    <!-- Colors & background -->
     <string name="pref_design">Design</string>
     <string name="design_default">Default</string>
     <string name="design_classic">Classic</string>
     <string name="design_glass">Liquid Glass</string>
     <string name="design_neon">Neon</string>
     <string name="design_neumorph">Neumorphism</string>
-    <string name="design_samsung">Samsung One UI</string>
-    <string name="design_nothing">Nothing</string>
+    <string name="design_rounded">Rounded</string>
+    <string name="design_dot">Dot matrix</string>
     <string name="pref_key_opacity">Key opacity</string>
     <string name="pref_bg_transparency">Background transparency</string>
     <string name="action_bg_pick">Choose background image</string>

@@ -87,7 +87,7 @@ class SettingsCatalogTest {
             choices.first { it.key == "one_handed" }.options.map { it.first }.toSet())
         assertEquals(setOf("off", "landscape", "always"),
             choices.first { it.key == "split_keyboard" }.options.map { it.first }.toSet())
-        // Gboard's VibrationDurationPreference replaced the old haptic_strength
+        // The vibration-strength slider replaced the old haptic_strength
         // selector: 0-100 slider, default 50, step 1.
         val vib = sliders.first { it.key == "vibration_duration" }
         assertEquals(0, vib.min)
@@ -179,7 +179,7 @@ class SettingsCatalogTest {
         assertEquals(300, sliderDefault("longpress_delay"))       // getInt("longpress_delay", 300)
         assertEquals(350, sliderDefault("repeat_delay"))          // getInt("repeat_delay", 350)
         assertEquals(40, sliderDefault("repeat_interval"))        // getInt("repeat_interval", 40)
-        // Colors & background (Expressive port) — PrefsApplier.applyPrefs().
+        // Colors & background — PrefsApplier.applyPrefs().
         assertEquals(100, sliderDefault("key_opacity"))           // getInt("key_opacity", 100)
         assertEquals(0, sliderDefault("bg_transparency"))         // getInt("bg_transparency", 0)
         assertEquals(100, sliderDefault("photo_zoom"))            // getInt("photo_zoom", 100)
@@ -216,8 +216,8 @@ class SettingsCatalogTest {
         val stats = SettingsCatalog.search("analytics")
         assertTrue(stats.isNotEmpty())
 
-        val klipy = SettingsCatalog.search("klipy")
-        assertTrue(klipy.any { it is SettingsItem.Action })
+        val gifKey = SettingsCatalog.search("gif")
+        assertTrue(gifKey.any { it is SettingsItem.Action })
     }
 
     @Test

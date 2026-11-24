@@ -99,12 +99,12 @@ object SettingsCatalog {
                     "glass" to R.string.design_glass,
                     "neon" to R.string.design_neon,
                     "neumorph" to R.string.design_neumorph,
-                    "samsung" to R.string.design_samsung,
-                    "nothing" to R.string.design_nothing
+                    "rounded" to R.string.design_rounded,
+                    "dot" to R.string.design_dot
                 ),
                 default = "",
                 keywords = listOf("design", "style", "preset", "skin", "classic", "glass",
-                    "neon", "neumorphism", "samsung", "nothing", "look")
+                    "neon", "neumorphism", "rounded", "dot", "look")
             ),
             SettingsItem.Color(
                 "color_bg", R.string.color_bg, 0xFF1C1C1E.toInt(),
@@ -228,7 +228,7 @@ object SettingsCatalog {
                 listOf("trackpad", "cursor", "space bar")),
             SettingsItem.Toggle("haptic", R.string.pref_haptic, 0, true,
                 listOf("haptic", "vibrate", "vibration", "feedback")),
-            // Gboard's VibrationDurationPreference: 0-100 slider. The same
+            // Vibration strength: 0-100 slider. The same
             // value is a duration in ms on legacy devices and a strength
             // percentage on haptic-primitive hardware; the label switches
             // accordingly (SliderVH renders it through the engine).
@@ -255,7 +255,7 @@ object SettingsCatalog {
             SettingsItem.Toggle("gif_enabled", R.string.pref_gif, 0, true,
                 listOf("gif", "sticker", "animated")),
             SettingsItem.Action(R.string.pref_gif_api_key, R.string.pref_gif_api_key_sum,
-                listOf("gif", "api", "key", "klipy", "giphy", "tenor", "sticker", "token")) { ctx, prefs ->
+                listOf("gif", "api", "key", "token", "sticker")) { ctx, prefs ->
                 (ctx as? SettingsActivity)?.showGifApiKeyDialog(prefs)
             },
             SettingsItem.Toggle("translator_enabled", R.string.pref_translator, 0, true,

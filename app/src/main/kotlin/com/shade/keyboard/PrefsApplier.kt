@@ -112,7 +112,7 @@ internal class PrefsApplier(private val svc: ShadeService) {
     companion object {
         /** The picked background photo, written atomically by SettingsActivity. */
         internal const val BG_IMAGE_FILE = "keyboard_background.jpg"
-        /** Pre-Expressive-port background file name (adopted once, then ignored). */
+        /** Pre-port legacy background file name (adopted once, then ignored). */
         internal const val LEGACY_BG_FILE = "bg.jpg"
         /** Timestamp pref bumping whenever the background image changes; 0 = none. */
         internal const val BG_VERSION_PREF = "bg_image_version"
@@ -189,14 +189,14 @@ internal class PrefsApplier(private val svc: ShadeService) {
         kb.keyBorders = prefs.getBoolean("key_borders", true)
         kb.showHints = prefs.getBoolean("show_hints", true)
         kb.haptic = prefs.getBoolean("haptic", true)
-        // Gboard press-effect pipeline: the engine reads "haptic" / "sound" /
+        // Press-effect pipeline: the engine reads "haptic" / "sound" /
         // "vibration_duration" itself (and listens for pref changes live), so
         // no strength seeding happens here — the slider's default state is the
         // engine's "System default" (the OS keyboard tap).
         kb.showPreview = prefs.getBoolean("popup_preview", true)
         kb.bgBitmap = bgBmp
 
-        // Expressive "Colors & background" port: background image placement,
+        // "Colors & background": background image placement,
         // dim, key opacity and the see-through sheet.
         kb.bgFit = when (prefs.getString("photo_fit", "cover")) {
             "fit" -> BackgroundMath.Fit.FIT
@@ -251,7 +251,7 @@ internal class PrefsApplier(private val svc: ShadeService) {
     }}
 
     internal fun loadBackground() { with(svc) {
-        // Expressive-style versioned background image: the settings screen
+        // Versioned background image: the settings screen
         // writes filesDir/keyboard_background.jpg atomically and stamps
         // `bg_image_version` with a timestamp; the cache here invalidates on
         // version change (the old lastModified stamp needed a file probe on
@@ -278,7 +278,7 @@ internal class PrefsApplier(private val svc: ShadeService) {
                 inSampleSize = BackgroundMath.decodeSampleSize(o.outWidth, o.outHeight)
             }
             var bmp: Bitmap? = BitmapFactory.decodeFile(f.path, o2)
-            // Expressive blurs the photo layer on the GPU (API 31+); bake the
+            // The photo layer can be blurred on the GPU (API 31+); bake the
             // blur into the bitmap instead — it only recomputes when the
             // image or the slider changes.
             val blur = prefs.getInt("bg_blur", 0)
@@ -288,10 +288,10 @@ internal class PrefsApplier(private val svc: ShadeService) {
         } catch (t: Exception) { ShadeLog.w("ShadeService", "background image decode failed", t, once = true); bgBmp = null }
     }}
 
-    /** CPU box blur over the decoded pixels (Expressive's photo blur knob). */
+    /** CPU box blur over the decoded pixels (the photo blur knob). */
     private fun blurBitmap(bmp: Bitmap, blurDp: Int): Bitmap? = try {
         val screenW = svc.resources.displayMetrics.widthPixels.coerceAtLeast(1)
-        // Expressive applies the blur at view scale (dp); approximate the
+        // The blur applies at view scale (dp); approximate the
         // same visual strength by scaling the radius to the bitmap's width.
         val radius = ((blurDp.toFloat() * svc.resources.displayMetrics.density) *
             bmp.width.toFloat() / screenW).toInt().coerceIn(1, 24)

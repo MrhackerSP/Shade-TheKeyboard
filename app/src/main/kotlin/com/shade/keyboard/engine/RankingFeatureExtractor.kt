@@ -2,23 +2,22 @@ package com.shade.keyboard.engine
 
 /**
  * Builds the 83-float input vector for `ranking/ranker_en.tflite` in the model's
- * REAL input contract. The asset is a byte-level re-serialization of the Gboard
- * d3 neural suggestion model carved out of `main_en_us_d3.dict`; its flatbuffer
- * was decoded op-by-op (all 160 weight tensors extracted, an exact numpy
- * reimplementation built as oracle, LiteRT outputs reproduced) to pin the
- * contract below. Every claim here is numerically verified against the
- * on-device file.
+ * REAL input contract. The asset is a byte-level re-serialization of the bundled
+ * neural suggestion model; its flatbuffer was decoded op-by-op (all 160 weight
+ * tensors extracted, an exact numpy reimplementation built as oracle, LiteRT
+ * outputs reproduced) to pin the contract below. Every claim here is
+ * numerically verified against the on-device file.
  *
  * Contract (positions 0..82):
  *
  * | positions  | meaning |
  * |------------|---------|
- * | `x[0:51]`  | 51 scalar decoder features, z-scored in-model per position `v' = (v − mean)/std`. Shade cannot reproduce Gboard's internal decoder state, so every z-scored position is filled with the documented **population mean** — in-model z-score becomes 0, the statistically neutral value. Feeding raw zeros instead parks the network at −4σ off-center (positions 33/34) and it collapses into its all-zero no-op zone; mean-imputation keeps it live (verified: outputs 0.35–0.76 varying with input). |
- * | `x[46]`,`x[47]` | user-history n-gram counts, **raw** — the model applies `log(v+1)` itself, so inputs must be ≥ 0. Wired to Shade's persistent user unigram count (`UserWordMemory.count`) and session bigram count (`SessionBigramBoost.bigramCount`), capped at 100 (`log(101) ≈ 4.6` covers the meaningful range; Gboard's own distribution sits around mean ≈ 0.01–0.09 after log). |
+ * | `x[0:51]`  | 51 scalar decoder features, z-scored in-model per position `v' = (v − mean)/std`. Shade cannot reproduce the source model's internal decoder state, so every z-scored position is filled with the documented **population mean** — in-model z-score becomes 0, the statistically neutral value. Feeding raw zeros instead parks the network at −4σ off-center (positions 33/34) and it collapses into its all-zero no-op zone; mean-imputation keeps it live (verified: outputs 0.35–0.76 varying with input). |
+ * | `x[46]`,`x[47]` | user-history n-gram counts, **raw** — the model applies `log(v+1)` itself, so inputs must be ≥ 0. Wired to Shade's persistent user unigram count (`UserWordMemory.count`) and session bigram count (`SessionBigramBoost.bigramCount`), capped at 100 (`log(101) ≈ 4.6` covers the meaningful range). |
  * | `x[51]`    | row id 0..14 into a 15×8 embedding (small categorical, exact meaning unknown) → 0. |
  * | `x[52:67]` | **char sequence A** = candidate text, raw ASCII codes as floats, `0` = padding, 15 slots. Codes are restricted to the char-embedding's 123 rows (0..122 = ASCII 0..'z'); anything else (accents, Cyrillic, emoji) is dropped rather than indexed out of the table. |
  * | `x[67:82]` | **char sequence B** = the typed word, same encoding. Feeding the real typed word keeps the model in its two-sequence regime (its designed mode); with zero scalars that regime scored 0, but with mean-imputed scalars it stays live. |
- * | `x[82]`    | top-candidate type code 0..33 (Gboard TopCandidateType enum; only **13** is behaviorally verified — the model suppresses it by design). Shade word candidates map to 0. |
+ * | `x[82]`    | top-candidate type code 0..33 (the source model's TopCandidateType enum; only **13** is behaviorally verified — the model suppresses it by design). Shade word candidates map to 0. |
  *
  * Model output semantics (confirmed numerically against LiteRT and an exact
  * numpy reimplementation):
@@ -51,7 +50,7 @@ object RankingFeatureExtractor {
     /** Raw-count cap fed to x[46]/x[47]; the model log-compresses internally. */
     const val COUNT_CAP = 100
 
-    /** Gboard TopCandidateType enum codes. Only 13 is verified (suppressed). */
+    /** TopCandidateType enum codes from the source model. Only 13 is verified (suppressed). */
     const val TYPE_CODE_MAX = 33
     const val TYPE_WORD = 0
     const val TYPE_SUPPRESSED = 13

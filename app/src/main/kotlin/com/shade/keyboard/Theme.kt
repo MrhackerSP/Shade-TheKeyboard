@@ -8,8 +8,8 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 
 // KbTheme now lives in ThemeEngine.kt (pure Kotlin, unit-tested on the JVM)
-// together with the design presets and the manual-color override layer ported
-// from Expressive-Keyboard's "Colors & background".
+// together with the design presets and the manual-color override layer
+// ("Colors & background").
 
 object Themes {
     val LIGHT = KbTheme(
@@ -25,9 +25,9 @@ object Themes {
     )
 
     /**
-     * Dark theme tuned to match modern keyboard's contrast on a modern Pixel:
-     * keys are noticeably lighter than the keyboard background so they
-     * read as distinct surfaces, matching the reference screenshot.
+     * Dark theme tuned for modern high-contrast keyboards: keys are
+     * noticeably lighter than the keyboard background so they read as
+     * distinct surfaces, matching the reference screenshot.
      */
     val DARK = KbTheme(
         bg = 0xFF1C1C1E.toInt(),
@@ -64,7 +64,7 @@ object Themes {
     }
 
     /**
-     * Resolution order (Expressive's "Colors & background" model):
+     * Resolution order (the "Colors & background" model):
      *
      *  1. Design preset (`design` pref) — replaces the palette outright.
      *  2. The theme selector — system/light/dark/amoled/material(-you).

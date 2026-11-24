@@ -1,26 +1,22 @@
 package com.shade.keyboard
 
 /**
- * Theme engine ported from Expressive-Keyboard's "Colors & background"
- * (SettingsAppearance.kt / ThemeOptions.kt / Design.kt, v11.2.6, commit
- * 727393a), adapted to Shade's View-based renderer.
+ * Theme engine — a two-layer "Colors & background" model adapted to Shade's
+ * View-based renderer.
  *
- * Two layers, in Expressive's order:
+ * Two layers:
  *
  *  1. [DesignPresets] — one-tap full-keyboard designs (Classic, Liquid Glass,
- *     Neon, Neumorphism, Samsung One UI, Nothing). Colors are the ones
- *     Expressive ships in `assets/plugins` JSON skins + `Design.kt`; glass keys
- *     keep Expressive's translucent fills because Shade's renderer draws them
- *     straight onto the canvas. A preset REPLACES the palette from the theme
- *     selector (theme choice stays untouched and keeps Material You working
- *     when no preset is picked).
+ *     Neon, Neumorphism, Rounded, Dot). Glass keys keep translucent fills
+ *     because Shade's renderer draws them straight onto the canvas. A preset
+ *     REPLACES the palette from the theme selector (theme choice stays
+ *     untouched and keeps Material You working when no preset is picked).
  *
- *  2. [ThemeOverrides] — manual per-slot colors on top of ANY theme. This is
- *     Expressive's model ("theme colors are only overridden where the theme
- *     does not set them"): every override is optional and falls back to the
- *     active base, so picking one color no longer forces Shade's legacy
- *     "custom" theme. Unset text over a manually overridden key color
- *     auto-derives a readable on-color (Expressive's `contentColorFor`),
+ *  2. [ThemeOverrides] — manual per-slot colors on top of ANY theme. The model:
+ *     "theme colors are only overridden where the theme does not set them":
+ *     every override is optional and falls back to the active base, so picking
+ *     one color no longer forces Shade's legacy "custom" theme. Unset text
+ *     over a manually overridden key color auto-derives a readable on-color,
  *     which the legacy custom() never did.
  *
  * This file is deliberately pure Kotlin (no android.* imports) so the whole
@@ -41,7 +37,7 @@ data class KbTheme(
 )
 
 /**
- * Manual color overrides — Expressive's `color_*` rows. `null` = "auto",
+ * Manual color overrides — the `color_*` rows. `null` = "auto",
  * i.e. keep the base theme's slot. Built by Theme.kt from the prefs.
  */
 data class ThemeOverrides(
@@ -54,8 +50,8 @@ data class ThemeOverrides(
     val isEmpty: Boolean get() = bg == null && key == null && keyFn == null && text == null && accent == null
 
     /**
-     * Layers these manual overrides onto any base palette (Expressive
-     * semantics: every slot is optional and falls back to the base).
+     * Layers these manual overrides onto any base palette (every slot is
+     * optional and falls back to the base).
      *
      * Whenever at least one override is present, the four derived slots are
      * recomputed from the final five core slots — the exact derivation the
@@ -63,8 +59,8 @@ data class ThemeOverrides(
      * colors after this port:
      *  - pressed = blend(key, accent, 0.35)
      *  - hint    = text @ 0x99 alpha
-     *  - accentText = contrast-derived from accent (Expressive's
-     *    contentColorFor, via ColorMath.contrastTextColor)
+     *  - accentText = contrast-derived from accent
+     *    (via ColorMath.contrastTextColor)
      *  - popupBg = key
      * An empty override set is an identity (the base palette comes through
      * untouched, hand-tuned pressed/hint/accentText included).
@@ -95,7 +91,7 @@ data class ThemeOverrides(
 /**
  * A one-tap design preset. [dark] colors are used in night mode when present;
  * when null the design is mode-independent (Neon ships one palette for both
- * modes in Expressive too).
+ * modes).
  */
 data class DesignPreset(
     val id: String,
@@ -119,12 +115,9 @@ object DesignPresets {
     )
 
     /**
-     * The presets, in catalog order. Colors traced from Expressive v11.2.6:
-     * classic/neumorph/samsung/nothing/glass from the `assets/plugins` JSON skins
-     * `skin.colors` / `skin.dark.colors`; glass translucency from Design.kt's
-     * mini preview (keys white 60% / func white 40% in light, 22% / 12% in
-     * dark over the flat glass background); neon from `neon.json` (single
-     * palette, no dark variant).
+     * The presets, in catalog order. Glass translucency: keys white 60% /
+     * func white 40% in light, 22% / 12% in dark over the flat glass
+     * background; neon is a single palette with no dark variant.
      */
     val ALL: List<DesignPreset> = listOf(
         DesignPreset(
@@ -148,12 +141,12 @@ object DesignPresets {
             palette(0xFF262A32.toInt(), 0xFF262A32.toInt(), 0xFF262A32.toInt(), 0xFFDDE2EC.toInt(), 0xFF7C8EFF.toInt())
         ),
         DesignPreset(
-            "samsung",
+            "rounded",
             palette(0xFFECECEF.toInt(), 0xFFFFFFFF.toInt(), 0xFFDCDCE2.toInt(), 0xFF111111.toInt(), 0xFF3E91FF.toInt()),
             palette(0xFF101012.toInt(), 0xFF2B2B2E.toInt(), 0xFF202022.toInt(), 0xFFF2F2F2.toInt(), 0xFF3E91FF.toInt())
         ),
         DesignPreset(
-            "nothing",
+            "dot",
             palette(0xFFF2F2F2.toInt(), 0xFFFFFFFF.toInt(), 0xFFE4E4E4.toInt(), 0xFF000000.toInt(), 0xFFD71921.toInt()),
             palette(0xFF000000.toInt(), 0xFF121212.toInt(), 0xFF1D1D1D.toInt(), 0xFFFFFFFF.toInt(), 0xFFD71921.toInt())
         )

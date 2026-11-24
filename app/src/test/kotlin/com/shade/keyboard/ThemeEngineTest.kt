@@ -8,8 +8,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Pure-JVM tests for the theme engine ported from Expressive-Keyboard's
- * "Colors & background" (DesignPresets + ThemeOverrides).
+ * Pure-JVM tests for the theme engine's "Colors & background" layers
+ * (DesignPresets + ThemeOverrides).
  *
  * Pinned color vectors were computed independently in Python (the same
  * round-half-up arithmetic androidx ColorUtils.blendARGB documents), not by
@@ -22,7 +22,7 @@ class ThemeEngineTest {
     @Test
     fun presets_haveStableIds() {
         assertEquals(
-            listOf("classic", "glass", "neon", "neumorph", "samsung", "nothing"),
+            listOf("classic", "glass", "neon", "neumorph", "rounded", "dot"),
             DesignPresets.ALL.map { it.id }
         )
         assertEquals(DesignPresets.ALL.size, DesignPresets.IDS.toSet().size)
@@ -37,7 +37,7 @@ class ThemeEngineTest {
     }
 
     @Test
-    fun classic_matchesExpressivePalettes() {
+    fun classic_matchesPinnedPalettes() {
         val light = DesignPresets.resolve("classic", night = false)!!
         assertEquals(0xFFD1D4DA.toInt(), light.bg)
         assertEquals(0xFFFFFFFF.toInt(), light.key)
@@ -60,7 +60,7 @@ class ThemeEngineTest {
     @Test
     fun glass_keysAreTranslucent() {
         val light = DesignPresets.resolve("glass", night = false)!!
-        assertEquals(0x99FFFFFF.toInt(), light.key)  // Expressive mini preview: 60% white
+        assertEquals(0x99FFFFFF.toInt(), light.key)  // 60% white
         assertEquals(0x66FFFFFF.toInt(), light.keyFn) // 40% white
         assertEquals(0xFFE6EAF2.toInt(), light.bg)
         assertEquals(0xFF15171C.toInt(), light.text)
@@ -87,7 +87,7 @@ class ThemeEngineTest {
 
     @Test
     fun neumorph_keysMatchBackground() {
-        // Expressive's neumorphism: keys carved from the background material.
+        // Neumorphism: keys carved from the background material.
         val light = DesignPresets.resolve("neumorph", night = false)!!
         assertEquals(light.bg, light.key)
         assertEquals(light.bg, light.keyFn)
@@ -100,22 +100,22 @@ class ThemeEngineTest {
     }
 
     @Test
-    fun samsung_andNothing_matchExpressivePalettes() {
-        val samsungLight = DesignPresets.resolve("samsung", night = false)!!
-        assertEquals(0xFFECECEF.toInt(), samsungLight.bg)
-        assertEquals(0xFF3E91FF.toInt(), samsungLight.accent)
-        assertEquals(0xFFBBD9FF.toInt(), samsungLight.pressed)
-        val samsungDark = DesignPresets.resolve("samsung", night = true)!!
-        assertEquals(0xFF101012.toInt(), samsungDark.bg)
-        assertEquals(0xFF2B2B2E.toInt(), samsungDark.key)
+    fun rounded_andDot_matchPinnedPalettes() {
+        val roundedLight = DesignPresets.resolve("rounded", night = false)!!
+        assertEquals(0xFFECECEF.toInt(), roundedLight.bg)
+        assertEquals(0xFF3E91FF.toInt(), roundedLight.accent)
+        assertEquals(0xFFBBD9FF.toInt(), roundedLight.pressed)
+        val roundedDark = DesignPresets.resolve("rounded", night = true)!!
+        assertEquals(0xFF101012.toInt(), roundedDark.bg)
+        assertEquals(0xFF2B2B2E.toInt(), roundedDark.key)
 
-        val nothingLight = DesignPresets.resolve("nothing", night = false)!!
-        assertEquals(0xFFD71921.toInt(), nothingLight.accent) // Nothing red
-        assertEquals(0xFFF1AFB1.toInt(), nothingLight.pressed)
-        val nothingDark = DesignPresets.resolve("nothing", night = true)!!
-        assertEquals(0xFF000000.toInt(), nothingDark.bg)
-        assertEquals(0xFF121212.toInt(), nothingDark.key)
-        assertEquals(0xFF571417.toInt(), nothingDark.pressed)
+        val dotLight = DesignPresets.resolve("dot", night = false)!!
+        assertEquals(0xFFD71921.toInt(), dotLight.accent) // red accent
+        assertEquals(0xFFF1AFB1.toInt(), dotLight.pressed)
+        val dotDark = DesignPresets.resolve("dot", night = true)!!
+        assertEquals(0xFF000000.toInt(), dotDark.bg)
+        assertEquals(0xFF121212.toInt(), dotDark.key)
+        assertEquals(0xFF571417.toInt(), dotDark.pressed)
     }
 
     @Test
@@ -131,7 +131,7 @@ class ThemeEngineTest {
         assertEquals(lights.size, lights.map { listOf(it.bg, it.key, it.accent) }.toSet().size)
     }
 
-    // ── Overrides (Expressive semantics) ───────────────────────────────────
+    // ── Overrides ─────────────────────────────────────────────────────────────
 
     // Local copies of Shade's DARK/LIGHT/AMOLED palettes — the tests must not
     // depend on Theme.kt (which imports android.* and stays out of the JVM
@@ -174,8 +174,8 @@ class ThemeEngineTest {
 
     @Test
     fun apply_keyOverride_autoDerivesReadableText() {
-        // Expressive's contentColorFor: overriding the key color without an
-        // explicit text override re-derives the on-key color.
+        // Overriding the key color without an explicit text override
+        // re-derives the on-key color.
         val darkKey = (ThemeOverrides(key = 0xFF112233.toInt())).applyTo(base)
         assertEquals(0xFFFFFFFF.toInt(), darkKey.text) // key luminance 0.015 → white text
 
@@ -220,8 +220,8 @@ class ThemeEngineTest {
 
     @Test
     fun apply_overridesWorkOnAnyBase_notJustCustom() {
-        // The Expressive behavior change: one color row now layers over the
-        // active theme — here AMOLED — instead of forcing theme=custom.
+        // One color row now layers over the active theme — here AMOLED —
+        // instead of forcing theme=custom.
         val out = (ThemeOverrides(accent = 0xFF00FF00.toInt())).applyTo(amoledBase)
         assertEquals(amoledBase.bg, out.bg)
         assertEquals(amoledBase.key, out.key)

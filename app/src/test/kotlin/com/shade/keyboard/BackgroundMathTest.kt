@@ -5,20 +5,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Pure-JVM tests for the background-image math ported from
- * Expressive-Keyboard v11.2.6 (KeyboardPhoto.drawKeyboardPhoto,
- * rememberBackgroundBitmap decode cap, bg_dim / key_opacity /
- * bg_transparency knobs).
+ * Pure-JVM tests for the background-image math (draw math, decode cap,
+ * bg_dim / key_opacity / bg_transparency knobs).
  *
  * Frame vectors were computed independently in Python following the
- * Expressive DrawScope source, not by running the implementation.
+ * pinned DrawScope math, not by running the implementation.
  */
 class BackgroundMathTest {
 
     // ── Decode sampling ─────────────────────────────────────────────────────
 
     @Test
-    fun decodeSampleSize_mirrorsExpressiveCap() {
+    fun decodeSampleSize_mirrorsRenderCap() {
         // while (longest / sample > cap) sample *= 2
         assertEquals(1, BackgroundMath.decodeSampleSize(1080, 800))
         assertEquals(1, BackgroundMath.decodeSampleSize(2048, 1000))  // 2048 not > 2048
@@ -61,8 +59,8 @@ class BackgroundMathTest {
 
     @Test
     fun frame_stretch_ignoresZoomButHonorsPan() {
-        // Expressive: STRETCH draws at view size × zoom (per drawKeyboardPhoto,
-        // width/height factors multiply the stretched size too — zoom=2 doubles).
+        // STRETCH draws at view size × zoom (width/height factors multiply
+        // the stretched size too — zoom=2 doubles).
         val f = BackgroundMath.frame(
             BackgroundMath.Fit.STRETCH, 4000, 3000, 1080, 800, zoom = 2f
         )
@@ -73,7 +71,7 @@ class BackgroundMathTest {
     }
 
     @Test
-    fun frame_zoomAndPan_followExpressiveFormula() {
+    fun frame_zoomAndPan_followPinnedFormula() {
         // left = (viewW - width + viewW * panX) / 2
         val zoomed = BackgroundMath.frame(BackgroundMath.Fit.COVER, 4000, 3000, 1080, 800, zoom = 2f)
         assertEquals(-540f, zoomed[0], 1e-3f)
@@ -114,9 +112,9 @@ class BackgroundMathTest {
     // ── Alpha composition ───────────────────────────────────────────────────
 
     @Test
-    fun dimAlpha_matchesExpressiveRange() {
+    fun dimAlpha_matchesPinnedRange() {
         assertEquals(0, BackgroundMath.dimAlpha(0))
-        assertEquals(89, BackgroundMath.dimAlpha(35))   // Expressive default bg_dim=0.35
+        assertEquals(89, BackgroundMath.dimAlpha(35))   // default bg_dim=0.35
         assertEquals(229, BackgroundMath.dimAlpha(90))  // max 0.9
         assertEquals(0, BackgroundMath.dimAlpha(-5))    // clamped
         assertEquals(229, BackgroundMath.dimAlpha(120)) // clamped
@@ -126,7 +124,7 @@ class BackgroundMathTest {
     fun keyAlpha_reproducesOldSofteningAt80Percent() {
         assertEquals(255, BackgroundMath.keyAlpha(100))
         assertEquals(204, BackgroundMath.keyAlpha(80))  // the old hardcoded 0xCC
-        assertEquals(51, BackgroundMath.keyAlpha(20))   // Expressive floor 0.2
+        assertEquals(51, BackgroundMath.keyAlpha(20))   // floor 0.2
         assertEquals(51, BackgroundMath.keyAlpha(5))    // clamped low
         assertEquals(255, BackgroundMath.keyAlpha(150)) // clamped high
     }

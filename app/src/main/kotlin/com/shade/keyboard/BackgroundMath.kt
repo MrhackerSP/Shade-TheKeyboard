@@ -1,32 +1,30 @@
 package com.shade.keyboard
 
 /**
- * Background-image math ported from Expressive-Keyboard v11.2.6
- * (KeyboardPhoto.drawKeyboardPhoto + KeyPalette.rememberBackgroundBitmap +
- * MainActivity.importBackground), adapted to Shade's View renderer and
- * expressed over plain ints/arrays so it runs — and is unit-tested — on the
- * plain JVM.
+ * Background-image math for the keyboard wallpaper, adapted to Shade's View
+ * renderer and expressed over plain ints/arrays so it runs — and is
+ * unit-tested — on the plain JVM.
  *
- * Expressive parity notes:
+ * Parity notes:
  *  - [decodeSampleSize] mirrors the render-time decode guard
  *    `while (maxOf(w, h) / sample > 2048) sample *= 2`;
- *  - [frame] mirrors drawKeyboardPhoto: COVER = max(scaleX, scaleY),
+ *  - [frame] implements the photo draw math: COVER = max(scaleX, scaleY),
  *    FIT = min, STRETCH = axis-independent 1:1, then zoom / width / height
  *    factors and the centered ±1 pan offsets;
- *  - [keyAlpha] / [dimAlpha] / [bgArgb] express Expressive's `key_opacity`
- *    (coerced 0.2..1), `bg_dim` (0..0.9) and `bg_transparency` (0..1) as
- *    integer percentages, which is what Shade's settings sliders store.
+ *  - [keyAlpha] / [dimAlpha] / [bgArgb] map the `key_opacity`
+ *    (coerced 0.2..1), `bg_dim` (0..0.9) and `bg_transparency` (0..1) sliders
+ *    as integer percentages, which is what Shade's settings sliders store.
  */
 object BackgroundMath {
 
-    /** Photo placement, Expressive's PhotoFit. */
+    /** Photo placement options. */
     enum class Fit { COVER, FIT, STRETCH }
 
     // ── Decode sampling ───────────────────────────────────────────────────
 
     /**
      * Power-of-two inSampleSize so the longest decoded side fits [cap]
-     * (Expressive's 2048 px render cap). Returns 1 for already-small images.
+     * (the 2048 px render cap). Returns 1 for already-small images.
      */
     fun decodeSampleSize(srcW: Int, srcH: Int, cap: Int = 2048): Int {
         var sample = 1
@@ -40,9 +38,9 @@ object BackgroundMath {
 
     /**
      * Destination rectangle for the background image inside the keyboard
-     * area: (left, top, width, height). Port of
-     * Expressive's drawKeyboardPhoto, including its quirk that STRETCH
-     * ignores zoom/width/height but still honors the pan offsets.
+     * area: (left, top, width, height). Implements the draw math including
+     * the quirk that STRETCH ignores zoom/width/height but still honors the
+     * pan offsets.
      *
      * @param zoom      1.0 = natural (50..300% slider)
      * @param widthF    frame width factor (50..200% slider)
@@ -104,8 +102,8 @@ object BackgroundMath {
      * assumed but every channel is processed). Two edge-clamped sliding
      * window passes (horizontal + vertical). Radius 0 returns a copy.
      *
-     * Expressive blurs the photo layer with a GPU RenderEffect (API 31+);
-     * Shade's renderer has no hardware blur, so the blur is baked into the
+     * Shade's renderer has no hardware blur (GPU RenderEffect blur is an
+     * API 31+ platform feature), so the blur is baked into the
      * decoded bitmap once per version bump instead — same visual intent at a
      * one-time CPU cost.
      */

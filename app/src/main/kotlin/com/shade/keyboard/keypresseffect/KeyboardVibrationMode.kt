@@ -6,10 +6,10 @@ import android.content.pm.PackageManager
 import android.os.Build
 
 /**
- * Intensity-mode resolver — a faithful port of Gboard's `pum.b(Context)`.
+ * Intensity-mode resolver — decides whether the keyboard drives key-press
+ * vibration itself or defers to the system's keyboard-vibration setting.
  *
- * Reconstructed verbatim from Gboard 18.5.10 (`pun.d` calls `pum.b` before
- * every effect; the intent resolution is `mqt` case 14):
+ * Resolution:
  *
  * ```
  * static int b(Context context) {
@@ -26,7 +26,7 @@ import android.os.Build
  * }
  * ```
  *
- * Where the intent probe (`mqt` case 14) is:
+ * The settings-screen probe:
  *
  * ```
  * if (SDK >= 34) {
@@ -38,13 +38,13 @@ import android.os.Build
  * ```
  *
  * So on Android < 14 the keyboard-vibration settings screen does not exist and
- * Gboard always drives vibration itself (mode [MODE_GBOARD_CONTROLLED]); from
- * Android 14 onwards the system owns the switch while enabled (mode
+ * the keyboard always drives vibration itself (mode [MODE_APP_CONTROLLED]);
+ * from Android 14 onwards the system owns the switch while enabled (mode
  * [MODE_SYSTEM_CONTROLLED]) or the engine stays silent (mode [MODE_DISABLED]).
  */
 object KeyboardVibrationMode {
-    /** No keyboard-vibration settings UI on the device — Gboard drives vibration itself. */
-    const val MODE_GBOARD_CONTROLLED: Int = 1
+    /** No keyboard-vibration settings UI on the device — the keyboard drives vibration itself. */
+    const val MODE_APP_CONTROLLED: Int = 1
 
     /** Android 14+ keyboard vibration active — defer to `View.performHapticFeedback`. */
     const val MODE_SYSTEM_CONTROLLED: Int = 2
@@ -55,7 +55,7 @@ object KeyboardVibrationMode {
     const val ACTION_KEYBOARD_VIBRATION_SETTINGS: String =
         "android.settings.KEYBOARD_VIBRATION_SETTINGS"
 
-    // Settings.System rows (rjs/czf): (key, default).
+    // Settings.System rows: (key, default).
     const val SETTING_VIBRATE_ON: String = "vibrate_on"
     const val DEFAULT_VIBRATE_ON: Boolean = true
 
@@ -66,7 +66,7 @@ object KeyboardVibrationMode {
     const val DEFAULT_KEYBOARD_VIBRATION_INTENSITY: Long = -1L
 
     fun resolve(context: Context): Int {
-        if (resolveKeyboardVibrationIntent(context) == null) return MODE_GBOARD_CONTROLLED
+        if (resolveKeyboardVibrationIntent(context) == null) return MODE_APP_CONTROLLED
         val cr = context.contentResolver
         if (!SystemSettingsReader.systemBool(cr, SETTING_VIBRATE_ON, DEFAULT_VIBRATE_ON)) {
             return MODE_DISABLED
@@ -90,13 +90,13 @@ object KeyboardVibrationMode {
     @Volatile private var cachedSettingsIntent: Intent? = null
     @Volatile private var probeDone: Boolean = false
 
-    /** Exact `mqt` case 14: SDK >= 34, pinned to com.android.settings, MATCH_DEFAULT_ONLY. */
+    /** SDK >= 34, pinned to com.android.settings, MATCH_DEFAULT_ONLY. */
     private fun resolveKeyboardVibrationIntent(context: Context): Intent? {
         if (Build.VERSION.SDK_INT < 34) return null
         if (probeDone) return cachedSettingsIntent
         val intent = Intent(ACTION_KEYBOARD_VIBRATION_SETTINGS)
             .setPackage("com.android.settings")
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // as Gboard adds before use
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val appContext = try { context.getApplicationContext() } catch (t: Throwable) { context }
         val resolved =
             if (appContext.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {

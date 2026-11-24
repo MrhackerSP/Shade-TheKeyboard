@@ -29,7 +29,7 @@ import com.shade.keyboard.Themes
  * GIF picker laid out like the emoji panel: two pieces.
  *
  *  - [header] — ShadeService pins this above the keyboard content, directly in
- *    the place of the suggestion strip. It holds a Gboard-style back button, the
+ *    the place of the suggestion strip. It holds a back button, the
  *    emoji-style search field (rounded pill, magnifier icon, ✕ clear) and the
  *    first-run setup card for pasting a GIF API key.
  *  - the panel body itself — a vertically scrolling two-column grid of animated

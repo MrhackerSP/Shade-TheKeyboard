@@ -33,8 +33,8 @@ import kotlin.math.sqrt
 private const val DELETE_FAST_DP_PER_MS = 0.55f
 
 /**
- * Minimum interval between scrubbing/cursor haptics — Gboard's
- * FreeCursorKeyboard `free_cursor_haptic_min_interval_millisec` parity.
+ * Minimum interval between scrubbing/cursor haptics, matching the stock
+ * keyboard's free-cursor haptic throttling.
  */
 private const val FREE_CURSOR_HAPTIC_MIN_INTERVAL_MS = 50L
 
@@ -121,9 +121,9 @@ class KeyboardView(context: Context) : View(context) {
         set(v) { field = v.coerceIn(0.5f, 0.95f); invalidate() }
     var haptic = true
     // Haptics and key sounds are driven entirely by the press-effect engine
-    // (com.shade.keyboard.keypresseffect) — Gboard's PressEffectPlayer port.
-    // The engine reads the "haptic" / "sound" / "vibration_duration" prefs
-    // itself, so the view carries no per-effect strength state anymore.
+    // (com.shade.keyboard.keypresseffect). The engine reads the "haptic" /
+    // "sound" / "vibration_duration" prefs itself, so the view carries no
+    // per-effect strength state anymore.
     var showPreview = true
     var shiftState = 0
         set(v) { field = v; invalidate() }
@@ -150,7 +150,7 @@ class KeyboardView(context: Context) : View(context) {
             invalidate()
         }
 
-    // ── Background appearance knobs (Expressive "Colors & background" port).
+    // ── Background appearance knobs ("Colors & background").
     // Defaults keep the old rendering: COVER fit, 0x55 dim overlay over the
     // image, opaque keys (the dim overlay owns readability over photos, which
     // replaces the old hardcoded 0xCC key softening).
@@ -548,7 +548,7 @@ class KeyboardView(context: Context) : View(context) {
     override fun onDraw(c: Canvas) {
         // See-through background: the canvas must not blend with the previous
         // frame or translucent draws accumulate — clear first, then draw the
-        // alpha-reduced background (Expressive's bg_transparency).
+        // alpha-reduced background (bg_transparency).
         if (bgTransparency > 0) c.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
         c.drawColor(BackgroundMath.bgArgb(kbTheme.bg, bgTransparency))
         val bmp = bgBitmap?.takeIf { !it.isRecycled }
@@ -1364,9 +1364,9 @@ class KeyboardView(context: Context) : View(context) {
                 if (p.key !== k) return
                 listener?.onKey(Codes.DELETE)
                 n++
-                // Gboard vibrates on every repeat event through the same tap
-                // pipeline (no separate cadence) — the engine applies the
-                // effect and stamps the rate-limiter clock.
+                // The engine vibrates on every repeat event through the same
+                // tap pipeline (no separate cadence) — it applies the effect
+                // and stamps the rate-limiter clock.
                 hapticTick()
                 val next = if (n > 12) (repeatIntervalMs / 2).coerceAtLeast(18L) else repeatIntervalMs
                 handler.postDelayed(this, next)
@@ -1609,10 +1609,10 @@ class KeyboardView(context: Context) : View(context) {
             dismissAlt()
             if (!cancel && s != null) listener?.onText(s)
         } else if (!cancel && k != null && !p.consumed && !p.swiping) {
-            // Gboard key-release path (pun.d kind=1 -> VIRTUAL_KEY_RELEASE with
-            // cutoff rate limiting). The engine stays silent whenever the
-            // resolved mode/prefs say so — including right after the press
-            // haptic, since both share one rate-limiter timestamp upstream.
+            // Key-release path (kind=1 -> VIRTUAL_KEY_RELEASE with cutoff
+            // rate limiting). The engine stays silent whenever the resolved
+            // mode/prefs say so — including right after the press haptic,
+            // since both share one rate-limiter timestamp.
             PressEffectPlayer.get().applyPressEffect(this, PressEffectPlayer.KIND_KEY_RELEASE)
             fire(k)
         }
@@ -1648,7 +1648,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun longPress(p: Pointer) {
         val k = p.key ?: return
         p.longRunnable = null
-        // Gboard long-press listeners route through the basic tap effect too.
+        // Long-press listeners route through the basic tap effect too.
         hapticTick()
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             p.consumed = true
@@ -1683,16 +1683,15 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     // ------------------------------------------------------------------ haptics
-    // All haptics/sounds route through the press-effect engine — Gboard's
-    // PressEffectPlayer port (mode resolution, pref gates, primitive
-    // composition vs one-shot, cutoff rate limiting happen inside the engine).
+    // All haptics/sounds route through the press-effect engine (mode
+    // resolution, pref gates, primitive composition vs one-shot, cutoff rate
+    // limiting happen inside the engine).
 
     /**
-     * Key-press feedback — Gboard `pun.g` + `pun.d(kind=0)` in one call:
-     * the mapped `AudioManager` press sound (when the sound pref is on)
-     * followed by the basic tap effect (primitive click on haptic-primitive
-     * hardware, duration one-shot otherwise, system `KEYBOARD_TAP` when the
-     * device's keyboard-vibration mode takes over).
+     * Key-press feedback in one call: the mapped `AudioManager` press sound
+     * (when the sound pref is on) followed by the basic tap effect (primitive
+     * click on haptic-primitive hardware, duration one-shot otherwise, system
+     * `KEYBOARD_TAP` when the device's keyboard-vibration mode takes over).
      */
     private fun feedback(k: Key) {
         val keyId = when {
@@ -1705,7 +1704,7 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     /**
-     * Tap-family effect for key repeats: Gboard vibrates on every repeat
+     * Tap-family effect for key repeats: the engine vibrates on every repeat
      * event through the same basic-tap pipeline (kind 0).
      */
     private fun hapticTick() {
@@ -1713,9 +1712,9 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     /**
-     * Scrubbing / cursor / text-handle family (Gboard kind >= 3 ->
-     * `TEXT_HANDLE_MOVE`), throttled like Gboard's FreeCursorKeyboard
-     * `free_cursor_haptic_min_interval_millisec`.
+     * Scrubbing / cursor / text-handle family (kind >= 3 ->
+     * `TEXT_HANDLE_MOVE`), throttled like the stock keyboard's free-cursor
+     * haptic interval.
      */
     private var lastTextHandleHapticAt = 0L
     private fun textHandleHaptic() {

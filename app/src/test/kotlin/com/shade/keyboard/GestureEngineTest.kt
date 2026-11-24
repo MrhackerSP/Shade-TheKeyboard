@@ -91,7 +91,7 @@ class GestureEngineTest {
 
     @Test
     fun trailStaysVisibleWhileTheFingerIsDown() {
-        // Gboard-style: the ribbon never expires mid-glide — it only fades after release.
+        // The ribbon never expires mid-glide — it only fades after release.
         val e = engine()
         slowSwipe(e, 3)
         assertTrue(e.hasTrail())

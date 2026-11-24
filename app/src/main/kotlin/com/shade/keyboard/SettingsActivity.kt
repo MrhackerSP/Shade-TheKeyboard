@@ -80,7 +80,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var importLauncher: ActivityResultLauncher<Array<String>>
     // Learned-word migration picker (SAF); the result flows into runWordImport().
     private lateinit var wordImportLauncher: ActivityResultLauncher<Array<String>>
-    // Background photo picker (Expressive's "Colors & background"). The result
+    // Background photo picker ("Colors & background"). The result
     // is downscaled, recompressed and written atomically by importBackground().
     private lateinit var bgImageLauncher: ActivityResultLauncher<String>
 
@@ -231,7 +231,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     /**
-     * GIF (Klipy) API key editor — writes the same pref the GIF panel's setup
+     * GIF API key editor — writes the same pref the GIF panel's setup
      * card uses ([GifConfig.KEY_PREF]). Saving an empty key clears the runtime
      * override so the build-time key applies again.
      */
@@ -310,7 +310,7 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ── Colors & background (Expressive port) ─────────────────────────────
+    // ── Colors & background ─────────────────────────────
 
     /** Opens the gallery picker for the keyboard background photo. */
     internal fun pickBackgroundImage() {
@@ -333,8 +333,9 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     /**
-     * Expressive's resetColors(): manual colors, design preset, key opacity,
-     * transparency and the whole photo frame go back to their defaults.
+     * Resets colors and background: manual colors, design preset, key
+     * opacity, transparency and the whole photo frame go back to their
+     * defaults.
      */
     internal fun resetColorsAndBackground(prefs: SharedPreferences) {
         val keys = listOf(
@@ -349,9 +350,9 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     /**
-     * Copies the picked image into filesDir as a downscaled JPEG
-     * (port of Expressive's importBackground): ImageDecoder with a 1600 px
-     * longest-edge cap on API 28+, double-step BitmapFactory sampling below.
+     * Copies the picked image into filesDir as a downscaled JPEG:
+     * ImageDecoder with a 1600 px longest-edge cap on API 28+, double-step
+     * BitmapFactory sampling below.
      * The write is atomic (rename-on-commit) so the keyboard never decodes a
      * half-written file.
      */
@@ -399,9 +400,9 @@ class SettingsActivity : AppCompatActivity() {
      * current color in a preview bar, a saturation/brightness square, a hue
      * rail, a preset grid (the row's auto color first so "back to default" is
      * one tap) and a hex field, all kept in sync. Saving stores a normalized
-     * "#RRGGBB" under [key] — the same keys Themes.overrides() reads. As in
-     * Expressive's "Colors & background", the override layers on top of the
-     * active theme; "Reset colors" clears all overrides.
+     * "#RRGGBB" under [key] — the same keys Themes.overrides() reads. The
+     * override layers on top of the active theme; "Reset colors" clears all
+     * overrides.
      */
     // Dialog content is detached from any root; null root is the dialog idiom.
     @SuppressLint("InflateParams")
@@ -524,7 +525,7 @@ class SettingsActivity : AppCompatActivity() {
                 Toast.makeText(this, R.string.color_invalid_hex, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            // Expressive semantics: the override applies on top of the ACTIVE
+            // The override applies on top of the ACTIVE
             // theme (no forced switch to the legacy "custom" theme). Unset
             // slots keep the base; "Reset colors" clears everything.
             prefs.edit().putString(key, norm).apply()
@@ -764,10 +765,10 @@ internal class SettingsAdapter(
     internal class SliderVH(v: View) : RecyclerView.ViewHolder(v) {
 
         /**
-         * Vibration strength gets Gboard's labels: "System default" until the
-         * slider is first moved (the engine's default state — the OS keyboard
-         * tap), then the engine's dual unit — "N ms" on legacy devices, "N%"
-         * on haptic-primitive hardware.
+         * Vibration strength uses the stock keyboard's labels: "System default"
+         * until the slider is first moved (the engine's default state — the OS
+         * keyboard tap), then the engine's dual unit — "N ms" on legacy
+         * devices, "N%" on haptic-primitive hardware.
          */
         private fun labelFor(item: SettingsItem.Slider, value: Int, customized: Boolean): String {
             if (item.key == "vibration_duration") {
@@ -809,8 +810,8 @@ internal class SettingsAdapter(
                 // strength, so the label renders the engine's dual unit.
                 valueTv.text = labelFor(item, v, true)
                 if (item.key == "vibration_duration" && fromUser) {
-                    // Gboard's VibrationDurationPreference live preview: each
-                    // slider tick plays the effect immediately (pul.f).
+                    // Live preview: each slider tick plays the effect
+                    // immediately.
                     runCatching { PressEffectPlayer.get().playCustomVibration(v) }
                 }
             }

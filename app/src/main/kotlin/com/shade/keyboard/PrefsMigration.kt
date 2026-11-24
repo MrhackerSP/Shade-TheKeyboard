@@ -20,12 +20,15 @@ object PrefsMigration {
      */
     private const val KEY_VIBRATION_MIGRATION = "vibration_default_migration"
 
+    /** One-time flag guarding the design-preset rename migration below. */
+    private const val KEY_DESIGN_MIGRATION = "design_preset_rename_migration"
+
     /** Converts a legacy Float value to the Int the settings slider expects. Safe to call repeatedly. */
     fun run(prefs: SharedPreferences) {
         try {
             // Retired vibration prefs: the old auto-seeded "vibration_duration"
             // (from the dead "haptic_strength" selector) would silently force
-            // the custom-strength effect on every keypress. Gboard's slider
+            // the custom-strength effect on every keypress. The slider's
             // default state is "System default" — the OS keyboard tap — so
             // start everyone there and let the new slider set custom values.
             if (!prefs.getBoolean(KEY_VIBRATION_MIGRATION, false)) {
@@ -34,6 +37,17 @@ object PrefsMigration {
                     .remove("haptic_strength")
                     .putBoolean(KEY_VIBRATION_MIGRATION, true)
                     .apply()
+            }
+            // Renamed design presets: remap a stored choice once so users
+            // keep their picked look.
+            if (!prefs.getBoolean(KEY_DESIGN_MIGRATION, false)) {
+                val remapped = when (prefs.getString("design", null)) {
+                    "samsung" -> "rounded"
+                    "nothing" -> "dot"
+                    else -> null
+                }
+                if (remapped != null) prefs.edit().putString("design", remapped).apply()
+                prefs.edit().putBoolean(KEY_DESIGN_MIGRATION, true).apply()
             }
             val v = prefs.all[KEY_OFFSET_Y] ?: return
             if (v !is Int) {
