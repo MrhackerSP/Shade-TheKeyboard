@@ -2617,7 +2617,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onTrackpadEnter() {
         if (emojiSearchOwnsKeys()) return
         kb.haptic = prefs.getBoolean("haptic", true)
-        PressEffectModule.refresh()
+        // The press-effect engine listens to pref changes itself.
     }
 
     override fun onTrackpadExit() {

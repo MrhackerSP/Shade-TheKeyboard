@@ -14,9 +14,27 @@ object PrefsMigration {
 
     const val KEY_OFFSET_Y = "keyboard_offset_y"
 
+    /**
+     * One-time flag guarding the retired-vibration-keys cleanup below — run()
+     * executes on every service start, and a user-picked strength must survive.
+     */
+    private const val KEY_VIBRATION_MIGRATION = "vibration_default_migration"
+
     /** Converts a legacy Float value to the Int the settings slider expects. Safe to call repeatedly. */
     fun run(prefs: SharedPreferences) {
         try {
+            // Retired vibration prefs: the old auto-seeded "vibration_duration"
+            // (from the dead "haptic_strength" selector) would silently force
+            // the custom-strength effect on every keypress. Gboard's slider
+            // default state is "System default" — the OS keyboard tap — so
+            // start everyone there and let the new slider set custom values.
+            if (!prefs.getBoolean(KEY_VIBRATION_MIGRATION, false)) {
+                prefs.edit()
+                    .remove("vibration_duration")
+                    .remove("haptic_strength")
+                    .putBoolean(KEY_VIBRATION_MIGRATION, true)
+                    .apply()
+            }
             val v = prefs.all[KEY_OFFSET_Y] ?: return
             if (v !is Int) {
                 prefs.edit().putInt(KEY_OFFSET_Y, (v as? Number)?.toInt() ?: 0).apply()

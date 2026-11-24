@@ -3,18 +3,17 @@ package com.shade.keyboard.keypresseffect
 import android.content.Context
 import android.content.SharedPreferences
 import android.media.AudioManager
-import android.os.Build
 import android.os.Build.VERSION.SDK_INT
 import android.os.SystemClock
 import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.view.HapticFeedbackConstants
 import android.view.View
 import com.shade.keyboard.keypresseffect.KeyboardVibrationMode.MODE_DISABLED
 import com.shade.keyboard.keypresseffect.KeyboardVibrationMode.MODE_GBOARD_CONTROLLED
 import com.shade.keyboard.keypresseffect.KeyboardVibrationMode.MODE_SYSTEM_CONTROLLED
 import com.shade.keyboard.keypresseffect.KeyboardVibrationMode.resolve
-import java.text.NumberFormat
 
 /**
  * The press-effect engine — a faithful port of Gboard 18.5.10's
@@ -31,23 +30,23 @@ import java.text.NumberFormat
  *  | `m(V)`   | [systemTapFallback]         | `performHapticFeedback(KEYBOARD_TAP)`    |
  *  | `n()`    | [vibrationGate]             | "is vibration currently allowed"         |
  *  | `j()`    | [rateLimitPassed]           | cutoff rate limiter (200 ms default)     |
- *  | `l()`    | [durationIsCustomized]      | user changed the duration from default   |
- *  | `i()`    | [recomputeDuration]         | cached duration recompute (cap at 100)   |
  *  | `c(I)`   | [formatVibrationLabel]      | "N ms" vs "N%" slider label              |
  *
  * Pref mapping (Gboard logical name -> Shade pref key):
  *  - `enable_vibrate_on_keypress` -> "haptic"        (default true)
- *  - `vibration_duration`         -> "vibration_duration" (default = system default)
+ *  - `vibration_duration`         -> "vibration_duration"
+ *     Absent = Gboard slider's default state, **"System default"**: the OS's
+ *     own keyboard-tap haptic (`performHapticFeedback(KEYBOARD_TAP)` — the
+ *     device-tuned tick, gated/scaled by the system exactly like Gboard on
+ *     Android 14+). A custom value 0-100 plays Gboard's `f(I)` effect:
+ *     PRIMITIVE_CLICK at value% on haptic-primitive hardware, a value-ms
+ *     one-shot otherwise.
  *  - `enable_sound_on_keypress`   -> "sound"         (default false)
  *  - key press volume             -> "key_press_volume"   (default 1.0)
  */
 open class PressEffectPlayerImpl(
     private val context: Context,
     private val prefs: SharedPreferences,
-    /** Gboard parses this from a string resource; -1 = resource absent. */
-    overrideSystemDefaultDuration: Int = PressEffectFlags.DEFAULT_VIBRATION_DURATION_MS,
-    /** `puh.b` — min interval between haptic events (sysprop-overridable). */
-    internal val cutoffMs: Long = PressEffectFlags.hapticCutoffMs,
     audioManagerSupplier: () -> AudioManager? = {
         context.getSystemService("audio") as? AudioManager
     },
@@ -63,12 +62,15 @@ open class PressEffectPlayerImpl(
     private val vibrator: Vibrator? by lazy(vibratorSupplier)
 
     // ---- cached state (mirrors pun's fields) -------------------------------
-    @Volatile protected var systemDefaultDuration: Int = overrideSystemDefaultDuration
-    @Volatile protected var oemDisabled: Boolean = false        // pun.m
     @Volatile protected var vibrateOn: Boolean = true           // pun.d
     @Volatile protected var soundOn: Boolean = false            // pun.e
     @Volatile protected var pressVolume: Float = 1.0f           // pun.f
-    @Volatile protected var duration: Int = 0                   // pun.n
+    /**
+     * Gboard's "Vibration strength on keypress" value: 0-100 when the user
+     * picked a custom level, [SYSTEM_DEFAULT_STRENGTH] for the slider's
+     * default state (the OS keyboard tap).
+     */
+    @Volatile protected var customStrength: Int = SYSTEM_DEFAULT_STRENGTH
     @Volatile internal var systemHapticsEnabled: Boolean = true // pun.g
     @Volatile internal var lastHapticUptime: Long = 0L          // pun.p
 
@@ -88,21 +90,14 @@ open class PressEffectPlayerImpl(
 
     /** Re-reads every pref-backed field (pun constructor + fgy 13/14/15/16). */
     fun refreshFromPrefs() {
-        oemDisabled = prefs.contains(PREF_VIBRATE) && !prefs.getBoolean(PREF_VIBRATE, false)
         vibrateOn = prefs.getBoolean(PREF_VIBRATE, DEFAULT_VIBRATE_ON)
         soundOn = prefs.getBoolean(PREF_SOUND, DEFAULT_SOUND_ON)
         pressVolume = prefs.getFloat(PREF_VOLUME, DEFAULT_VOLUME)
-        recomputeDuration()
-    }
-
-    /** `pun.i()` — effective duration = min(pref or system default, 100). */
-    fun recomputeDuration() {
-        val raw = if (!oemDisabled) {
-            prefs.getInt(PREF_DURATION, systemDefaultDuration)
+        customStrength = if (prefs.contains(PREF_DURATION)) {
+            prefs.getInt(PREF_DURATION, SYSTEM_DEFAULT_STRENGTH).coerceIn(0, MAX_STRENGTH)
         } else {
-            systemDefaultDuration
+            SYSTEM_DEFAULT_STRENGTH
         }
-        duration = minOf(raw, MAX_DURATION_MS)
     }
 
     /** `puo.a()` — cache system haptic state below API 33 (`haptic_feedback_enabled`). */
@@ -116,13 +111,12 @@ open class PressEffectPlayerImpl(
         }
     }
 
-    /** `puo.b()` — mirror system keyboard-vibration state into the master pref. */
-    fun updateVibrationPreference() {
-        val mode = resolve(context)
-        if (mode != MODE_GBOARD_CONTROLLED) {
-            prefs.edit().putBoolean(PREF_VIBRATE, mode == MODE_SYSTEM_CONTROLLED).apply()
-        }
-    }
+    /**
+     * `puo.b` in upstream mirrors the system keyboard-vibration state into the
+     * master pref on Android 14+. Shade intentionally does NOT: the in-app
+     * toggle stays the user's master switch, and the system keyboard-vibration
+     * settings still govern through [KeyboardVibrationMode.resolve].
+     */
 
     override fun close() {
         runCatching { prefs.unregisterOnSharedPreferenceChangeListener(prefListener) }
@@ -130,22 +124,20 @@ open class PressEffectPlayerImpl(
 
     // ---- gates -------------------------------------------------------------
 
-    /** `pun.n()` — vibration allowed: master pref on, plus OS-era conditions. */
-    internal fun vibrationGate(): Boolean {
-        if (!vibrateOn) return false
-        return SDK_INT >= 33 || systemHapticsEnabled || durationIsCustomized()
-    }
-
-    /** `pun.l()` — the user moved the duration away from the system default. */
-    internal fun durationIsCustomized(): Boolean = systemDefaultDuration != duration
+    /**
+     * `pun.n()` — global gate for the system-tap path (the "System default"
+     * state). A custom strength intentionally bypasses it, matching upstream:
+     * a user-picked strength plays even with the global haptics toggle off.
+     * The in-app master switch is checked at the top of [applyPressEffect].
+     */
+    internal fun vibrationGate(): Boolean = SDK_INT >= 33 || systemHapticsEnabled
 
     /** `pun.j()` — enough time has passed since the last haptic event. */
-    internal fun rateLimitPassed(): Boolean = clock() - lastHapticUptime > cutoffMs
+    internal fun rateLimitPassed(): Boolean = clock() - lastHapticUptime > HAPTIC_CUTOFF_MS
 
-    /** `pun.k(Vibrator)` — SDK >= 30, flag gate, PRIMITIVE_CLICK supported. */
+    /** `pun.k(Vibrator)` — SDK >= 30, PRIMITIVE_CLICK supported. */
     internal fun primitiveGate(v: Vibrator): Boolean {
         if (SDK_INT < 30) return false
-        if (SDK_INT < PressEffectFlags.vibrationEffectMinSdk) return false
         return v.arePrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_CLICK)
             .firstOrNull() == true
     }
@@ -155,7 +147,7 @@ open class PressEffectPlayerImpl(
     /** `pun.m(View)` — KEYBOARD_TAP fallback; also records the haptic timestamp. */
     internal fun systemTapFallback(view: View) {
         try {
-            view.performHapticFeedback(HapticConstants.KEYBOARD_TAP)
+            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         } catch (_: RuntimeException) {
         }
         lastHapticUptime = clock()
@@ -163,41 +155,48 @@ open class PressEffectPlayerImpl(
 
     override fun applyPressEffect(view: View?, kind: Int) {
         if (view == null) return
+        // Shade keeps the in-app toggle authoritative in every mode (upstream
+        // puo.b mirrors the system state into this pref on Android 14+; without
+        // that mirroring the switch must gate here or it would do nothing).
+        if (!vibrateOn) return
         if (kind == PressEffectPlayer.KIND_BASIC_TAP) {
             // performBasicTapEffect
             when (resolve(context)) {
                 MODE_GBOARD_CONTROLLED -> {
-                    if (vibrationGate()) {
-                        if (systemDefaultDuration != -1 || durationIsCustomized()) {
-                            val dur = duration
-                            if (dur > 0) {
-                                playCustomVibration(dur)
-                                lastHapticUptime = clock()
-                            }
-                        } else {
-                            // No default duration resource and nothing customized:
-                            // plain system tap, exactly like upstream.
-                            systemTapFallback(view)
+                    val strength = customStrength
+                    when {
+                        // Slider default state — "System default": the OS's own
+                        // keyboard tap. This is Gboard's out-of-box feel and the
+                        // crisp device-tuned tick (never a long one-shot).
+                        strength == SYSTEM_DEFAULT_STRENGTH ->
+                            if (vibrationGate()) systemTapFallback(view)
+                        // Custom strength 1-100: Gboard's f(I) — primitive click
+                        // at strength% on capable hardware, N-ms one-shot otherwise.
+                        strength > 0 -> {
+                            playCustomVibration(strength)
+                            lastHapticUptime = clock()
                         }
+                        // strength == 0: the slider floor — silent.
                     }
                 }
                 MODE_SYSTEM_CONTROLLED -> systemTapFallback(view)
                 // MODE_DISABLED -> silent (upstream: no else branch)
             }
         } else if (kind == PressEffectPlayer.KIND_KEY_RELEASE) {
-            // performKeyReleaseEffect
+            // performKeyReleaseEffect — only in the "System default" state
+            // (upstream skips release ticks once a custom strength is set).
             when (resolve(context)) {
                 MODE_GBOARD_CONTROLLED -> {
-                    if (vibrateOn && (SDK_INT >= 33 || systemHapticsEnabled) &&
-                        !durationIsCustomized() &&
-                        HapticConstants.hasHandleConstants() && rateLimitPassed()
+                    if (customStrength == SYSTEM_DEFAULT_STRENGTH &&
+                        (SDK_INT >= 33 || systemHapticsEnabled) &&
+                        SDK_INT >= 27 && rateLimitPassed()
                     ) {
-                        view.performHapticFeedback(HapticConstants.VIRTUAL_KEY_RELEASE)
+                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY_RELEASE)
                     }
                 }
                 MODE_SYSTEM_CONTROLLED -> {
-                    if (HapticConstants.hasHandleConstants() && rateLimitPassed()) {
-                        view.performHapticFeedback(HapticConstants.VIRTUAL_KEY_RELEASE)
+                    if (SDK_INT >= 27 && rateLimitPassed()) {
+                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY_RELEASE)
                     }
                 }
                 // MODE_DISABLED -> silent
@@ -205,7 +204,7 @@ open class PressEffectPlayerImpl(
         } else if (kind != 2) {
             // performHapticTextHandleEffect (any kind except 0, 1, 2)
             if (canVibrateTextHandle()) {
-                view.performHapticFeedback(HapticConstants.TEXT_HANDLE_MOVE)
+                view.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
             }
         }
         // kind == 2: intentionally nothing (upstream parity)
@@ -229,13 +228,10 @@ open class PressEffectPlayerImpl(
         val v = vibrator ?: return
         try {
             // Inline SDK gate (lint-visible; an opaque helper check is not):
-            // upstream `k(Vibrator)` = SDK >= 30 && SDK >= vibration_effect_min_sdk
-            // && CLICK primitive supported. Branch bodies are upstream `f(I)`
-            // verbatim: composition at value*0.01f, else one-shot of `value` ms.
-            val effect = if (SDK_INT >= 30 &&
-                SDK_INT >= PressEffectFlags.vibrationEffectMinSdk &&
-                primitiveGate(v)
-            ) {
+            // upstream `k(Vibrator)` = SDK >= 30 && CLICK primitive supported.
+            // Branch bodies are upstream `f(I)` verbatim: composition at
+            // value*0.01f, else one-shot of `value` ms.
+            val effect = if (SDK_INT >= 30 && primitiveGate(v)) {
                 VibrationEffect.startComposition()
                     .addPrimitive(
                         VibrationEffect.Composition.PRIMITIVE_CLICK,
@@ -263,7 +259,7 @@ open class PressEffectPlayerImpl(
     }
 
     override fun canVibrateTextHandle(): Boolean {
-        if (!HapticConstants.hasHandleConstants()) return false
+        if (SDK_INT < 27) return false
         return when (resolve(context)) {
             MODE_GBOARD_CONTROLLED -> vibrationGate()
             MODE_SYSTEM_CONTROLLED -> true
@@ -271,22 +267,14 @@ open class PressEffectPlayerImpl(
         }
     }
 
-    override fun systemDefaultVibrationDuration(): Int = systemDefaultDuration
-
-    override fun vibrationDuration(): Int = duration
-
     override fun formatVibrationLabel(value: Int): String {
         val v = vibrator
         return if (v == null || !primitiveGate(v)) {
             // Legacy: the same pref value is a duration in milliseconds.
-            val nf = NumberFormat.getNumberInstance()
-            nf.isGroupingUsed = false
             "$value ms"
         } else {
             // Primitive hardware: the same pref value is a strength percentage.
-            val pf = NumberFormat.getPercentInstance()
-            pf.maximumFractionDigits = 0
-            pf.format(value * PRIMITIVE_SCALE_STEP.toDouble())
+            "$value%"
         }
     }
 
@@ -310,11 +298,20 @@ open class PressEffectPlayerImpl(
         const val DEFAULT_SOUND_ON: Boolean = false
         const val DEFAULT_VOLUME: Float = 1.0f
 
-        /** Slider/strength range cap (upstream `Math.min(v, 100)`). */
-        const val MAX_DURATION_MS: Int = 100
+        /**
+         * Gboard's slider default state: no custom strength picked — haptics
+         * defer to the OS keyboard tap. The pref key being absent means this.
+         */
+        const val SYSTEM_DEFAULT_STRENGTH: Int = -1
+
+        /** Slider ceiling (upstream `Math.min(v, 100)`). */
+        const val MAX_STRENGTH: Int = 100
 
         /** Upstream `value * 0.01f`: slider % -> primitive scale. */
         const val PRIMITIVE_SCALE_STEP: Float = 0.01f
+
+        /** `puh.b` default — min interval between haptic events (release ticks). */
+        const val HAPTIC_CUTOFF_MS: Long = 200L
 
         val WATCHED_PREFS: Set<String> = setOf(PREF_VIBRATE, PREF_SOUND, PREF_DURATION, PREF_VOLUME)
     }

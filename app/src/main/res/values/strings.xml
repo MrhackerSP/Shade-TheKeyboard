@@ -70,9 +70,9 @@
     <string name="pref_toolbar_open">Open toolbar by default</string>
 
     <!-- Feedback -->
-    <string name="pref_haptic">Vibrate on keypress</string>
-    <string name="pref_haptic_strength">Haptic strength</string>
+    <string name="pref_haptic">Haptic feedback on keypress</string>
     <string name="pref_vibration_duration">Vibration strength on keypress</string>
+    <string name="vibration_system_default">System default</string>
     <string name="pref_sound">Sound on keypress</string>
     <string name="pref_typing_burst">Typing burst animation</string>
     <string name="pref_trackpad">Trackpad mode</string>
@@ -197,11 +197,6 @@
     <string name="split_off">Off</string>
     <string name="split_landscape">Landscape</string>
     <string name="split_always">Always</string>
-
-    <!-- Haptic strength options -->
-    <string name="haptic_light">Light</string>
-    <string name="haptic_medium">Medium</string>
-    <string name="haptic_strong">Strong</string>
 
     <!-- Color labels (short) -->
     <string name="color_bg">Background</string>

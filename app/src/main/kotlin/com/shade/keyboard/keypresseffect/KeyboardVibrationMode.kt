@@ -84,17 +84,28 @@ object KeyboardVibrationMode {
         return MODE_SYSTEM_CONTROLLED
     }
 
+    // The probe hits PackageManager (an IPC); cache it for the process
+    // lifetime — whether the system exposes the keyboard-vibration screen
+    // cannot meaningfully change while a keyboard session is running.
+    @Volatile private var cachedSettingsIntent: Intent? = null
+    @Volatile private var probeDone: Boolean = false
+
     /** Exact `mqt` case 14: SDK >= 34, pinned to com.android.settings, MATCH_DEFAULT_ONLY. */
     private fun resolveKeyboardVibrationIntent(context: Context): Intent? {
         if (Build.VERSION.SDK_INT < 34) return null
+        if (probeDone) return cachedSettingsIntent
         val intent = Intent(ACTION_KEYBOARD_VIBRATION_SETTINGS)
             .setPackage("com.android.settings")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // as Gboard adds before use
         val appContext = try { context.getApplicationContext() } catch (t: Throwable) { context }
-        return if (appContext.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {
-            intent
-        } else {
-            null
-        }
+        val resolved =
+            if (appContext.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {
+                intent
+            } else {
+                null
+            }
+        cachedSettingsIntent = resolved
+        probeDone = true
+        return resolved
     }
 }

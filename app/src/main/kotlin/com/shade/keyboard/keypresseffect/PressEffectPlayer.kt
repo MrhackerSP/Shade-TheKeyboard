@@ -52,15 +52,11 @@ interface PressEffectPlayer : AutoCloseable {
     /** Gate for text-handle haptics (`pul.h` / `pun.h`). */
     fun canVibrateTextHandle(): Boolean
 
-    /** The resource-parsed system default duration (`pul.a`), -1 when absent. */
-    fun systemDefaultVibrationDuration(): Int
-
-    /** The currently cached effective duration (`pul.b`). */
-    fun vibrationDuration(): Int
-
     /**
      * Slider label renderer (`pul.c`): "N ms" on legacy devices, percentage on
-     * haptic-primitive devices — the same pref value means strength or duration.
+     * haptic-primitive devices — the same custom pref value means strength or
+     * duration. The slider's default state (no custom value) is rendered by
+     * the settings UI as "System default" instead.
      */
     fun formatVibrationLabel(value: Int): String
 
@@ -87,8 +83,6 @@ interface PressEffectPlayer : AutoCloseable {
             override fun playCustomVibration(value: Int) {}
             override fun playKeySound(view: View?, keyId: Int) {}
             override fun canVibrateTextHandle(): Boolean = false
-            override fun systemDefaultVibrationDuration(): Int = -1
-            override fun vibrationDuration(): Int = -1
             override fun formatVibrationLabel(value: Int): String = ""
             override fun close() {}
         }

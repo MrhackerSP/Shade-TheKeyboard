@@ -727,10 +727,19 @@ internal class SettingsAdapter(
 
     internal class SliderVH(v: View) : RecyclerView.ViewHolder(v) {
 
-        /** Vibration duration gets Gboard's dual unit label via the engine. */
-        private fun labelFor(item: SettingsItem.Slider, value: Int): String {
+        /**
+         * Vibration strength gets Gboard's labels: "System default" until the
+         * slider is first moved (the engine's default state — the OS keyboard
+         * tap), then the engine's dual unit — "N ms" on legacy devices, "N%"
+         * on haptic-primitive hardware.
+         */
+        private fun labelFor(item: SettingsItem.Slider, value: Int, customized: Boolean): String {
             if (item.key == "vibration_duration") {
-                runCatching { return PressEffectPlayer.get().formatVibrationLabel(value) }
+                if (!customized) return itemView.context.getString(R.string.vibration_system_default)
+                runCatching {
+                    val label = PressEffectPlayer.get().formatVibrationLabel(value)
+                    if (label.isNotEmpty()) return label
+                }
             }
             return String.format(Locale.US, item.format, value)
         }
@@ -752,7 +761,7 @@ internal class SettingsAdapter(
             val steps = Math.round((raw - item.min).toFloat() / item.step)
             val aligned = (item.min + steps * item.step).coerceIn(item.min, item.max)
             slider.value = aligned.toFloat()
-            valueTv.text = labelFor(item, aligned)
+            valueTv.text = labelFor(item, aligned, prefs.contains(item.key))
 
             // Remove previous listeners to avoid stale callbacks on rebind.
             slider.clearOnChangeListeners()
@@ -760,7 +769,9 @@ internal class SettingsAdapter(
 
             slider.addOnChangeListener { _, value, fromUser ->
                 val v = value.toInt()
-                valueTv.text = labelFor(item, v)
+                // Dragging the slider is by definition choosing a custom
+                // strength, so the label renders the engine's dual unit.
+                valueTv.text = labelFor(item, v, true)
                 if (item.key == "vibration_duration" && fromUser) {
                     // Gboard's VibrationDurationPreference live preview: each
                     // slider tick plays the effect immediately (pul.f).
