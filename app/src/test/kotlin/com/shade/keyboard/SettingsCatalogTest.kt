@@ -215,6 +215,9 @@ class SettingsCatalogTest {
 
         val stats = SettingsCatalog.search("analytics")
         assertTrue(stats.isNotEmpty())
+
+        val klipy = SettingsCatalog.search("klipy")
+        assertTrue(klipy.any { it is SettingsItem.Action })
     }
 
     @Test

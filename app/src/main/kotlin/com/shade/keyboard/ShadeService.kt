@@ -52,9 +52,6 @@ import com.shade.keyboard.gif.GifConfig
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.TextViewCompat
-import androidx.dynamicanimation.animation.DynamicAnimation
-import androidx.dynamicanimation.animation.SpringAnimation
-import androidx.dynamicanimation.animation.SpringForce
 import androidx.preference.PreferenceManager
 import com.shade.keyboard.ai.NeuralPredictionEngine
 import com.shade.keyboard.analytics.TouchBiasModel
@@ -85,7 +82,6 @@ import com.shade.keyboard.engine.SentencePositionScorer
 import com.shade.keyboard.engine.SuggestionRejectionTracker
 import com.shade.keyboard.engine.AcceptanceRateAdapter
 import com.shade.keyboard.engine.PerAppVocabularySnapshot
-import com.shade.keyboard.motion.ShadeMotion
 import com.shade.keyboard.slide.SlideDecoder
 import com.shade.keyboard.slide.SwipeModel
 import com.shade.keyboard.voice.VoiceInputController
@@ -343,7 +339,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     /** Live preview decoding for glide typing (debounced; cancelled on commit/clear). */
     private var glidePreviewJob: Job? = null
     internal var slotAnimator: ValueAnimator? = null
-    private var panelSpring: SpringAnimation? = null
 
     private var lastOrientation = -1
 
@@ -476,7 +471,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         suggestDebounceJob?.cancel()
         correctionJob?.cancel()
         slotAnimator?.cancel()
-        panelSpring?.cancel()
         try { neural?.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close neural predictor", e) }
         neural = null
         neuralLocale = null
@@ -706,8 +700,16 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             onClose = { closeGif() },
             onSend = { item, query -> sendGif(item, query) }
         )
-        gifController.bar.visibility = View.GONE
-        root.addView(gifController.bar, 2, LinearLayout.LayoutParams(MATCH, WRAP))
+        gifController.panel.header.visibility = View.GONE
+        gifController.panel.visibility = View.GONE
+        // GIF search / key-capture: while the panel owns input, the real keyboard is drawn
+        // below the GIF header and the grid steps aside (same model as the emoji search box).
+        gifController.panel.onInputModeChanged = { syncGifSurfaces() }
+        // The vertical GIF grid occupies the same content slot as the emoji and clipboard panels.
+        content.addView(gifController.panel, FrameLayout.LayoutParams(MATCH, MATCH))
+        // The GIF header (back button + search box + setup card) sits in the place of the
+        // suggestion strip whenever the GIF panel is open.
+        root.addView(gifController.panel.header, 2, LinearLayout.LayoutParams(MATCH, WRAP))
 
         // Translator bar: replaces the suggestion strip while translating. It owns a visible
         // input field (the missing "text field"), the target-language chip and the result row.
@@ -903,7 +905,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             applyMode(m, force = kb.rows.isEmpty())
         }
 
-        transitionToPanel(Panel.NONE, animate = false)
+        transitionToPanel(Panel.NONE)
 
         // Check if the user requested resize mode from Settings → Appearance →
         // Resize keyboard. If so, show the drag handle; it auto-hides after
@@ -1063,7 +1065,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun emojiSearchOwnsKeys(): Boolean =
         panel == Panel.EMOJI && this::emoji.isInitialized && emoji.isSearching
 
-    private fun transitionToPanel(p: Panel, animate: Boolean = true) {
+    private fun transitionToPanel(p: Panel) {
         if (this::emoji.isInitialized == false) return
         if (p != Panel.NONE) endWord()
         if (p != Panel.NONE) closeGif()
@@ -1100,55 +1102,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // only while the emoji panel is open.
         emoji.header.visibility = if (p == Panel.EMOJI) View.VISIBLE else View.GONE
 
-        if (!animate) {
-            outgoing?.visibility = View.GONE
-            incoming?.visibility = if (p == Panel.NONE) View.GONE else View.VISIBLE
-            kb.visibility = if (p == Panel.NONE) View.VISIBLE else View.GONE
-            // Hide the suggestion strip and resize handle when a panel (emoji/clip)
-            // is open — they're not useful while browsing emoji, and showing them
-            // creates a dead strip of wasted space above the panel.
-            strip.visibility = if (p == Panel.NONE) View.VISIBLE else View.GONE
-            if (this::resizeHandle.isInitialized) {
-                resizeHandle.visibility = if (p == Panel.NONE && resizeModeActive) View.VISIBLE else View.GONE
-            }
-            toolbarC.refreshStrip()
-            return
-        }
-
-        val w = root.width.toFloat().coerceAtLeast(1f)
-        val slideDist = w * 0.15f
-
-        incoming?.let { v ->
-            v.visibility = View.VISIBLE
-            v.translationX = slideDist
-            v.alpha = 0f
-            SpringAnimation(v, DynamicAnimation.TRANSLATION_X, 0f).apply {
-                spring = SpringForce(0f).apply {
-                    dampingRatio = SpringForce.DAMPING_RATIO_NO_BOUNCY
-                    stiffness = SpringForce.STIFFNESS_MEDIUM
-                }
-            }.start()
-            v.animate().alpha(1f).setDuration(ShadeMotion.PANEL_IN_MS).setInterpolator(ShadeMotion.FAST_OUT_SLOW_IN).start()
-        }
-
-        outgoing?.let { v ->
-            SpringAnimation(v, DynamicAnimation.TRANSLATION_X, -slideDist).apply {
-                spring = SpringForce(-slideDist).apply {
-                    dampingRatio = SpringForce.DAMPING_RATIO_NO_BOUNCY
-                    stiffness = SpringForce.STIFFNESS_MEDIUM
-                }
-            }.start()
-            v.animate().alpha(0f).setDuration(ShadeMotion.PANEL_OUT_MS).setInterpolator(ShadeMotion.FAST_OUT_LINEAR_IN)
-                .withEndAction {
-                    v.visibility = View.GONE
-                    v.translationX = 0f
-                    v.alpha = 1f
-                }
-                .start()
-        }
-
+        // Plain swap — panels open and close without any slide animation.
+        outgoing?.visibility = View.GONE
+        incoming?.visibility = if (p == Panel.NONE) View.GONE else View.VISIBLE
         kb.visibility = if (p == Panel.NONE) View.VISIBLE else View.GONE
-        // Hide the suggestion strip and resize handle when a panel is open.
+        // Hide the suggestion strip and resize handle when a panel (emoji/clip)
+        // is open — they're not useful while browsing emoji, and showing them
+        // creates a dead strip of wasted space above the panel.
         strip.visibility = if (p == Panel.NONE) View.VISIBLE else View.GONE
         if (this::resizeHandle.isInitialized) {
             resizeHandle.visibility = if (p == Panel.NONE && resizeModeActive) View.VISIBLE else View.GONE
@@ -1165,6 +1125,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
      */
     internal fun gifAvailable(): Boolean = prefs.getBoolean("gif_enabled", true)
 
+    /** True while the GIF panel owns the keyboard (query typing or API-key capture). */
+    private fun gifOwnsKeys(): Boolean =
+        gifActive && this::gifController.isInitialized && gifController.panel.ownsKeyboard
+
     private fun openGif() {
         if (!gifAvailable()) return
         if (fieldSecureInput || currentFieldType == FieldTypeDetector.FieldType.PASSWORD) {
@@ -1172,20 +1136,34 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             return
         }
         endWord()
-        if (panel != Panel.NONE) transitionToPanel(Panel.NONE, animate = false)
+        if (panel != Panel.NONE) transitionToPanel(Panel.NONE)
         if (translatorActive) closeTranslator()
         gifActive = true
         strip.visibility = View.GONE
-        gifController.bar.visibility = View.VISIBLE
+        gifController.panel.header.visibility = View.VISIBLE
         gifController.open()
+        syncGifSurfaces()
     }
 
     private fun closeGif() {
         if (!gifActive) return
         gifActive = false
         gifController.close()
-        gifController.bar.visibility = View.GONE
+        gifController.panel.header.visibility = View.GONE
+        gifController.panel.visibility = View.GONE
+        kb.visibility = View.VISIBLE
+        kb.slideDeleteEnabled = true
         syncStripVisibility()
+    }
+
+    /** Emoji-panel visibility rules: while the query box (or the setup card) owns input the real
+     *  keyboard is drawn below the GIF header and the grid steps aside. */
+    private fun syncGifSurfaces() {
+        if (!gifActive || !this::gifController.isInitialized) return
+        val owns = gifOwnsKeys()
+        kb.visibility = if (owns) View.VISIBLE else View.GONE
+        gifController.panel.visibility = if (owns) View.GONE else View.VISIBLE
+        kb.slideDeleteEnabled = !owns
     }
 
     /** The strip shows only when no other surface (panel/GIF bar/translator) owns its place. */
@@ -1240,7 +1218,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (!prefs.getBoolean("translator_enabled", true)) return
         if (fieldSecureInput || currentFieldType == FieldTypeDetector.FieldType.PASSWORD) return
         endWord()
-        if (panel != Panel.NONE) transitionToPanel(Panel.NONE, animate = false)
+        if (panel != Panel.NONE) transitionToPanel(Panel.NONE)
         if (gifActive) closeGif()
         translatorActive = true
         translatorInput.clear()
@@ -2168,6 +2146,24 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
             return true
         }
+        // Glide in GIF search: decode the swipe and feed the word into the query, exactly
+        // like the emoji search box.
+        if (gifActive && this::gifController.isInitialized && gifController.panel.isSearching) {
+            if (path.size < 4) return false
+            val layout = kbKeyLayout() ?: return false
+            val ctxJob = glideContext()
+            suggestJob?.cancel()
+            suggestJob = scope.launch {
+                val decoded = withContext(Dispatchers.Default) {
+                    slideDecoder.decode(path, layout, ctxJob.await())
+                }
+                if (!isActive) return@launch
+                if (!decoded.isNullOrEmpty() && gifOwnsKeys() && gifController.panel.isSearching) {
+                    gifController.panel.typeIntoSearch("$decoded ")
+                }
+            }
+            return true
+        }
         if (gifActive || translatorActive) return false
         if (path.size < 4) return false
         val layout = kbKeyLayout() ?: return false
@@ -2206,12 +2202,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             setResizeMode(false)
         }
         if (gifActive) {
+            // In grid mode no keyboard is on screen — swallow stray keys (e.g. hardware).
+            if (!gifOwnsKeys()) return
             when (code) {
                 Codes.DELETE -> { gifController.backspace(); return }
                 Codes.SPACE -> { gifController.type(" "); return }
                 Codes.ENTER -> { gifController.submit(); return }
-                Codes.SHIFT, Codes.SYMBOLS, Codes.SYMBOLS2, Codes.LETTERS -> {}
-                else -> closeGif()
+                else -> Unit // SHIFT / ?123 switch layouts; typing keeps flowing through onText
             }
         }
         if (translatorActive) {

@@ -120,6 +120,10 @@ internal class PrefsApplier(private val svc: ShadeService) {
 
     internal fun applyPrefs() { with(svc) {
         if (!svc.kbReady()) return
+        // Runtime GIF API key: the Settings-app dialog writes the same pref as the
+        // GIF panel's setup card; refresh here so a key pasted in Settings reaches
+        // the running IME on the next prefs application (window show / input start).
+        GifConfig.applyPrefs(prefs)
         kbTheme = Themes.resolve(this, prefs)
         updateWallpaperListener()
         numberRow = prefs.getBoolean("number_row", false)
@@ -219,7 +223,7 @@ internal class PrefsApplier(private val svc: ShadeService) {
 
         emoji.setTheme(kbTheme)
         clipPanel.setTheme(kbTheme)
-        if (svc.gifControllerReady()) gifController.bar.setTheme(kbTheme)
+        if (svc.gifControllerReady()) gifController.panel.setTheme(kbTheme)
         svc.translateBar?.setTheme(kbTheme)
 
         root.setBackgroundColor(BackgroundMath.bgArgb(kbTheme.bg, prefs.getInt("bg_transparency", 0)))

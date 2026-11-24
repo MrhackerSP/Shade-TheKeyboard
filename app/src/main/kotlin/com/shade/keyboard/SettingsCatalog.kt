@@ -254,6 +254,10 @@ object SettingsCatalog {
                 listOf("emoji", "smiley", "suggestion")),
             SettingsItem.Toggle("gif_enabled", R.string.pref_gif, 0, true,
                 listOf("gif", "sticker", "animated")),
+            SettingsItem.Action(R.string.pref_gif_api_key, R.string.pref_gif_api_key_sum,
+                listOf("gif", "api", "key", "klipy", "giphy", "tenor", "sticker", "token")) { ctx, prefs ->
+                (ctx as? SettingsActivity)?.showGifApiKeyDialog(prefs)
+            },
             SettingsItem.Toggle("translator_enabled", R.string.pref_translator, 0, true,
                 listOf("translate", "translation")),
             SettingsItem.Toggle("voice_input", R.string.pref_voice_input, 0, true,

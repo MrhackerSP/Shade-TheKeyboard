@@ -147,6 +147,7 @@
     <string name="gif_key_hint">Paste API key</string>
     <string name="gif_key_save">Save</string>
     <string name="gif_key_saved">API key saved — GIFs enabled</string>
+    <string name="gif_key_cleared">API key cleared — using the built-in key</string>
     <string name="gif_consent_message">GIFs come from an online GIF provider. What you type here is sent to that provider to find GIFs; the text in your message never is.</string>
     <string name="gif_consent_continue">Continue</string>
     <string name="gif_blocked_secure">GIFs are disabled in password fields</string>
@@ -161,6 +162,8 @@
     <string name="translator_enter_hint">Press ⏎ to insert the translation</string>
     <string name="pref_translator">Translator</string>
     <string name="pref_gif">GIF search (online)</string>
+    <string name="pref_gif_api_key">GIF API key (Klipy)</string>
+    <string name="pref_gif_api_key_sum">Paste your free Klipy API key for GIF search — leave empty to use the built-in key. The key stays on this device.</string>
 
     <!-- Onboarding -->
     <string name="try_keyboard">Try the keyboard</string>

@@ -8,18 +8,21 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
 /**
- * State machine behind the GIF bar. The query is typed on the real keyboard: while the bar is open
- * the service forwards keystrokes to [type]/[backspace]/[submit] instead of the text field.
+ * State machine behind the GIF panel. The panel (see [GifPanel]) is laid out like the
+ * emoji panel: a search box above a vertically scrolling grid. While the query box owns
+ * input the service forwards keystrokes into [type]/[backspace]/[submit]; the ✕ button
+ * and the Enter key come back through the [GifPanel.Callbacks] here.
  *
  *  - Nothing is requested from the GIF provider until the person accepts the one-time notice (`gif_consent`).
- *  - Opening shows trending GIFs; Enter on the keyboard searches the typed words.
- *  - The text field's content is never sent, only what is typed into the bar.
+ *  - Opening shows trending GIFs; typing live-searches after a short pause, Enter searches immediately.
+ *  - Only what is typed into the search box is sent, never the text of the message.
  */
 class GifController(
     private val context: Context,
@@ -27,10 +30,10 @@ class GifController(
     private val prefs: SharedPreferences,
     private val onClose: () -> Unit,
     private val onSend: (GifItem, String) -> Unit
-) : GifBar.Callbacks {
+) : GifPanel.Callbacks {
 
     val loader = GifImageLoader(context, scope)
-    val bar = GifBar(context, loader, this)
+    val panel = GifPanel(context, loader, this)
 
     // The client is rebuilt whenever the effective API key changes (build-time key or the
     // runtime key pasted in the panel's setup card), so a saved key works immediately.
@@ -48,13 +51,13 @@ class GifController(
             return clientInstance
         }
 
-    private var query = ""
     private var activeQuery = ""
     private var page = 0
     private var hasNext = false
     private var loading = false
     private var generation = 0
     private var job: Job? = null
+    private var liveSearchJob: Job? = null
 
     var isOpen = false
         private set
@@ -63,12 +66,11 @@ class GifController(
 
     fun open() {
         isOpen = true
-        query = ""
         activeQuery = ""
-        bar.setQuery("")
+        panel.reset()
         when {
-            client == null -> bar.showSetup()
-            !consented -> bar.showConsent()
+            client == null -> panel.showSetup()
+            !consented -> panel.showConsent()
             else -> loadFirst("")
         }
     }
@@ -77,8 +79,9 @@ class GifController(
         isOpen = false
         generation++
         job?.cancel()
+        liveSearchJob?.cancel()
         loading = false
-        bar.clearThumbs()
+        panel.reset()
         loader.clear()
     }
 
@@ -87,29 +90,23 @@ class GifController(
     fun type(text: String) {
         if (!isOpen) return
         // While the API-key setup card is open, keystrokes feed the key field instead of the query.
-        if (bar.isCapturingKey) { bar.appendKeyInput(text); return }
-        if (client == null || !consented) return
-        query = (query + text).take(MAX_QUERY)
-        bar.setQuery(query)
+        if (panel.isCapturingKey) { panel.appendKeyInput(text); return }
+        if (panel.isSearching) panel.typeIntoSearch(text)
     }
 
     fun backspace() {
         if (!isOpen) return
-        if (bar.isCapturingKey) { bar.backspaceKeyInput(); return }
-        if (query.isEmpty()) return
-        query = query.substring(0, query.offsetByCodePoints(query.length, -1))
-        bar.setQuery(query)
+        if (panel.isCapturingKey) { panel.backspaceKeyInput(); return }
+        if (panel.isSearching) panel.searchBackspace()
     }
 
     fun submit() {
         if (!isOpen) return
-        if (bar.isCapturingKey) { bar.submitKeyInput(); return }
-        if (client == null || !consented) return
-        activeQuery = query.trim()
-        loadFirst(activeQuery)
+        if (panel.isCapturingKey) { panel.submitKeyInput(); return }
+        if (panel.isSearching) panel.submitSearch()
     }
 
-    // ---- GifBar callbacks ---------------------------------------------------------------------
+    // ---- GifPanel callbacks ---------------------------------------------------------------------
 
     override fun onClose() = onClose.invoke()
 
@@ -127,8 +124,34 @@ class GifController(
     override fun onApiKeySaved(key: String) {
         prefs.edit().putString(GifConfig.KEY_PREF, key.trim()).apply()
         GifConfig.applyPrefs(prefs)
-        bar.showStatus(context.getString(R.string.gif_key_saved))
-        if (consented) loadFirst("") else bar.showConsent()
+        panel.showStatus(context.getString(R.string.gif_key_saved))
+        if (consented) loadFirst("") else panel.showConsent()
+    }
+
+    override fun onQueryEdited(query: String) {
+        if (!isOpen || !panel.isSearching) return
+        // Live search: only the settled query is loaded (each keystroke resets the pause).
+        liveSearchJob?.cancel()
+        liveSearchJob = scope.launch {
+            delay(LIVE_SEARCH_DELAY_MS)
+            if (!isOpen || !panel.isSearching) return@launch
+            activeQuery = query.trim()
+            loadFirst(activeQuery)
+        }
+    }
+
+    override fun onSearchSubmitted(query: String) {
+        if (!isOpen) return
+        liveSearchJob?.cancel()
+        activeQuery = query.trim()
+        loadFirst(activeQuery)
+    }
+
+    override fun onQueryCleared() {
+        if (!isOpen) return
+        liveSearchJob?.cancel()
+        activeQuery = ""
+        if (client != null && consented) loadFirst("")
     }
 
     // ---- sending ------------------------------------------------------------------------------
@@ -163,8 +186,8 @@ class GifController(
         loading = true
         val gen = generation
         if (replace) {
-            bar.clearThumbs()
-            bar.showStatus(context.getString(R.string.gif_loading))
+            panel.clearGrid()
+            panel.showStatus(context.getString(R.string.gif_loading))
         }
         job = scope.launch {
             val result: GifPage? = try {
@@ -178,13 +201,13 @@ class GifController(
             if (gen != generation || !isOpen) return@launch
             loading = false
             if (result == null) {
-                if (replace) bar.showStatus(context.getString(R.string.gif_error))
+                if (replace) panel.showStatus(context.getString(R.string.gif_error))
                 return@launch
             }
             page = result.page
             hasNext = result.hasNext
-            bar.showItems(result.items, append = !replace)
-            if (replace && result.items.isEmpty()) bar.showStatus(context.getString(R.string.gif_no_results))
+            panel.showItems(result.items, append = !replace)
+            if (replace && result.items.isEmpty()) panel.showStatus(context.getString(R.string.gif_no_results))
         }
     }
 
@@ -200,7 +223,7 @@ class GifController(
         private const val KEY_CONSENT = "gif_consent"
         private const val KEY_CUSTOMER = "gif_customer_id"
         private const val SEND_DIR = "gif_send"
-        private const val MAX_QUERY = 60
         private const val MAX_SEND_BYTES = 12 * 1024 * 1024
+        private const val LIVE_SEARCH_DELAY_MS = 400L
     }
 }

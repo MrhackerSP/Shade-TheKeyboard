@@ -40,6 +40,7 @@ import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.lifecycle.lifecycleScope
+import com.shade.keyboard.gif.GifConfig
 import com.shade.keyboard.keypresseffect.PressEffectPlayer
 import com.shade.keyboard.migration.DictionaryImport
 import com.google.android.material.button.MaterialButton
@@ -224,6 +225,41 @@ class SettingsActivity : AppCompatActivity() {
                         ).show()
                     }
                 }
+            }
+        }
+        dialog.show()
+    }
+
+    /**
+     * GIF (Klipy) API key editor — writes the same pref the GIF panel's setup
+     * card uses ([GifConfig.KEY_PREF]). Saving an empty key clears the runtime
+     * override so the build-time key applies again.
+     */
+    internal fun showGifApiKeyDialog(prefs: SharedPreferences) {
+        val input = EditText(this).apply {
+            hint = getString(R.string.gif_key_hint)
+            // VISIBLE_PASSWORD keeps a pasted key verbatim: no autocorrect,
+            // no emoji suggestions mangling the token.
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            setSingleLine(true)
+        }
+        val dialog = AlertDialog.Builder(this, R.style.ShadeDialogTheme)
+            .setTitle(getString(R.string.pref_gif_api_key))
+            .setMessage(getString(R.string.pref_gif_api_key_sum))
+            .setView(input)
+            .setPositiveButton(R.string.gif_key_save, null)
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val key = input.text.toString().trim()
+                prefs.edit().putString(GifConfig.KEY_PREF, key).apply()
+                Toast.makeText(
+                    this,
+                    if (key.isEmpty()) R.string.gif_key_cleared else R.string.gif_key_saved,
+                    Toast.LENGTH_SHORT
+                ).show()
+                dialog.dismiss()
             }
         }
         dialog.show()
