@@ -127,7 +127,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     internal val toolDefs = listOf(
         "clip" to "📋", "emoji" to "😀", "gif" to "GIF", "translate" to "🌐", "numpad" to "123", "left" to "◀", "right" to "▶",
         "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste",
-        "undo" to "Undo", "incognito" to "🕶", "onehand" to "1-hand",
+        "undo" to "Undo", "proof" to "Proof", "incognito" to "🕶", "onehand" to "1-hand",
         "resize" to "Resize", "voice" to "🎤", "settings" to "⚙"
     )
     internal val toolIcons = mapOf(
@@ -135,7 +135,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         "numpad" to R.drawable.ic_tb_numpad, "left" to R.drawable.ic_tb_left,
         "right" to R.drawable.ic_tb_right, "selectall" to R.drawable.ic_tb_selectall,
         "copy" to R.drawable.ic_tb_copy, "cut" to R.drawable.ic_tb_cut,
-        "paste" to R.drawable.ic_tb_paste, "undo" to R.drawable.ic_tb_undo,
+        "paste" to R.drawable.ic_tb_paste, "undo" to R.drawable.ic_tb_undo, "proof" to R.drawable.ic_tb_proof,
         "incognito" to R.drawable.ic_tb_incognito, "onehand" to R.drawable.ic_tb_onehand,
         "resize" to R.drawable.ic_tb_resize, "voice" to R.drawable.ic_tb_mic, "settings" to R.drawable.ic_tb_settings
     )
@@ -1328,6 +1328,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             "cut" -> ic?.performContextMenuAction(android.R.id.cut)
             "paste" -> { endWord(); ic?.performContextMenuAction(android.R.id.paste) }
             "undo" -> ic?.performContextMenuAction(android.R.id.undo)
+            "proof" -> runProofread()
             "incognito" -> {
                 incognito = if (incognito) false else true
                 prefs.edit().putBoolean("incognito", incognito).apply()
@@ -1342,6 +1343,91 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         }
         updateShiftFromCaps()
         suggestPipeline.updateSuggestions()
+    }
+
+    // ------------------------------------------------------------------ proofread ("Proof" tool)
+
+    /**
+     * Toolbar "Proof" action: conservative proofreading of finished text.
+     *
+     * Selected text takes priority; otherwise the span around the cursor is
+     * used (up to [PROOFREAD_BEFORE] chars before + [PROOFREAD_AFTER] after —
+     * a whole draft of a typical message field). Fixes come from the same
+     * machinery as the suggestion pipeline: bare contractions via
+     * MultiWordCorrector, ambiguity-guarded dictionary corrections, then a
+     * time-boxed neural spell fallback — plus punctuation and casing hygiene.
+     * Nothing is stored, learned or transmitted. The edit lands in one batch
+     * edit, so the app's Undo tool reverses it wholesale.
+     */
+    internal val proofreader: Proofreader by lazy {
+        Proofreader(
+            isKnown = { w -> dict.contains(w) },
+            resolve = { w ->
+                val known = dict.contains(w)
+                com.shade.keyboard.engine.MultiWordCorrector.correct(w, isDictionaryWord = known)
+                    ?: if (known) null else dict.correction(w, isEnglishLocale())
+            },
+            neuralResolve = { w -> neuralSpell?.correct(w) ?: emptyList() }
+        )
+    }
+
+    // One proofread at a time: a double tap would otherwise re-delete the
+    // already-replaced span, and NeuralSpellChecker is single-threaded.
+    private var proofInFlight = false
+
+    private fun runProofread() {
+        if (proofInFlight) return
+        val ic = currentInputConnection ?: return
+        ic.finishComposingText()
+        val selection = ic.getSelectedText(0)?.toString()
+        val fromSelection = !selection.isNullOrEmpty()
+        val text: String
+        val beforeLen: Int
+        val afterLen: Int
+        if (fromSelection) {
+            text = selection!!
+            beforeLen = 0
+            afterLen = 0
+        } else {
+            val before = ic.getTextBeforeCursor(PROOFREAD_BEFORE, 0)?.toString() ?: ""
+            val after = ic.getTextAfterCursor(PROOFREAD_AFTER, 0)?.toString() ?: ""
+            if (before.isBlank() && after.isBlank()) {
+                Toast.makeText(this, R.string.proofread_nothing, Toast.LENGTH_SHORT).show()
+                return
+            }
+            text = before + after
+            beforeLen = before.length
+            afterLen = after.length
+        }
+        proofInFlight = true
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.Default) { proofreader.proofread(text) }
+                val conn = currentInputConnection ?: return@launch
+                if (result.fixCount == 0 || result.text == text) {
+                    Toast.makeText(this@ShadeService, R.string.proofread_clean, Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                conn.beginBatchEdit()
+                try {
+                    if (fromSelection) {
+                        conn.commitText(result.text, 1)
+                    } else {
+                        conn.deleteSurroundingText(beforeLen, afterLen)
+                        conn.commitText(result.text, 1)
+                    }
+                } finally {
+                    conn.endBatchEdit()
+                }
+                Toast.makeText(
+                    this@ShadeService,
+                    resources.getQuantityString(R.plurals.proofread_fixes, result.fixCount, result.fixCount),
+                    Toast.LENGTH_SHORT
+                ).show()
+            } finally {
+                proofInFlight = false
+            }
+        }
     }
 
     // ------------------------------------------------------------------ remove suggestion
@@ -3453,5 +3539,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // 4o — autocorrect confidence threshold. Combined with the typing-speed
         // adjustment in [endWord] to gate aggressive autocorrects.
         private const val AUTOCORRECT_CONFIDENCE_THRESHOLD = 0.85f
+        // Proof tool fetch window: chars before/after the cursor when nothing is selected.
+        private const val PROOFREAD_BEFORE = 4000
+        private const val PROOFREAD_AFTER = 1000
     }
 }

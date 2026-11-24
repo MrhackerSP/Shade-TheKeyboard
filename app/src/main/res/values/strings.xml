@@ -294,4 +294,12 @@
     <string name="info_backup">Backups are encrypted with your passphrase and stored only on this device. Nothing is uploaded.</string>
     <string name="info_about">Shade is an open-source keyboard. Typing, suggestions and learning all happen on your device — no internet permission, no tracking.</string>
     <string name="info_no_results">No settings found. Try a different search term.</string>
+
+    <!-- Proofread ("Proof" toolbar tool) -->
+    <string name="proofread_nothing">Nothing to proofread</string>
+    <string name="proofread_clean">Looks good — no fixes needed</string>
+    <plurals name="proofread_fixes">
+        <item quantity="one">Proofread — %d fix applied</item>
+        <item quantity="other">Proofread — %d fixes applied</item>
+    </plurals>
 </resources>
