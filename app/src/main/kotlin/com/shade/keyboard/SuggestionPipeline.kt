@@ -121,14 +121,6 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
         // RankingFeatureExtractor): candidate chars vs typed chars, persistent
         // user unigram count and session bigram count, type code 0 (words).
         val prev1 = contextWords.lastOrNull()
-<<<<<<< ours
-        val modelWeight = if (dictIds().split(',').firstOrNull()?.trim()?.equals("en", ignoreCase = true) == true) 0.32f else 0.12f
-=======
-        val prev2 = contextWords.dropLast(1).lastOrNull()
-        val userBigramScores = dict.bigramModel
-            ?.predict(prev2, prev1, 32)
-            ?.associate { it.first.lowercase() to it.second }
-            .orEmpty()
         // §1 — rebalanced merge. With 0.32/0.12 the stage-1 leader was
         // mathematically unbeatable: its base term was (1-w)·1.0 = 0.68 (en)
         // while the best possible challenger at index 1 scored
@@ -137,7 +129,6 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
         // overturn merge order. 0.70/0.50 keeps merge order as a prior but
         // lets genuine model + feature evidence win.
         val modelWeight = if (dictIds().split(',').firstOrNull()?.trim()?.equals("en", ignoreCase = true) == true) 0.70f else 0.50f
->>>>>>> theirs
 
         val ranked = candidates.take(8).mapIndexed { index, candidate ->
             val base = 1f / (index + 1)
@@ -210,30 +201,16 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
     ) { with(svc) {
         val missing = shown.take(3).filter { it.isNotEmpty() && !lastRankedFeatures.containsKey(it) }
         if (missing.isEmpty()) return@with
-        val embedding = contextEmbeddingForCurrentLocale(contextWords)
-        val neuralLookup = neuralPredictions.associate { it.first.lowercase() to it.second }
-        val bigramScores = dict.bigramModel
-            ?.predict(prev2, prev1, 32)
-            ?.associate { it.first.lowercase() to it.second }
-            .orEmpty()
-        missing.forEachIndexed { index, word ->
-            val base = 1f / (index + 1)
-            val neuralScore = neuralLookup[word.lowercase()] ?: (base * 0.25f)
-            val spatial = if (layout != null) SpatialScorer.score(word, touches, layout) else 0f
+        missing.forEach { word ->
             val features = RankingFeatureExtractor.extract(
                 candidate = word,
-                typedPrefix = prefix,
-                baseRankScore = base,
-                neuralScore = neuralScore,
-                spatialScore = spatial,
-                touches = touches,
-                layout = layout ?: emptyMap(),
-                contextEmbedding = embedding,
-                userUnigramScore = userWordMemory.score(word),
-                userBigramScore = bigramScores[word.lowercase()] ?: 0f
+                typedWord = prefix,
+                typeCode = RankingFeatureExtractor.TYPE_WORD,
+                userUnigramCount = userWordMemory.count(word),
+                userBigramCount = sessionBigramBoost.bigramCount(prev1, word)
             )
             lastRankedFeatures[word] = features
-            lastRawRankerScores[word] = runCatching { rankingScorer?.score(features) }.getOrDefault(0f)
+            lastRawRankerScores[word] = runCatching { rankingScorer?.score(features) ?: 0f }.getOrDefault(0f)
         }
     }}
 
