@@ -67,6 +67,16 @@ object CandidateRanker {
         return mergeNextWordScored(neuralScored, dictionary = dictionaryScored, limit = limit)
     }
 
+    /**
+     * §1 — per-source positional prior: a word's rank WITHIN its own source
+     * list becomes its confidence (halving prior: 1, 1/2, 1/4, ...), so sources merged via [mergeNextWordScored]
+     * compete by their own ordering instead of by position in a hand-built
+     * concatenation (which used to put the neural RNN output after every
+     * heuristic list and made merge order decide the winner).
+     */
+    fun scoredByPosition(words: List<String>): List<Pair<String, Float>> =
+        words.mapIndexed { index, word -> word to (1f / (1 shl minOf(index, 30))) }
+
     fun withEmojiFallback(
         ranked: List<String>,
         emojis: List<String>,

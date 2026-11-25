@@ -287,6 +287,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     internal val lastRawRankerScores = java.util.concurrent.ConcurrentHashMap<String, Float>()
     @Volatile
     internal var lastShownCandidates: List<String> = emptyList()
+    // §3c — when the current candidate list was rendered. The rejection gate
+    // treats a bar that was on screen for < REJECTION_MIN_SHOWN_MS as
+    // possibly-unseen: with the 32ms debounce + pipeline latency, fast
+    // typists commit before the strip ever paints.
+    @Volatile
+    internal var candidatesShownAt: Long = 0L
+    // §5 — bumped only on STRUCTURAL learning events (first-ever use of a
+    // word, an explicit "remove suggestion") so the suggestion cache can key
+    // on learning state; per-keystroke learning drift stays bounded by the
+    // cache TTL instead of destroying the hit rate.
+    @Volatile
+    internal var learningGeneration: Long = 0L
     internal var numberRow = false
     internal var toolbarOpen = false
     internal var layoutName = "qwerty"
@@ -474,7 +486,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         try { neural?.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close neural predictor", e) }
         neural = null
         neuralLocale = null
-        synchronized(neuralLock) { failedNeuralLocales.clear() }
+        synchronized(neuralLock) {
+            for (parked in neuralEngineCache.values) {
+                try { parked.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close parked neural engine", e) }
+            }
+            neuralEngineCache.clear()
+            failedNeuralLocales.clear()
+        }
         try { contextEncoder?.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close context encoder", e) }
         contextEncoder = null
         try { adaptiveWordMemory.shutdown() } catch (e: Exception) { Log.w("ShadeService", "Failed to shut down adaptive word memory", e) }
@@ -504,6 +522,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            // §7 — spare warm neural engines are the first thing to go under
+            // memory pressure; the active engine stays loaded.
+            synchronized(neuralLock) {
+                for (parked in neuralEngineCache.values) {
+                    try { parked.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close parked neural engine", e) }
+                }
+                neuralEngineCache.clear()
+            }
+        }
+    }
 
     override fun onCreateInputView(): View = buildInputView()
 
@@ -1538,6 +1570,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
      */
     private fun removeSuggestionConfirmed(word: String) {
         rejectionTracker.suppress(word)
+        learningGeneration++ // §5 — structural learning event for the cache salt
         if (lastClipText != null && lastClipText.equals(word, ignoreCase = true)) lastClipText = null
         if (!incognito && personalLearningAllowed()) {
             userWordMemory.forget(word)
@@ -2031,14 +2064,20 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return true
     }
 
-    private fun pushUndo(charsCommitted: Int, restore: String) {
+    // Internal so SuggestionPipeline can push the §6 undo entry when the user
+    // accepts a suggestion (one backspace restores the typed prefix).
+    internal fun pushUndo(charsCommitted: Int, restore: String, cursorAtCommitOverride: Int = Int.MIN_VALUE) {
         if (charsCommitted <= 0 && restore.isEmpty()) return
         if (undoStack.size >= MAX_UNDO) undoStack.removeLast()
         // Record the cursor position the commit is expected to leave the caret
         // at. backspace() checks this before replaying the undo, so a stale
         // entry (cursor has since moved elsewhere) is skipped instead of
         // deleting the wrong characters at the new caret position.
-        val expectedCursor = if (cursorPos >= 0) cursorPos + charsCommitted else -1
+        // [cursorAtCommitOverride] is for callers whose commit both deletes and
+        // inserts (replacing the typed prefix with a suggestion), where
+        // cursorPos + charsCommitted would not describe the post-commit caret.
+        val expectedCursor = if (cursorAtCommitOverride != Int.MIN_VALUE) cursorAtCommitOverride
+        else if (cursorPos >= 0) cursorPos + charsCommitted else -1
         undoStack.offerLast(UndoEntry(charsCommitted, restore, expectedCursor))
     }
 
@@ -2962,10 +3001,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     if (candidate == null && w.length >= 3) {
                         val locale = dictIds().split(',').firstOrNull()?.trim() ?: "en"
                         SystemSpell.flush()
-                        // 20ms: the spell-check round trip is async; the speculative request() fired on the
-                        // keystrokes is usually done by now, and endWord() runs on Main so the
-                        // bounded wait keeps the space press instant.
-                        val sys = SystemSpell.await(locale, w, 20L)
+                        // §8 — never block Main on the spell round trip: the
+                        // speculative request() fired on the keystrokes is used
+                        // only if it has already completed (await(0) reads the
+                        // cache/pending state without waiting — 20ms was >1
+                        // frame at 60Hz, 2.4 frames at 120Hz). The dictionary
+                        // correction above already covers the rest, and the
+                        // flushed request gets cached for the next word end.
+                        val sys = SystemSpell.await(locale, w, 0L)
                         if (sys != null && sys.typo && sys.suggestions.isNotEmpty()) {
                             candidate = sys.suggestions.first()
                         }
@@ -3028,6 +3071,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
             if (accepted != null && accepted != w) {
                 recordCorrectionEvent(w, accepted, sep)
+                if (userWordMemory.score(accepted) <= 0f) learningGeneration++
                 userWordMemory.bump(accepted)
                 // Personal correction memory: this pair just earned a vote.
                 if (correctionLearningAllowed()) {
@@ -3049,19 +3093,41 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
             // 4g — Session bigram observation + rejection tracking.
             sessionBigramBoost.observeBigram(prev1, finalWord)
-            if (lastShownCandidates.isNotEmpty() && finalWord !in lastShownCandidates) {
-                lastShownCandidates.take(3).forEach { suggested ->
-                    if (suggested.isNotEmpty() && !suggested.equals(finalWord, ignoreCase = true)) {
-                        rejectionTracker.recordRejection(suggested)
+            // §3 — rejection attribution fixes:
+            //  • [lastShownCandidates] is the FINAL displayed list (set in
+            //    setCandidates), so rejections land on words the user could
+            //    actually see — the pre-injection list penalized words that
+            //    injections had already pushed off the strip.
+            //  • Only the CENTER candidate is a recommendation — the side
+            //    slots are context, not advice — so only it records a
+            //    rejection and drives the negative ranker update.
+            //  • An OOV commit (proper noun, code, username) is not evidence
+            //    against a known suggestion; skip it.
+            //  • A bar on screen for < REJECTION_MIN_SHOWN_MS may never have
+            //    been read (fast typists commit before it renders).
+            if (lastShownCandidates.isNotEmpty() &&
+                lastShownCandidates.none { it.equals(finalWord, ignoreCase = true) }
+            ) {
+                val shownLongEnough =
+                    SystemClock.elapsedRealtime() - candidatesShownAt >= REJECTION_MIN_SHOWN_MS
+                val typedKnown = dict.contains(finalWord) ||
+                    userWordMemory.score(finalWord) > 0f ||
+                    adaptiveWordMemory.score(finalWord) > 0f
+                if (shownLongEnough && typedKnown) {
+                    val center = lastShownCandidates.getOrNull(1)
+                    if (!center.isNullOrEmpty() && !center.equals(finalWord, ignoreCase = true)) {
+                        rejectionTracker.recordRejection(center)
                     }
                 }
-                // Rejection-based ranker personalization: the top candidate was
-                // shown and the user typed a different word instead. Only when
-                // the user's own word won — a just-applied autocorrect is not a
-                // rejection of the bar. A single ignore is weak evidence, so
-                // the negative update runs at a fraction of the learning rate.
-                if (accepted == null && rankerLearningAllowed() && personalLearningAllowed()) {
-                    val ignoredTop = lastShownCandidates.firstOrNull()
+                // Rejection-based ranker personalization: the center candidate
+                // was shown and the user typed a different word instead. Only
+                // when the user's own word won — a just-applied autocorrect is
+                // not a rejection of the bar. A single ignore is weak evidence,
+                // so the negative update runs at a fraction of the learning rate.
+                if (shownLongEnough && accepted == null &&
+                    rankerLearningAllowed() && personalLearningAllowed()
+                ) {
+                    val ignoredTop = lastShownCandidates.getOrNull(1)
                     if (!ignoredTop.isNullOrEmpty() &&
                         !ignoredTop.equals(finalWord, ignoreCase = true) &&
                         ignoredTop != lastCorrectionEvent?.corrected
@@ -3091,6 +3157,60 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             ic?.finishComposingText()
         }
         return null
+    }
+
+    /**
+     * §4 — controlled center-slot exception: the highest-confidence spelling
+     * correction for the typed prefix may occupy the suggestion bar even
+     * though it doesn't extend the prefix (Gboard's "see the fix while
+     * typing"). Gated by the same confidence machinery as autocorrect
+     * (CorrectionConfidence + typing-speed adjustment + suppressor), so the
+     * bar only ever shows a fix the space key would have applied. Dictionary
+     * only — the neural/system-spell fallbacks stay word-end-only.
+     */
+    internal fun barSpellFix(prefix: String): String? {
+        if (prefix.length < 3 || prefix.length > 24) return null
+        if (!prefix.all { it.isLetter() || it == '\'' || it == '-' }) return null
+        if (dict.contains(prefix)) return null
+        val rawTouches = currentTouchOffsets
+        val touches = if (learningTouchOn && personalLearningAllowed()) {
+            touchBiasModel.remapAll(prefix, rawTouches)
+        } else rawTouches
+        val detail = try {
+            dict.correctionDetailed(prefix, isEnglishLocale(), touches)
+        } catch (t: Exception) {
+            ShadeLog.w("ShadeService", "bar spell fix failed", t, once = true)
+            null
+        } ?: return null
+        if (detail.alwaysAllowed) return detail.word
+        if (autocorrectSuppressor.shouldSuppress(
+                contextWordsExcluding(prefix).lastOrNull(), prefix, detail.word)
+        ) return null
+        val speedAdjustment = com.shade.keyboard.engine.TypingSpeedAdapter.confidenceThresholdAdjustment()
+        val effectiveThreshold = (AUTOCORRECT_CONFIDENCE_THRESHOLD + speedAdjustment).coerceIn(0.5f, 0.99f)
+        val confidence = com.shade.keyboard.engine.CorrectionConfidence.score(
+            editCost = detail.editCost,
+            wordLen = prefix.length,
+            rank = detail.rank,
+            margin = detail.margin,
+            touchAvg = detail.touchAvg,
+            touchDiff = detail.touchDiff,
+            isKnownWord = false
+        )
+        return if (confidence >= effectiveThreshold) detail.word else null
+    }
+
+    // §5/§3/§6 — internal accessors for SuggestionPipeline: the cache salt
+    // needs the focused app's package, suggestion acceptance needs the caret
+    // position for the undo entry, and a suggestion tap supersedes any
+    // pending autocorrect revert. [info]/[cursorPos]/[lastCorrectionEvent]
+    // stay private because their types are class-private.
+    internal fun currentAppPackage(): String? = info?.packageName
+
+    internal fun currentCursorPos(): Int = cursorPos
+
+    internal fun clearCorrectionEvent() {
+        lastCorrectionEvent = null
     }
 
     private fun fixPreviousConfusable(prevLower: String, beforePrev: String?, word: String, sep: String?) {
@@ -3241,6 +3361,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return available.firstOrNull() ?: "en"
     }
 
+    // §7 — warm-engine cache: mixed-script typing (en ↔ hi/hg) used to close
+    // and recreate the engine under [neuralLock] on every script flip, which
+    // both thrashed the loader and left a null-engine window where prediction
+    // calls silently returned nothing. model_en.ort is ~26MB while hi/hg are
+    // <0.5MB, so parking the previous engine is cheap; spares are dropped on
+    // low-memory trim and in [onDestroy].
+    private val neuralEngineCache = LinkedHashMap<String, NeuralPredictionEngine>()
+
     internal fun reloadNeuralEngine(locale: String) {
         synchronized(neuralLock) {
             if (neuralLocale == locale && neural != null) return
@@ -3249,9 +3377,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             failedNeuralLocales.remove(locale)
 
             val old = neural
+            val oldLocale = neuralLocale
             neural = null
             neuralLocale = null
-            try { old?.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close old neural engine", e) }
+
+            val cached = neuralEngineCache.remove(locale)
+            if (cached != null) {
+                cached.enabled = neuralOn
+                neural = cached
+                neuralLocale = locale
+                parkNeuralEngine(oldLocale, old as? NeuralPredictionEngine)
+                return
+            }
 
             val created = try {
                 NeuralPredictionEngine.create(this@ShadeService, locale)
@@ -3267,6 +3404,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             } else {
                 neuralLocale = null
                 failedNeuralLocales[locale] = SystemClock.elapsedRealtime()
+            }
+            parkNeuralEngine(oldLocale, old as? NeuralPredictionEngine)
+        }
+    }
+
+    /** Parks [engine] for instant re-activation. Called with [neuralLock] held. */
+    private fun parkNeuralEngine(locale: String?, engine: NeuralPredictionEngine?) {
+        if (locale.isNullOrEmpty() || engine == null) return
+        if (neuralEngineCache[locale] === engine) return
+        try { neuralEngineCache[locale]?.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close parked neural engine", e) }
+        neuralEngineCache[locale] = engine
+        while (neuralEngineCache.size > NEURAL_ENGINE_CACHE_MAX) {
+            val eldest = neuralEngineCache.keys.first()
+            val parked = neuralEngineCache.remove(eldest)
+            if (parked != null) {
+                try { parked.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close parked neural engine", e) }
             }
         }
     }
@@ -3532,6 +3685,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         private const val ACCENT_HEADROOM_DP = 64f
         private const val NEURAL_FAILURE_TTL_MS = 5L * 60L * 1000L
         internal const val SUGGEST_DEBOUNCE_MS = 32L
+        // §3c — a candidate list on screen for less than this is treated as
+        // possibly-unseen by the rejection gate.
+        private const val REJECTION_MIN_SHOWN_MS = 300L
+        // §7 — warm neural engine cache: current + one previous locale.
+        private const val NEURAL_ENGINE_CACHE_MAX = 2
         // Target languages cycled by the translator's language chip ("→ English" etc.).
         private val TRANSLATOR_TARGETS = listOf(
             "en", "hi", "es", "fr", "de", "pt", "ar", "ru", "ja", "ko", "zh"

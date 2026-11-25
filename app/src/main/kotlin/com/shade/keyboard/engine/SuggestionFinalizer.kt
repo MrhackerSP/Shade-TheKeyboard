@@ -44,4 +44,39 @@ object SuggestionFinalizer {
         }
         return shown
     }
+
+    /**
+     * §2 — one final scored ranking pass: injection sources compete with the
+     * ML-ranked list by weight × within-source rank instead of hard
+     * prepending, which used to let ~15 bypass rounds unconditionally override
+     * the ML ranking (a time-aware word jumped to position 0 regardless of
+     * context fit). The ML list keeps a full-weight positional prior
+     * (1/(i+1)), so an injection only displaces ML candidates when its source
+     * prior and rank actually beat them; a word present in both keeps its
+     * best score; ties keep first-seen (ML) order. Weights are hand priors —
+     * to be auto-tuned offline from acceptance attribution later.
+     *
+     * @param ranked     ML-ordered candidates (best first)
+     * @param injections pairs of (source prior weight, candidates best first)
+     */
+    fun mergeScored(
+        ranked: List<String>,
+        injections: List<Pair<Float, List<String>>>
+    ): List<String> {
+        if (injections.isEmpty() || injections.all { it.second.isEmpty() }) return ranked
+        val scores = LinkedHashMap<String, Float>()
+        ranked.forEachIndexed { index, word ->
+            if (word.isNotEmpty()) scores.putIfAbsent(word, 1f / (index + 1))
+        }
+        for ((weight, words) in injections) {
+            if (weight <= 0f) continue
+            words.forEachIndexed { index, word ->
+                if (word.isEmpty()) return@forEachIndexed
+                val score = weight / (index + 1)
+                val existing = scores[word]
+                if (existing == null || score > existing) scores[word] = score
+            }
+        }
+        return scores.entries.sortedByDescending { it.value }.map { it.key }
+    }
 }

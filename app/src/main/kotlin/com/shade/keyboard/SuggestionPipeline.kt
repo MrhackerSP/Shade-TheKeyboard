@@ -100,7 +100,7 @@ import java.io.File
 import java.util.ArrayDeque
 
 /**
- * Owns the suggestion flow: candidate generation, learned re-ranking, offensive filtering, casing, strip presentation and candidate selection. Numerically locked by verify_emoji_search_v9 / verify_v8_logic - the scoring math and feature extraction are untouched. Extracted from ShadeService (v11 refactor).
+ * Owns the suggestion flow: candidate generation, learned re-ranking, offensive filtering, casing, strip presentation and candidate selection. Numerically locked by verify_emoji_search_v9 / verify_v8_logic; the suggestion-quality patch deliberately rebalances the ranker merge and injection weighting (see the §-marked comments) while leaving feature extraction untouched. Extracted from ShadeService (v11 refactor).
  *
  * Every method body runs inside `with(svc)` so member references
  * resolve exactly as they did when these were members of
@@ -121,7 +121,23 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
         // RankingFeatureExtractor): candidate chars vs typed chars, persistent
         // user unigram count and session bigram count, type code 0 (words).
         val prev1 = contextWords.lastOrNull()
+<<<<<<< ours
         val modelWeight = if (dictIds().split(',').firstOrNull()?.trim()?.equals("en", ignoreCase = true) == true) 0.32f else 0.12f
+=======
+        val prev2 = contextWords.dropLast(1).lastOrNull()
+        val userBigramScores = dict.bigramModel
+            ?.predict(prev2, prev1, 32)
+            ?.associate { it.first.lowercase() to it.second }
+            .orEmpty()
+        // §1 — rebalanced merge. With 0.32/0.12 the stage-1 leader was
+        // mathematically unbeatable: its base term was (1-w)·1.0 = 0.68 (en)
+        // while the best possible challenger at index 1 scored
+        // (1-w)·0.5 + w·1.0 = 0.66 — so the TFLite ranker was a tiebreaker,
+        // not a ranker, and only the small learned/session boosts could ever
+        // overturn merge order. 0.70/0.50 keeps merge order as a prior but
+        // lets genuine model + feature evidence win.
+        val modelWeight = if (dictIds().split(',').firstOrNull()?.trim()?.equals("en", ignoreCase = true) == true) 0.70f else 0.50f
+>>>>>>> theirs
 
         val ranked = candidates.take(8).mapIndexed { index, candidate ->
             val base = 1f / (index + 1)
@@ -166,8 +182,59 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
         // never half-mutated maps.
         lastRankedFeatures.apply { clear(); putAll(newRankedFeatures) }
         lastRawRankerScores.apply { clear(); putAll(newRawScores) }
-        lastShownCandidates = rescored.map { it.first }
+        // §3 — [lastShownCandidates] is now the FINAL displayed list, set in
+        // [setCandidates] after injections and finalization, so rejection
+        // tracking and negative ranker updates attribute to words the user
+        // actually saw (the pre-injection list penalized words that were
+        // already displaced off the strip).
         return rescored.sortedByDescending { it.second }.map { it.first } + candidates.drop(8)
+    }}
+
+    /**
+     * §3 — extract ranker features (and raw model scores) for the FINAL shown
+     * words that [learnedRankCandidates] never featured — injected candidates
+     * and spell fixes land here. Without this, tapping an injected winner
+     * silently skipped both the positive ranker update (no features) and the
+     * calibrator acceptance sample (no raw score) — learning ignored exactly
+     * the candidates that bypassed the ranker.
+     */
+    private fun ensureFinalShownFeatures(
+        shown: List<String>,
+        prefix: String,
+        touches: List<FloatArray>,
+        layout: Map<Char, Key>?,
+        contextWords: List<String>,
+        prev2: String?,
+        prev1: String?,
+        neuralPredictions: List<Pair<String, Float>>
+    ) { with(svc) {
+        val missing = shown.take(3).filter { it.isNotEmpty() && !lastRankedFeatures.containsKey(it) }
+        if (missing.isEmpty()) return@with
+        val embedding = contextEmbeddingForCurrentLocale(contextWords)
+        val neuralLookup = neuralPredictions.associate { it.first.lowercase() to it.second }
+        val bigramScores = dict.bigramModel
+            ?.predict(prev2, prev1, 32)
+            ?.associate { it.first.lowercase() to it.second }
+            .orEmpty()
+        missing.forEachIndexed { index, word ->
+            val base = 1f / (index + 1)
+            val neuralScore = neuralLookup[word.lowercase()] ?: (base * 0.25f)
+            val spatial = if (layout != null) SpatialScorer.score(word, touches, layout) else 0f
+            val features = RankingFeatureExtractor.extract(
+                candidate = word,
+                typedPrefix = prefix,
+                baseRankScore = base,
+                neuralScore = neuralScore,
+                spatialScore = spatial,
+                touches = touches,
+                layout = layout ?: emptyMap(),
+                contextEmbedding = embedding,
+                userUnigramScore = userWordMemory.score(word),
+                userBigramScore = bigramScores[word.lowercase()] ?: 0f
+            )
+            lastRankedFeatures[word] = features
+            lastRawRankerScores[word] = runCatching { rankingScorer?.score(features) }.getOrDefault(0f)
+        }
     }}
 
     internal fun updateSuggestions() { with(svc) {
@@ -244,9 +311,18 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                     val trigramNext = HeuristicSuggestionEngine.trigram(contextWords, null, 8)
                     val phraseNext = HeuristicSuggestionEngine.phrase(prev1, 6)
                     val grammarNext = GrammarEngine.predictNext(contextWords, 6)
-                    val merged = CandidateRanker.mergeNextWord(
-                        neural = smartNext + trigramNext + neuralNext + grammarNext + phraseNext,
-                        dictionary = dictionaryNext,
+                    // §1 — interleave by score, not by fixed concatenation
+                    // order: each source is scored by its own rank, so the
+                    // hand-written heuristics no longer inherit a positional
+                    // base advantage over the RNN output that used to be
+                    // appended AFTER them in one long list.
+                    val merged = CandidateRanker.mergeNextWordScored(
+                        neural = CandidateRanker.scoredByPosition(neuralNext) +
+                            CandidateRanker.scoredByPosition(smartNext) +
+                            CandidateRanker.scoredByPosition(trigramNext) +
+                            CandidateRanker.scoredByPosition(grammarNext) +
+                            CandidateRanker.scoredByPosition(phraseNext),
+                        dictionary = CandidateRanker.scoredByPosition(dictionaryNext),
                         limit = 3
                     )
 
@@ -289,7 +365,13 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
             suggestJob = scope.launch(Dispatchers.Default) {
                 // #11 — short-circuit on SuggestionCache hit when (prev2, prev1, prefix)
                 // match a recently-computed result. Skips the whole pipeline.
-                com.shade.keyboard.engine.SuggestionCache.salt = "$configuredLocale|$incognito"
+                // §5 — the pipeline output depends on more than locale and
+                // incognito: the current app (per-app vocabulary), the bar
+                // toggles, and structural learning state all change the list.
+                // [learningGeneration] only moves on structural events, so
+                // per-word learning drift stays bounded by the cache TTL.
+                com.shade.keyboard.engine.SuggestionCache.salt = "$configuredLocale|$incognito|" +
+                    "${currentAppPackage().orEmpty()}|$phraseSuggestionsOn|$blockOffensiveOn|$learningGeneration"
                 com.shade.keyboard.engine.SuggestionCache.get(prev2, prev1, prefix)?.let { cached ->
                     withContext(Dispatchers.Main.immediate) { setCandidates(cached) }
                     return@launch
@@ -372,6 +454,15 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                 }
 
                 // 4j — typed-word pipeline injections.
+                // §2 — injection sources no longer hard-prepend in front of the
+                // ML ranking (that let ~15 bypass rounds unconditionally override
+                // the ranker — a time-aware word jumped to position 0 regardless
+                // of context fit). They now feed ONE final scored pass,
+                // [SuggestionFinalizer.mergeScored]: the ML list keeps a
+                // full-weight positional prior and each source competes by
+                // weight × within-source rank. Hard prepends are reserved for
+                // deterministic fixes (confusable pairs, §4 spell fix).
+                val injections = ArrayList<Pair<Float, List<String>>>(8)
                 // #1 — Multi-word phrase completion (good→morning, thank→you, ...).
                 // Gated behind phraseSuggestionsOn: the bigram table contains
                 // single-word completions (good→morning) AND multi-word ones
@@ -381,25 +472,19 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                 if (phraseSuggestionsOn) {
                     val phraseCompletions = com.shade.keyboard.engine.PhraseCompletion
                         .suggestPhraseCompletions(contextWords, prefix, limit = 3)
-                    if (phraseCompletions.isNotEmpty()) {
-                        ranked = (phraseCompletions + ranked).distinct()
-                    }
+                    if (phraseCompletions.isNotEmpty()) injections.add(0.90f to phraseCompletions)
                 } else {
                     val phraseCompletions = com.shade.keyboard.engine.PhraseCompletion
                         .suggestPhraseCompletions(contextWords, prefix, limit = 3)
                         .filter { !it.contains(' ') }
-                    if (phraseCompletions.isNotEmpty()) {
-                        ranked = (phraseCompletions + ranked).distinct()
-                    }
+                    if (phraseCompletions.isNotEmpty()) injections.add(0.90f to phraseCompletions)
                 }
                 // #15 — Smart compose for common responses (ok → ok sounds good, ...).
                 // These templates are inherently multi-word, so the whole source
                 // is skipped in word-by-word mode.
                 if (phraseSuggestionsOn && FieldTypeDetector.shouldSmartCompose(currentFieldType)) {
                     val smartResponses = com.shade.keyboard.engine.SmartResponseComposer.suggest(prefix, limit = 2)
-                    if (smartResponses.isNotEmpty()) {
-                        ranked = (smartResponses + ranked).distinct()
-                    }
+                    if (smartResponses.isNotEmpty()) injections.add(0.85f to smartResponses)
                 }
                 // #6+#7 — Cross-sentence context + sentence starters.
                 val extendedContext = com.shade.keyboard.engine.CrossSentenceContext.extendContext(contextWords)
@@ -413,25 +498,18 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                     // "I", "how", ...).
                     val filteredStarters = if (phraseSuggestionsOn) starters
                         else starters.filter { !it.contains(' ') }
-                    if (filteredStarters.isNotEmpty()) {
-                        ranked = (filteredStarters + ranked).distinct()
-                    }
+                    if (filteredStarters.isNotEmpty()) injections.add(0.70f to filteredStarters)
                 }
-                // #18 — Greeting/time-aware bias.
+                // #18 — Greeting/time-aware bias (prefix-filtered; its weight
+                // keeps it from unconditionally owning the bar).
                 val timeWords = com.shade.keyboard.engine.GreetingTimeBias.timeAwareWords(prefix)
-                if (timeWords.isNotEmpty()) {
-                    ranked = (timeWords + ranked).distinct()
-                }
+                if (timeWords.isNotEmpty()) injections.add(0.60f to timeWords)
                 // #9 — Smart number prediction (after "in", "costs", "at", ...).
                 val numberSuggestions = SuggestionHeuristics.numbersForContext(extendedContext, prefix)
-                if (numberSuggestions.isNotEmpty()) {
-                    ranked = (numberSuggestions + ranked).distinct()
-                }
+                if (numberSuggestions.isNotEmpty()) injections.add(0.75f to numberSuggestions)
                 // #17 — Emoji context prediction (after "love", "happy", ...).
                 val emojiSuggestions = com.shade.keyboard.engine.EmojiContextPredictor.suggest(prev1, limit = 2)
-                if (emojiSuggestions.isNotEmpty()) {
-                    ranked = (emojiSuggestions + ranked).distinct()
-                }
+                if (emojiSuggestions.isNotEmpty()) injections.add(0.50f to emojiSuggestions)
                 // #25 — Neural next-word prediction: the RNN LM fills gaps when the
                 // dictionary has no strong continuation for the previous words.
                 if (prefix.isEmpty()) {
@@ -439,9 +517,7 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                         ?.takeIf { it.isAvailable }
                         ?.suggest(contextWords, limit = 2)
                         .orEmpty()
-                    if (nwpWords.isNotEmpty()) {
-                        ranked = (ranked + nwpWords).distinct()
-                    }
+                    if (nwpWords.isNotEmpty()) injections.add(0.70f to nwpWords)
                 }
                 // #14 — Rejection-pattern learning: drop recently-rejected candidates.
                 ranked = rejectionTracker.filter(ranked)
@@ -449,11 +525,9 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                 ranked = com.shade.keyboard.engine.MorphologicalDiversity.deduplicate(ranked, limit = 6)
                 // #20 — Per-app vocabulary snapshot.
                 val appWords = perAppVocabSnapshot.wordsForPrefix(prefix, limit = 2)
-                if (appWords.isNotEmpty()) {
-                    ranked = (appWords + ranked).distinct()
-                }
+                if (appWords.isNotEmpty()) injections.add(0.80f to appWords)
                 // #22 — Confusable-pairs correction (their/there/they're, etc.).
-                // Surface the context-corrected form when it isn't already ranked.
+                // Deterministic context fix — keeps its hard prepend.
                 com.shade.keyboard.engine.ConfusablePairs.correct(prefix, prev1)?.let { conf ->
                     if (ranked.none { it.equals(conf, ignoreCase = true) }) {
                         ranked = (listOf(conf) + ranked).distinct()
@@ -484,10 +558,27 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                         .suggest(contextWords, limit = 2)
                     val kept = if (phraseSuggestionsOn) sentenceCompletions
                         else sentenceCompletions.filter { !it.contains(' ') }
-                    if (kept.isNotEmpty()) {
-                        ranked = (kept + ranked).distinct()
+                    if (kept.isNotEmpty()) injections.add(0.85f to kept)
+                }
+                // §4 — controlled center-slot exception: when the typed word is
+                // not a dictionary word, its highest-confidence correction may
+                // sit in the bar even though it doesn't extend the prefix.
+                // Users expect to see "the" while typing "teh", not only after
+                // pressing space; the strict-prefix filter above made that
+                // impossible. Gated by the same confidence machinery as
+                // autocorrect (see [ShadeService.barSpellFix]).
+                if (!known && prefix.length >= 3) {
+                    barSpellFix(prefix)?.let { fix ->
+                        if (ranked.none { it.equals(fix, ignoreCase = true) }) {
+                            ranked = (listOf(fix) + ranked).distinct()
+                        }
                     }
                 }
+                // §2 — one final scored ranking pass, then the rejection filter
+                // once more over the merged list: injected candidates were never
+                // rejection-filtered when they hard-prepended.
+                ranked = com.shade.keyboard.engine.SuggestionFinalizer.mergeScored(ranked, injections)
+                ranked = rejectionTracker.filter(ranked)
                 // #11 — Suggestion cache: nothing to inject here, but record the
                 // final ranked list so subsequent keystrokes can hit the cache.
                 // #32 — Multi-armed bandit exploration: occasionally swap top-2
@@ -509,6 +600,9 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                     ranked = filterOffensive(ranked),
                     phraseSuggestionsOn = phraseSuggestionsOn
                 )
+                // §3 — feature the FINAL shown top-3 regardless of source so
+                // acceptances on injected candidates train the ranker too.
+                ensureFinalShownFeatures(shown, prefix, touches, layout, contextWords, prev2, prev1, rawPredictions)
                 // Cache the final list (after typo/grammar handling) so a cache hit
                 // shows exactly what the full pipeline would.
                 com.shade.keyboard.engine.SuggestionCache.put(prev2, prev1, prefix, shown)
@@ -564,6 +658,8 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
     internal fun resetCandidates() { with(svc) {
         candidates = emptyList()
         shownWords = emptyList()
+        // §3 — the strip is empty; nothing on it is attributable anymore.
+        lastShownCandidates = emptyList()
         if (!svc.slotsReady()) return
         slotAnimator?.cancel()
         for (i in 0 until 3) {
@@ -608,6 +704,11 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
         val old = shownWords
         candidates = effective
         shownWords = display
+        // §3 — learning attribution keys on the FINAL displayed list (see the
+        // endWord rejection gate and pickSuggestion negatives). The clipboard
+        // chip is not a suggestion, so it does not join the list.
+        if (list.isNotEmpty()) lastShownCandidates = effective
+        if (rawChanged) candidatesShownAt = SystemClock.elapsedRealtime()
         slotAnimator?.cancel()
 
         var anyChanged = false
@@ -686,6 +787,7 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
         val typed = composing.toString().ifEmpty { currentTypedWordFromField() }
 
         if (learnOn && personalLearningAllowed()) {
+            if (userWordMemory.score(w) <= 0f) learningGeneration++ // §5 — structural event
             userWordMemory.bump(w)
         }
         if (adaptiveLearningAllowed()) {
@@ -710,6 +812,22 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
 
         val ic = currentInputConnection ?: return
         clearUndo()
+        // A new commit supersedes any pending autocorrect revert: otherwise
+        // backspace after tapping a suggestion whose text equals the older
+        // corrected word would "revert" that older correction instead of
+        // undoing the tap.
+        clearCorrectionEvent()
+        // §6 — one backspace after accepting a suggestion restores the typed
+        // prefix (or deletes the tapped word wholesale for next-word picks)
+        // instead of nibbling the committed text char-by-char, matching the
+        // autocorrect revert that backspace() already performs.
+        val spaceAppended = shown.isNotEmpty() && shown[0].isLetter()
+        val undoChars = shown.length + if (spaceAppended) 1 else 0
+        if (undoChars > 0) {
+            val cursorNow = currentCursorPos()
+            val expectedCursor = if (cursorNow >= 0) cursorNow - typed.length + undoChars else -1
+            pushUndo(undoChars, typed, expectedCursor)
+        }
         ic.beginBatchEdit()
         try {
             if (composing.isNotEmpty()) {

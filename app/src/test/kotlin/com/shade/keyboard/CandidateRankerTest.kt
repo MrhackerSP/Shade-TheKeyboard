@@ -77,4 +77,25 @@ class CandidateRankerTest {
     fun rankContextualEmptyInputGivesEmpty() {
         assertTrue(CandidateRanker.rankContextual(emptyList(), emptyMap()).isEmpty())
     }
+
+    @Test
+    fun scoredByPositionGivesMonotonicPositionalPrior() {
+        assertEquals(
+            listOf("a" to 1f, "b" to 0.5f, "c" to 0.25f),
+            CandidateRanker.scoredByPosition(listOf("a", "b", "c"))
+        )
+    }
+
+    @Test
+    fun scoredSourcesTieOnTheirOwnLeadersNotConcatenationOrder() {
+        // Each source's leader carries the same normalized confidence; the
+        // merge breaks the tie by first-seen order. Under the old positional
+        // concatenation the second source's leader could never catch up.
+        val merged = CandidateRanker.mergeNextWordScored(
+            neural = CandidateRanker.scoredByPosition(listOf("alpha")) +
+                CandidateRanker.scoredByPosition(listOf("beta")),
+            limit = 3
+        )
+        assertEquals(listOf("alpha", "beta"), merged)
+    }
 }

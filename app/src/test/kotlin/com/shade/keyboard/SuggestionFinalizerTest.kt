@@ -59,4 +59,46 @@ class SuggestionFinalizerTest {
     @Test fun wordByWordModeNeverLeavesTheStripEmpty() {
         assertEquals(listOf("how are"), fin("ho", true, listOf("how are"), phrases = false))
     }
+
+    // ------------------------------------------------------------- mergeScored (§2)
+
+    @Test fun mergeScoredKeepsMlOrderWithoutInjections() {
+        assertEquals(
+            listOf("a", "b", "c"),
+            SuggestionFinalizer.mergeScored(listOf("a", "b", "c"), emptyList())
+        )
+    }
+
+    @Test fun mergeScoredWeightedSourceDisplacesOnlyWeakMlSlots() {
+        // ML priors: 1.0, 0.5, 0.33, 0.25. A 0.60-weight source: entry 0 → 0.60,
+        // entry 1 → 0.30. Sorted: ml0(1.0), time0(0.60), ml1(0.5), ml2(0.33),
+        // time1(0.30), ml3(0.25).
+        val merged = SuggestionFinalizer.mergeScored(
+            ranked = listOf("ml0", "ml1", "ml2", "ml3"),
+            injections = listOf(0.60f to listOf("time0", "time1"))
+        )
+        assertEquals(listOf("ml0", "time0", "ml1", "ml2", "time1", "ml3"), merged)
+    }
+
+    @Test fun mergeScoredMlLeaderAlwaysSurvives() {
+        val merged = SuggestionFinalizer.mergeScored(
+            ranked = listOf("ml0", "ml1"),
+            injections = listOf(0.95f to listOf("inj0"))
+        )
+        assertEquals("ml0", merged.first())
+        assertEquals("inj0", merged[1])
+    }
+
+    @Test fun mergeScoredDeduplicatesKeepingBestScoreAndFirstCasing() {
+        val merged = SuggestionFinalizer.mergeScored(
+            ranked = listOf("good"),
+            injections = listOf(0.9f to listOf("good", "morning"))
+        )
+        assertEquals(listOf("good", "morning"), merged)
+    }
+
+    @Test fun mergeScoredEmptyInjectionListsReturnRankedUnchanged() {
+        val ranked = listOf("a", "b")
+        assertEquals(ranked, SuggestionFinalizer.mergeScored(ranked, listOf(0.9f to emptyList())))
+    }
 }

@@ -20,6 +20,13 @@ class SuggestionRejectionTracker(context: Context) {
     @Volatile
     private var threshold: Int = DEFAULT_THRESHOLD
     private val counts = ConcurrentHashMap<String, AtomicInteger>()
+    // §3 — when each word was last rejected: counts older than
+    // [REJECTION_TTL_MS] have decayed away and stop suppressing, so a word
+    // rejected this morning doesn't stay filtered all afternoon.
+    private val lastRejectedAt = ConcurrentHashMap<String, Long>()
+
+    /** Time source; replaceable in tests. */
+    @Volatile internal var clock: () -> Long = { System.currentTimeMillis() }
     // Words the user explicitly removed via the long-press dialog on the suggestion strip.
     // Suppressed immediately for the whole session, without needing N implicit rejections.
     private val suppressed = ConcurrentHashMap.newKeySet<String>()
@@ -27,8 +34,12 @@ class SuggestionRejectionTracker(context: Context) {
     fun recordRejection(word: String) {
         if (word.isEmpty()) return
         val w = word.trim().lowercase()
-        if (counts.size >= 2000) counts.clear() // bounded: don't grow for the whole service lifetime
+        if (counts.size >= 2000) {
+            counts.clear() // bounded: don't grow for the whole service lifetime
+            lastRejectedAt.clear()
+        }
         counts.computeIfAbsent(w) { AtomicInteger(0) }.incrementAndGet()
+        lastRejectedAt[w] = clock()
     }
 
     /**
@@ -47,6 +58,14 @@ class SuggestionRejectionTracker(context: Context) {
         if (word.isEmpty()) return false
         val w = word.trim().lowercase()
         if (suppressed.contains(w)) return true
+        // §3 — time decay: expired rejection counts are dropped on read, so
+        // the word must re-accumulate rejections to be suppressed again.
+        val at = lastRejectedAt[w] ?: return false
+        if (clock() - at > REJECTION_TTL_MS) {
+            counts.remove(w)
+            lastRejectedAt.remove(w)
+            return false
+        }
         val c = counts[w]?.get() ?: 0
         return c >= threshold
     }
@@ -58,6 +77,7 @@ class SuggestionRejectionTracker(context: Context) {
 
     fun clearSession() {
         counts.clear()
+        lastRejectedAt.clear()
         suppressed.clear()
     }
 
@@ -70,5 +90,8 @@ class SuggestionRejectionTracker(context: Context) {
 
     companion object {
         private const val DEFAULT_THRESHOLD = 3
+        // §3 — rejections decay after 10 minutes instead of accumulating for
+        // the whole session.
+        private const val REJECTION_TTL_MS = 10L * 60L * 1000L
     }
 }
