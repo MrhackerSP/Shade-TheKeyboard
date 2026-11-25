@@ -81,8 +81,16 @@ class SettingsActivitySmokeTest {
         activity.adapter.expand(SettingsCatalog.SECTION_APPEARANCE)
         val rv = activity.findViewById<RecyclerView>(R.id.noir_list)
         measureAndLayout(rv)
-        // Row 0 = header, row 1 = the theme choice (six options).
-        val row = rv.findViewHolderForAdapterPosition(1)!!.itemView
+        // The screen opens as a collapsed index with LANGUAGES first, so the
+        // theme row is NOT at a fixed adapter position. Locate the appearance
+        // header dynamically; expand() inserts its first child (the theme
+        // choice, six options) right after that header.
+        val headerPos = (0 until activity.adapter.itemCount)
+            .firstOrNull { activity.adapter.sectionAt(it)?.id == SettingsCatalog.SECTION_APPEARANCE }
+            ?: error("APPEARANCE header row missing from adapter")
+        val holder = rv.findViewHolderForAdapterPosition(headerPos + 1)
+        assertNotNull(holder)
+        val row = holder!!.itemView
         assertEquals(View.VISIBLE, row.findViewById<View>(R.id.noir_choice_value).visibility)
         assertEquals(View.GONE, row.findViewById<View>(R.id.noir_group).visibility)
         activity.finish()
