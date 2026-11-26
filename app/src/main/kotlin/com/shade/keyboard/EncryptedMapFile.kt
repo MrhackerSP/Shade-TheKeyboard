@@ -3,6 +3,9 @@ package com.shade.keyboard
 import android.content.Context
 import android.util.Log
 import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 /**
  * A small word -> score map persisted as ONE Keystore-encrypted file.
@@ -63,5 +66,37 @@ class EncryptedMapFile(ctx: Context, name: String, private val alias: String) {
         loadFailed = false
         try { file.delete() } catch (e: Exception) { Log.w("EncryptedMapFile", "Failed to delete encrypted map file", e) }
         try { File(file.parentFile, file.name + ".bad").delete() } catch (e: Exception) { Log.w("EncryptedMapFile", "Failed to delete encrypted map .bad file", e) }
+    }
+}
+
+/**
+ * Runs [action] on a background thread [delayMs] after the LAST [request], so a
+ * burst of keystrokes causes one disk write. [shutdown] flushes immediately.
+ */
+class DebouncedSaver(private val delayMs: Long, private val action: () -> Unit) {
+
+    private val exec = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "shade-save").apply { isDaemon = true }
+    }
+    private var pending: ScheduledFuture<*>? = null
+
+    private fun runAction() {
+        try { action() } catch (t: Throwable) { Log.w("DebouncedSaver", "save failed", t) }
+    }
+
+    @Synchronized
+    fun request() {
+        if (exec.isShutdown) return
+        pending?.cancel(false)
+        pending = exec.schedule(Runnable { runAction() }, delayMs, TimeUnit.MILLISECONDS)
+    }
+
+    /** Final flush on the background thread; never blocks the caller. */
+    @Synchronized
+    fun shutdown() {
+        if (exec.isShutdown) return
+        pending?.cancel(false)
+        exec.execute(Runnable { runAction() })
+        exec.shutdown()
     }
 }
