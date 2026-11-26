@@ -83,10 +83,15 @@ class TrainedSwipeRerankTest {
     }
 
     @Test
-    fun dominantLetterCountWeightFlipsTheOrderBothWays() {
-        // penalty = +blend * |w| * letters: shorter "as" wins
+    fun extremeLetterWeightIsClampedAndCannotOverruleHandRanking() {
+        // With the model penalty clamped to [-1.5, 1.5] (Fix F5), extreme weights
+        // cannot overrule a confident hand-tuned ranking. "ads" fits the out-and-back
+        // path perfectly; "as" has a huge shape penalty. The clamp ensures the model
+        // refines close calls but doesn't break obvious matches.
         val short = modelWith(-1000f)!!
-        assertEquals("as", candidates(short).first())
+        assertEquals("ads", candidates(short).first())
+        val long = modelWith(1000f)!!
+        assertEquals("ads", candidates(long).first())
 
         // penalty = -blend * |w| * letters: longer "ads" wins by an even wider margin
         val long = modelWith(1000f)!!
