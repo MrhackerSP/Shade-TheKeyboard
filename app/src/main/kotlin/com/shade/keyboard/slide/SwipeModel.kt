@@ -109,7 +109,8 @@ class SwipeModel private constructor(
         var prev = -1
         var sum = 0f
         var n = 0
-        for (ch in word) {
+        for (raw in word) {
+            val ch = raw.lowercaseChar()
             if (ch < 'a' || ch > 'z') continue
             val c = ch - 'a'
             if (prev >= 0) {
