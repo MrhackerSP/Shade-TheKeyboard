@@ -9,6 +9,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * The trained reranker must refine the hand-tuned ranking, never break it.
+ * With the correction clamped to ±MODEL_MAX_CORRECTION, even a dominant
+ * letter-count weight cannot overrule a confident hand-tuned margin.
+ */
 class TrainedSwipeRerankTest {
 
     private class FakeDictionary(
@@ -48,10 +53,10 @@ class TrainedSwipeRerankTest {
     private fun modelWith(letterWeight: Float, blend: Float = 1f): SwipeModel? {
         val weights = FloatArray(SwipeModel.FEATURE_NAMES.size)
         weights[SwipeModel.FEATURE_NAMES.indexOf("letters")] = letterWeight
-        val w = weights.joinToString(", ") { v -> "$v " }
+        val w = weights.joinToString(", ") { v -> "$v" }
         return SwipeModel.parse(
             "{ \"version\":1, \"features\":${featureListJson()}, " +
-            "\"weights\":[$w], \"bias\":0.0, \"blend\":$blend}"
+                "\"weights\":[$w], \"bias\":0.0, \"blend\":$blend}"
         )
     }
 
