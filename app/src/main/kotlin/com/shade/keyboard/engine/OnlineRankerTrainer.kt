@@ -36,21 +36,18 @@ class OnlineRankerTrainer(context: Context) {
         learningRateMultiplier = mult.coerceIn(MIN_LR_MULT, MAX_LR_MULT)
         prefs.edit().putFloat(LR_MULT_KEY, learningRateMultiplier).apply()
     }
-
+    
     /**
      * Multi-armed bandit exploration: returns true roughly one in
      * [EXPLORE_INV] calls so we occasionally surface a less-likely
      * candidate to learn whether it would have been accepted.
      *
-     * Uses a per-instance SplittableRandom: nanoTime's low bits are not
-     * uniform, so hand-seeding produced a biased explore rate that varied
-     * with call timing. No persistent state, no privacy implications.
+     * ThreadLocalRandom (API 21+): internally seeded, uniform, lock-free.
+     * No hand-seeding from nanoTime (its low bits are biased), no
+     * per-instance state, no privacy implications.
      */
-    private val exploreRandom = java.util.concurrent.SplittableRandom(
-        System.nanoTime() xor 0x2545F4914F6CDD1DL
-    )
-
-    fun shouldExplore(): Boolean = exploreRandom.nextInt(EXPLORE_INV) == 0
+    fun shouldExplore(): Boolean =
+        java.util.concurrent.ThreadLocalRandom.current().nextInt(EXPLORE_INV) == 0
 
     init {
         val savedVersion = prefs.getInt(SCHEMA_VERSION_KEY, -1)
