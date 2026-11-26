@@ -62,21 +62,38 @@ object SuggestionFinalizer {
     fun mergeScored(
         ranked: List<String>,
         injections: List<Pair<Float, List<String>>>
-    ): List<String> {
-        if (injections.isEmpty() || injections.all { it.second.isEmpty() }) return ranked
+    ): List<String> = mergeScoredWithScores(ranked, injections).keys.toList()
+
+    /**
+     * R4 — score-carrying variant of [mergeScored] for the bandit swap gate:
+     * keys are the first-seen display casing, values the final merge score,
+     * iteration order is score-descending.
+     */
+    fun mergeScoredWithScores(
+        ranked: List<String>,
+        injections: List<Pair<Float, List<String>>>
+    ): LinkedHashMap<String, Float> {
+        // R6 — key by lowercase so "the"/"The"/"THE" share one slot; keep the
+        // first-seen display casing. Best score wins; ties keep first-seen
+        // order (LinkedHashMap + stable sort).
         val scores = LinkedHashMap<String, Float>()
-        ranked.forEachIndexed { index, word ->
-            if (word.isNotEmpty()) scores.putIfAbsent(word, 1f / (index + 1))
+        val display = LinkedHashMap<String, String>()
+        fun offer(word: String, score: Float) {
+            if (word.isEmpty()) return
+            val key = word.lowercase()
+            display.putIfAbsent(key, word)
+            val existing = scores[key]
+            if (existing == null || score > existing) scores[key] = score
         }
+        ranked.forEachIndexed { index, word -> offer(word, 1f / (index + 1)) }
         for ((weight, words) in injections) {
             if (weight <= 0f) continue
-            words.forEachIndexed { index, word ->
-                if (word.isEmpty()) return@forEachIndexed
-                val score = weight / (index + 1)
-                val existing = scores[word]
-                if (existing == null || score > existing) scores[word] = score
-            }
+            words.forEachIndexed { index, word -> offer(word, weight / (index + 1)) }
         }
-        return scores.entries.sortedByDescending { it.value }.map { it.key }
+        val result = LinkedHashMap<String, Float>()
+        scores.entries.sortedByDescending { it.value }.forEach { (key, score) ->
+            result[display[key] ?: key] = score
+        }
+        return result
     }
 }

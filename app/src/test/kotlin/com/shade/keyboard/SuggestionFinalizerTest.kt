@@ -101,4 +101,26 @@ class SuggestionFinalizerTest {
         val ranked = listOf("a", "b")
         assertEquals(ranked, SuggestionFinalizer.mergeScored(ranked, listOf(0.9f to emptyList())))
     }
+
+    // ------------------------------------------------- R6/R4 case-insensitive merge
+
+    @Test fun mergeScoredDeduplicatesCaseVariantsKeepingFirstCasing() {
+        val merged = SuggestionFinalizer.mergeScored(
+            ranked = listOf("The", "cat"),
+            injections = listOf(0.9f to listOf("the", "THE-DOG"))
+        )
+        // "the" injection (0.9) loses to ML "The" (1.0) but must not add a
+        // second case-variant slot; each key keeps its first-seen casing.
+        assertEquals(listOf("The", "cat", "THE-DOG"), merged)
+    }
+
+    @Test fun mergeScoredWithScoresKeysUseDisplayCasingInScoreOrder() {
+        val scores = SuggestionFinalizer.mergeScoredWithScores(
+            ranked = listOf("Alpha", "beta"),
+            injections = listOf(0.8f to listOf("alpha"))
+        )
+        assertEquals(listOf("Alpha", "beta"), scores.keys.toList())
+        assertEquals(1.0f, scores["Alpha"]!!)
+        assertEquals(0.5f, scores["beta"]!!)
+    }
 }

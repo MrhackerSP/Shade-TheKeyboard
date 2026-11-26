@@ -3113,7 +3113,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 val typedKnown = dict.contains(finalWord) ||
                     userWordMemory.score(finalWord) > 0f ||
                     adaptiveWordMemory.score(finalWord) > 0f
-                if (shownLongEnough && typedKnown) {
+                // N3 — an applied autocorrect is the KEYBOARD's change, not a
+                // user rejection of the center candidate (the negative-ranker
+                // path below already gates on accepted == null); only a
+                // user-typed word counts.
+                if (shownLongEnough && typedKnown && accepted == null) {
                     val center = lastShownCandidates.getOrNull(1)
                     if (!center.isNullOrEmpty() && !center.equals(finalWord, ignoreCase = true)) {
                         rejectionTracker.recordRejection(center)
@@ -3168,7 +3172,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
      * bar only ever shows a fix the space key would have applied. Dictionary
      * only — the neural/system-spell fallbacks stay word-end-only.
      */
-    internal fun barSpellFix(prefix: String): String? {
+    internal fun barSpellFix(prefix: String, prev1: String?): String? {
         if (prefix.length < 3 || prefix.length > 24) return null
         if (!prefix.all { it.isLetter() || it == '\'' || it == '-' }) return null
         if (dict.contains(prefix)) return null
@@ -3183,9 +3187,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             null
         } ?: return null
         if (detail.alwaysAllowed) return detail.word
-        if (autocorrectSuppressor.shouldSuppress(
-                contextWordsExcluding(prefix).lastOrNull(), prefix, detail.word)
-        ) return null
+        // R8 — reuse the already-computed prev1 (identical token: the pipeline
+        // derives it from contextWordsExcluding(prefix) in the same frame)
+        // instead of another getTextBeforeCursor(400) IPC per keystroke.
+        if (autocorrectSuppressor.shouldSuppress(prev1, prefix, detail.word)) return null
         val speedAdjustment = com.shade.keyboard.engine.TypingSpeedAdapter.confidenceThresholdAdjustment()
         val effectiveThreshold = (AUTOCORRECT_CONFIDENCE_THRESHOLD + speedAdjustment).coerceIn(0.5f, 0.99f)
         val confidence = com.shade.keyboard.engine.CorrectionConfidence.score(
