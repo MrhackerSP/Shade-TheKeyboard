@@ -51,6 +51,7 @@
     <string name="pref_autofill_chips">Autofill suggestions</string>
     <string name="pref_autofill_chips_sum">Show saved passwords, addresses and cards from your autofill service above the keys (Android 11+)</string>
     <string name="resize_reset">Reset</string>
+    <string name="pref_fullscreen_landscape">Fullscreen editor in landscape</string>
 
     <!-- Colors -->
 
