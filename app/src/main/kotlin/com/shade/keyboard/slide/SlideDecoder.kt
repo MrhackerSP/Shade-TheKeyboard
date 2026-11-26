@@ -520,9 +520,15 @@ class SlideDecoder(
                 // barely moved — probably a tap, not a swipe (touch_points_x_distr).
                 val spreadQuality = if (tpXRange > 0.1f && tpYRange < tpXRange * 2f) 0f
                     else W_SPREAD * (0.1f - tpXRange.coerceAtMost(0.1f))
-
+                    
                 // Char count vs. swipe length (literal_candidate_char_num).
-                val charNumFeature = if (len < 3) W_CHAR_NUM * (3 - len) else 0f
+                // Only penalize short words if the swipe has genuine excess travel.
+                val excessTravel = length - total
+                val charNumFeature = if (len < 3 && excessTravel > 1.5f) W_CHAR_NUM * (3 - len) else 0f
+
+                // Penalize ideal paths significantly longer than the swipe (detours like o->l->o in "hollow").
+                val detourFraction = (total - length).coerceAtLeast(0f) / max(length, 1f)
+                val detourPenalty = 2.0f * detourFraction
 
                 // ── Edit distance decomposition ─────────────────────────────
                 // Instead of a single "edit distance" number, decompose into typed error
@@ -602,8 +608,7 @@ class SlideDecoder(
                     }
                     // Remaining word letters = omissions
                     omission += (wordStr.length - wi).coerceAtLeast(0)
-                    // Remaining swipe letters = insertions
-                    insertion += (swipeStr.length - si).coerceAtLeast(0)
+                    // Lift-off drift past the last letter is not a typed error.
                 }
 
                 // Per-letter penalties, normalised by the compared length and capped, so the
@@ -636,6 +641,7 @@ class SlideDecoder(
                     vowelPenalty +
                     spreadQuality +
                     charNumFeature +
+                    detourPenalty +
                     editFeature +
                     oovFeature
 
@@ -681,7 +687,8 @@ class SlideDecoder(
                         // strongest single fit signal, fed to the model explicitly.
                         f[15] = keepAlign[h]
                         f[16] = model.trigramScore(lex.words[i])
-                        score += model.penalty(f)
+                        // Clamp the model correction so it refines close calls but can't overrule a confident margin.
+                        score += model.penalty(f).coerceIn(-1.5f, 1.5f)
                     }
                 }
                 hits.add(Hit(lex.words[i], score))
@@ -837,11 +844,11 @@ class SlideDecoder(
                         var d = a - prevAngle
                         while (d > Math.PI.toFloat()) d -= 2f * Math.PI.toFloat()
                         while (d < -Math.PI.toFloat()) d += 2f * Math.PI.toFloat()
-                        turning += abs(d)
+                        turning += d
                     }
                     prevAngle = a
                 }
-                if (arc >= LOOP_MIN_ARC && turning >= LOOP_MIN_TURNING) mask = mask or (1 shl runLetter)
+                if (arc >= LOOP_MIN_ARC && abs(turning) >= LOOP_MIN_TURNING) mask = mask or (1 shl runLetter)
             }
             for (i in 0 until n) {
                 var best = -1
