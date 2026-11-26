@@ -1,132 +1,206 @@
 # Shade
 
-An original, privacy-first Android keyboard written from scratch in Kotlin. (MIT licensed).
+An Android keyboard (input method) written from scratch in Kotlin. Everything that can
+run on the device runs on the device: typing, correction, next-word prediction, glide
+decoding, emoji suggestion and learned personalisation. The only network features are
+separate, explicit tools (GIF search, translation) and the update check.
 
-## Building a release APK / AAB
+MIT licensed.
 
-Release builds use a keystore you generate locally:
-```sh
-cp keystore.properties.example keystore.properties  # then fill in your keystore paths
-./gradlew :app:assembleRelease                       # produces app-release.apk
-./gradlew :app:bundleRelease                         # produces app-release.aab (for Play Store)
-```
+---
 
 ## Features
-**Typing**
-- Symbols pages, number pad (auto for number/phone fields), optional number row, emoji panel
-- Shift / caps-lock, auto-capitalize, double-space period, long-press accents, key previews
-- Space-bar swipe to move the cursor; long-press space for the keyboard picker
-- **Glide typing**: draw a word through its letters — an on-device decoder scores every
-  word's ideal path against the finger path (shape, adherence, corners, typed-error
-  decomposition), refined by a reranker trained on simulated swipes with letter-bigram /
-  trigram language-model features (`scripts/train_swipe_model.py`, deterministic and
-  reproducible). Trailing glow ribbon, key-pop feedback, live preview
-- **Voice typing**: on-device recognizer when the phone ships one (API 31+, fully
-  offline), platform speech service as fallback; live partial transcript while listening
-- Long-press accent panel: grid sized to the character count (e.g. 6 → 3×2, 8 → 4×2), round selection highlight, keyboard dims behind it
 
-**Text correction**
-- Offline suggestions from one or more dictionaries (English, Hindi, Hinglish bundled)
-- **Multilingual typing**: enable several dictionaries at once; **import your own** word lists
-- Autocorrect for single-letter typos (backspace undoes it), emoji suggestions
-- **Neural next-word prediction**: a bundled 30k-word RNN language model completes
-  sentences when the dictionary has no strong continuation (e.g. "happy" → "birthday",
-  "thank" → "you"); fully offline, contract-checked at load, self-disables if the
-  graph does not match its vocabulary
-- **Concept-triggered emoji**: curated trigger rules, surface context emojis in the suggestion bar — type "birthday",
-  "coffee", "yaaay" and a matching emoji is one tap away
-- Learned words stored on-device only; **incognito mode**
+### Typing & layout
+- Custom-drawn key view (no XML key grids): letter / symbol / symbol-2 / number-pad
+  modes, QWERTY-family layouts plus a user-defined custom layout string.
+- Shift, caps-lock, auto-capitalisation honouring the field's caps mode, and
+  double-space → period.
+- Long-press accent panels: a grid sized to the accent count, drawn in a window-level
+  overlay above every row, with a scrim while open; releasing on the key commits its
+  number/default accent.
+- Key preview bubbles, number hints, key borders, key height, keyboard opacity and
+  see-through background controls.
+- Split keyboard, one-handed mode (left/right), and a resize/float mode with drag
+  handles (vertical resize, side narrowing, long-press-drag to float).
+- Space-bar swipe moves the cursor; long-press space opens a trackpad cursor mode (or
+  the system input-method picker when the trackpad is off); long-press Enter opens the
+  one-handed/position menu.
+- Delete key: hold to repeat, slide left to select characters or words (finger speed
+  picks the unit) with a live selection count badge.
+- Background image behind the keys with fit/zoom/pan/size, dim and blur controls.
 
-**Emoji**
-- **Full Unicode 18.0 coverage** (1,923 emojis, generated from the official Unicode
-  chart): every emoji through Emoji 16.0/17.0/18.0 — cracking face, thumbs in both
-  directions, monarch butterfly, pickle, lighthouse, meteor, eraser, net with handle,
-  bigfoot, fight cloud, orca, landslide, treasure chest, trombone, ballet dancer and
-  the 16.0 batch (fingerprint, leafless tree, root vegetable, harp, shovel, splatter,
-  face with bags under eyes)
-- **Search built into the panel**: opening the emoji panel swaps the suggestion bar
-  for an emoji search box with the grid below; tapping the search box draws the
-  keyboard under it, and matches stream into a separate results bar that opens above
-  the search box only while results exist. Keywords: curated tables, CLDR names and
-  shortcut words ("omg", "yikes" → matching emojis), exact/prefix matches ranked first
-- Skin-tone variants behind a long-press popup on the base emoji (including the new
-  left/right thumb signs); recently used emojis sit at the top of the grid and update
-  in real time on every tap
-- Emoji prediction while typing, emotion-aware scoring, and a recents list that
-  learns from what you send
+### Themes
+- System-driven theme plus fixed light/dark themes, and per-element custom colours
+  (background, keys, function keys, text, accent) edited with a built-in HSV colour
+  picker with presets and a hex field.
+- Optional Material You palette derived from the current wallpaper, re-derived live
+  when the wallpaper changes.
 
-**Toolbar & clipboard**
-- Toolbar (tap `›` on the suggestion bar): clipboard, emoji, number pad, cursor, select all,
-  copy/cut/paste, undo, incognito, one-handed, settings — configurable
-- **Clipboard history** with pinning
+### Suggestions, correction & learning
+- Multilingual dictionaries (English, Hindi and Hinglish word lists ship in assets);
+  several can be enabled at once and user word lists can be imported.
+- Candidate sources merged per keystroke: neural prefix prediction (ONNX language
+  model), dictionary continuation, bigram/trigram context rerank, grammar and
+  heuristic engines, phrase completions, sentence starters, time-aware words, smart
+  numbers, per-app vocabulary and confusable-pair fixes.
+- Autocorrect gated by a confidence score (edit cost, rank margin, touch geometry)
+  with a typing-speed-adjusted threshold; backspace reverts the last correction
+  wholesale; URL/email/password fields suppress composing and correction.
+- A trained TFLite candidate ranker plus an on-device online logistic trainer
+  personalise ordering from what you accept and reject; a calibrated acceptance-rate
+  adapter scales the learning rate.
+- Learned words, n-grams, touch bias and ranker weights never leave the device; the
+  learned-word map is stored in a Keystore-encrypted file written atomically
+  (fsync + rename, fail-closed if encryption or decryption is unavailable).
+- Privacy gates: incognito mode, `IME_FLAG_NO_PERSONALIZED_LEARNING` fields and
+  password fields disable every personalisation path; sensitive clipboard clips are
+  never captured.
+- Offensive-word filter for suggestions and autocorrect (your own typed text is never
+  rewritten by it).
+- Suggestion bar casing follows shift state and what you typed; long-press a
+  suggestion to remove it from the bar and from learned memory.
 
-**Look & layout**
-- Redesigned **settings**: a single pitch-black list with white type, hairline
-  dividers, collapsible sections and a pinned search field that filters every option
-- Themes: system / light / dark / AMOLED / **custom colors** — each keyboard color
-  (background, keys, function keys, text, accent) opens a built-in HSV color picker
-  with presets and a hex field
-- Key borders on/off, number hints, key height, **one-handed mode**, **split keyboard**
-- Background image behind the keys
+### Glide (swipe) typing
+- Every dictionary word is a candidate: each word is drawn as the polyline through its
+  letters and matched against the finger path (start/end anchoring, DP letter
+  alignment, uniform-resample shape comparison, point-to-polyline adherence, corner
+  placement, loop detection for doubled letters, typed-error decomposition).
+- A trained reranker (`swipe_model.json`, fitted by `scripts/train_swipe_model.py` on
+  simulated swipes) corrects the hand-tuned score; its influence is clamped so it can
+  refine close calls but never overrule a confident geometric match.
+- Neural language-model context (previous words) participates in stage-1 scoring to
+  resolve lookalike paths.
+- Live composing preview while the finger moves; a glow ribbon is the only visual
+  feedback during a glide — keys do not highlight or pop.
 
-**Other**
-- Backup & restore of settings and learned words (JSON file)
-- **Learned-word migration**: import words exported from another keyboard — a backup
-  archive, dictionary JSON or plain word list — into the on-device learned memory
+### Voice typing
+- Voice input with a live partial-transcript chip over the keyboard; the engine policy
+  prefers an on-device recognizer when the system exposes one and falls back to the
+  platform speech service otherwise.
 
-## Engineering notes
+### Emoji
+- Emoji panel with integrated search over curated keyword catalogs (CLDR names,
+  shortcut words, concept keywords; Hindi included), generated from the official
+  Unicode charts by `scripts/gen_emoji_catalog.py` and checked by
+  `scripts/verify_catalog_18.py`.
+- Context-aware emoji suggestions while typing, scored by on-device concept and
+  emotion models (`emoji_expression/*.tflite`); recently used emoji surface first.
 
-**Compiler-verified refactor.** The source tree is now type-checked by a real
-Kotlin compiler (kotlinc 2.0.21) against android.jar + the androidx/library
-jars, using tiny API stubs only where a class is generated by the build (R,
-BuildConfig) or unavailable as a plain jar (the bundled model runtime's `Interpreter`, two
-lifecycle interfaces). That gate found and fixed six latent compile errors
-that previous source-only releases carried:
+### Clipboard & toolbar
+- Clipboard history with pinning and image clips, stored in the app's private
+  storage; a copied snippet appears as a suggestion-bar chip when the bar is empty.
+- Configurable toolbar: clipboard, emoji, GIF, translate, numpad, cursor left/right,
+  select all, copy, cut, paste, undo, proofread, incognito, one-handed, resize,
+  voice, settings.
 
-1. `ColorPickerView` — `RectF.set` given an `Int` where `Float` is required
-2. `SettingsActivity` — two `dp(Int)` calls to a `dp(Float)` helper
-3. `ShadeService` — call to a non-existent `learningCorrectionAllowed()`
-   (typo for `correctionLearningAllowed()`; the profanity-gate vote was
-   silently skipped in that branch)
-4. `TouchBiasModel` — used `TouchGeometry.KeyTouch` without importing it
-5. `TypingStatsStore` / `GifController` / `GifImageLoader` / `GifApi` —
-   bare `ShadeLog` references in subpackages without the import
-6. `TfliteNextWordScorer` — `IntArray.mapNotNull`, which does not exist in
-   the Kotlin stdlib (rewritten via `asIterable()`, behavior identical)
+### Tools
+- **Proofread**: conservative batch correction of a selection (or the text around the
+  cursor) using the same correction machinery as typing; one batch edit, so the app's
+  undo reverses it wholesale.
+- **Translate**: a panel with its own input field and a cycling target-language chip
+  (11 languages); text is chunked at sentence boundaries and translated through
+  public key-less backends tried in order. *Network feature.*
+- **GIF search**: online GIF picker; opens into a setup card until an API key is
+  provided, sends as inline content where the app accepts it and as a link otherwise;
+  blocked in secure fields. *Network feature.*
+- **Typing insights** (opt-in): local-only statistics, key heat-map and per-key touch
+  bias that personalises spatial correction.
+- **Update check**: downloads a release APK over HTTPS and installs via the system
+  package installer; auto-check is off by default.
 
-**God-class split.** `ShadeService` (4,073 lines) is now an orchestrator with
-three extracted collaborators; bodies moved verbatim, each wrapped in
-`with(svc)` so member references resolve exactly as before (an inline `with`
-also preserves bare-`return` control flow). A token-level verifier proves all
-23 moved bodies are byte-identical to their originals after cancelling only
-the documented rewrites:
+### Backup & portability
+- JSON backup/restore of settings and learned words.
+- Import of words exported from another keyboard (backup archive, dictionary JSON or
+  plain word list) into the on-device learned memory.
+- Optional training-data export for your own experiments.
 
-- `PrefsApplier` — prefs application and window/geometry (~310 lines)
-- `ToolbarController` — toolbar row, autofill chips, clipboard chip (~240 lines)
-- `SuggestionPipeline` — candidate generation, learned re-ranking, offensive
-  filtering, casing, strip content, selection (~760 lines). The scoring math
-  and ranking feature extraction are untouched and remain locked by the
-  numeric verifiers.
+---
 
-`ShadeService.kt`: 4,073 → ~3,130 lines. Earlier v11 cleanups (bundled in the
-same release): a single `TfliteModelLoader` construction point for all six
-TFLite scorers, a shared `AssetTsv` parser replacing 19 hand-rolled asset
-readers, and a `ShadeLog` channel that every swallowed failure reports
-through (the remaining silent-looking guards are documented accumulate-and-
-rethrow or user-facing patterns, audited one by one).
+## Architecture
 
-## Credits
+| Package | Responsibility |
+|---|---|
+| `com.shade.keyboard` | IME service, key view, popup/accent overlay, suggestion pipeline, clipboard, settings, backup, theming, proofreader, updater |
+| `.slide` | Glide decoding: lexicon coding, geometry, two-stage decoder, trained reranker model |
+| `.engine` | Correction & ranking engines: neural spell checker, confusables, phonetics, phrases, online ranker, calibration, suppression, TFLite scorers |
+| `.ai` | ONNX next-word language model and vocabulary |
+| `.emoji` | Emoji prediction engines |
+| `.gif`, `.translate`, `.voice` | The three I/O peripherals (network GIF, network translation, speech) |
+| `.analytics` | Opt-in typing statistics, heat-map view, touch-bias model |
+| `.keypresseffect` | Haptics/sound engine (mode resolution, pref gates, rate limiting) |
+| `.migration` | Foreign dictionary/backup import |
+| `.motion` | Shared animation constants |
 
-The trained glide decoder is an original, from-scratch implementation, but its
-design was shaped by two prior works:
+Concurrency model: keystroke work runs on the main thread only for editor calls;
+suggestion and decode pipelines run on background dispatchers behind a debounced,
+cancellable job. Shared ranking state is published by volatile reference swap (never
+mutated in place). Neural language-model engines are parked per locale (current +
+previous) instead of being reloaded on every script flip, and dropped under memory
+pressure.
 
-- [FUTO Keyboard](https://github.com/futo-futo/keyboard) — the first keyboard to
-  ship a fully on-device trained glide decoder. Its public behaviour and
-  write-ups inspired Shade's on-device approach; no source code or model data
-  was reused.
-- SHARK2 (K. Kristensson & S. Zhai, "SHARK2: A Large Vocabulary Shorthand
-  Writing System for Pen-Based Text Input", 2004) — the published
-  ideal-word-path shape-matching algorithm behind the decoder's core scoring.
+---
 
-Shade's reranker weights are produced by Shade's own simulator
-(`scripts/train_swipe_model.py`) and can be retrained by anyone from source.
+## Building
+
+Requirements: JDK 17, Android SDK platform 37 with build-tools 37.0.0, and Gradle via
+the wrapper (9.8). The root build script declares only the Android Gradle plugin
+(9.4) — Kotlin support ships built into AGP 9.x, so no separate Kotlin plugin is
+applied.
+
+```bash
+./gradlew assembleDebug          # debug APK
+./gradlew test                   # unit tests (460+, incl. Robolectric smoke tests)
+./gradlew lintDebug              # lint gate
+```
+
+Release builds are signed with a keystore you provide:
+
+```bash
+cp keystore.properties.example keystore.properties   # then fill in paths/passwords
+./gradlew assembleRelease        # APK
+./gradlew bundleRelease          # AAB for Play
+```
+
+Without `keystore.properties` the release variant falls back to the debug keystore so
+CI artifacts stay installable — never distribute those.
+
+`minSdk` 26, `targetSdk`/`compileSdk` 37. APK signing uses v2 only (minSdk 26 does not
+need v1 jar signing).
+
+### CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push and PR: unit tests →
+`lintDebug` → debug APK → minified, resource-shrunk release APK (R8 breakage is a
+blocking failure), uploading both APKs as artifacts and the HTML/XML test reports
+whenever the test step fails.
+
+---
+
+## Reproducible assets
+
+| Script | Purpose |
+|---|---|
+| `scripts/train_swipe_model.py` | Simulates swipes over the dictionary and fits the glide reranker (deterministic; emits `swipe_model.json`) |
+| `scripts/gen_emoji_catalog.py` | Regenerates the emoji keyword catalogs from Unicode/CLDR data |
+| `scripts/add_emoji18_keywords.py` | Keyword coverage for the newest emoji batch |
+| `scripts/verify_catalog_18.py` | Asserts catalog completeness against the Unicode chart |
+| `scripts/verify_settings_wiring.py` | Checks every settings catalog row is wired to a real preference read |
+
+The bundled models (ONNX language model, TFLite ranker / next-word / spell / concept /
+emotion encoders) are loaded read-only from assets; every loader degrades gracefully
+to the unaided path when a model is missing or rejects its payload.
+
+---
+
+## Provenance
+
+The glide decoder is an original implementation. Its design was shaped by the
+published SHARK2 ideal-word-path algorithm (Kristensson & Zhai, 2004) and by the
+public behaviour of FUTO Keyboard's on-device glide typing; no source code or model
+data from either is used. Reranker weights are produced by Shade's own simulator and
+can be retrained from source.
+
+## License
+
+MIT — see `LICENSE`.
