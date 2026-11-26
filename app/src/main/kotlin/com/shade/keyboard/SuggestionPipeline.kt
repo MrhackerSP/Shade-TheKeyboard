@@ -114,7 +114,7 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
     private fun isWordChar(c: Char): Boolean {
         if (c.isLetterOrDigit() || c == '\'' || c == '-') return true
         val t = Character.getType(c)
-        return t == Character.NON_SPACING_MARK.toInt() || t == Character.SPACING_COMBINING_MARK.toInt()
+        return t == Character.NON_SPACING_MARK.toInt() || t == Character.COMBINING_SPACING_MARK.toInt()
     }
 
     private fun isLearnableWord(s: String): Boolean =
