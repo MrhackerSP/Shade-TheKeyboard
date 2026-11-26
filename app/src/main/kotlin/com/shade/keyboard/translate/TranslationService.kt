@@ -1,63 +1,67 @@
 package com.shade.keyboard.translate
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/**
- * Translation service with multiple free backends, tried in order.
- * No API key required for any of them.
- *
- * 1. Web translate endpoint A (POST body, ~4500 chars/chunk)
- * 2. Web translate endpoint B (GET, ~1500 chars/chunk)
- * 3. Free translation API C (450 chars/chunk)
- *
- * Long text is split at sentence/paragraph boundaries and translated piece
- * by piece, then stitched back together.
- */
 object TranslationService {
-
     private const val CONNECT_MS = 6000
     private const val READ_MS = 8000
+    private const val POST_MAX = 4500
+    private const val GET_ENCODED_MAX = 4000
+    private const val FREE_MAX = 450
+    private const val OVERALL_MS = 20_000L
 
-    /**
-     * Translate [text] from [source] to [target].
-     * @param source Source language code, or "auto" for auto-detection.
-     * @param target Target language code (e.g. "en", "es", "ru").
-     * @return The translated text, or null on failure.
-     */
     suspend fun translate(text: String, source: String, target: String): String? {
         val clean = text.trim()
         if (clean.isEmpty()) return ""
-
         val src = if (source == "auto") guessSource(clean) else source
         val to = normalizeTarget(target)
-
-        for ((limit, fn) in listOf(
-            4500 to ::viaTranslatePost,
-            1500 to ::viaTranslateGet,
-            450 to ::viaFreeApi
-        )) {
-            // All three backends do blocking HttpURLConnection I/O: they must run on IO,
-            // otherwise every call throws NetworkOnMainThreadException (swallowed below)
-            // and translation fails 100% of the time.
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    splitText(clean, limit).joinToString("") { piece ->
-                        val trail = piece.takeLastWhile { it.isWhitespace() }
-                        fn(piece.trim(), src, to).trim() + trail
+        return withContext(Dispatchers.IO) {
+            withTimeoutOrNull(OVERALL_MS) {
+                val pieces = splitText(clean, POST_MAX)
+                val done = arrayOfNulls<String>(pieces.size)
+                for (i in pieces.indices) {
+                    ensureActive()
+                    val piece = pieces[i]
+                    val body = piece.trim()
+                    val trail = piece.takeLastWhile { it.isWhitespace() }
+                    if (body.isEmpty()) { done[i] = trail; continue }
+                    var translated: String? =
+                        runCatching { viaTranslatePost(body, src, to).trim() }
+                            .getOrNull()?.takeIf { it.isNotEmpty() }
+                    if (translated == null &&
+                        URLEncoder.encode(body, "UTF-8").length <= GET_ENCODED_MAX
+                    ) {
+                        translated = runCatching { viaTranslateGet(body, src, to).trim() }
+                            .getOrNull()?.takeIf { it.isNotEmpty() }
                     }
-                }.getOrNull()
+                    if (translated == null) {
+                        translated = runCatching {
+                            splitText(body, FREE_MAX).joinToString("") { sub ->
+                                val t = sub.trim()
+                                val tTrail = sub.takeLastWhile { it.isWhitespace() }
+                                if (t.isEmpty()) tTrail
+                                else viaFreeApi(t, src, to).trim().also {
+                                    if (it.isEmpty()) throw IOException("free backend: empty result")
+                                } + tTrail
+                            }
+                        }.getOrNull()?.takeIf { it.isNotEmpty() }
+                    }
+                    if (translated == null) return@withTimeoutOrNull null
+                    done[i] = translated + trail
+                }
+                done.joinToString("")
             }
-
-            if (!result.isNullOrEmpty()) return result
         }
-        return null
     }
 
     private fun viaTranslatePost(text: String, from: String, to: String): String {
@@ -81,7 +85,7 @@ object TranslationService {
     private fun viaTranslateGet(text: String, from: String, to: String): String {
         val raw = open(
             "https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=$from&tl=$to&q=" +
-                URLEncoder.encode(text, "UTF-8")
+            URLEncoder.encode(text, "UTF-8")
         ).body()
         val root = JSONArray(raw)
         return buildString {
@@ -96,12 +100,14 @@ object TranslationService {
 
     private fun viaFreeApi(text: String, from: String, to: String): String {
         val src = if (from != "auto") from else guessSource(text)
+        if (src == "auto") return ""
         val raw = open(
             "https://api.mymemory.translated.net/get?q=" + URLEncoder.encode(text, "UTF-8") +
-                "&langpair=$src|$to"
+            "&langpair=" + URLEncoder.encode("$src|$to", "UTF-8")
         ).body()
-        val root = JSONArray(raw)
-        return root.optJSONObject(0)?.optString("translatedText") ?: ""
+        val root = JSONObject(raw)
+        if (root.optInt("responseStatus") != 200) return ""
+        return root.optJSONObject("responseData")?.optString("translatedText").orEmpty()
     }
 
     private fun open(url: String): HttpURLConnection =
@@ -156,7 +162,13 @@ object TranslationService {
     }
 
     private fun guessSource(text: String): String = when {
-        text.any { it in '\u0400'..'\u04FF' } -> if (text.any { it in "іїєґІЇЄҐ" }) "uk" else "ru"
+        text.any { it in '\u0900'..'\u097F' } -> "hi"
+        text.any { it in '\u0400'..'\u04FF' } -> when {
+            text.any { it in "іїєґІЇЄҐ" } -> "uk"
+            text.any { it in "ђјљњћџЂЈЉЊЋЏ" } -> "sr"
+            text.any { it == 'ъ' || it == 'Ъ' } && text.none { it in "ыэёЫЭЁ" } -> "bg"
+            else -> "ru"
+        }
         text.any { it in '\u4E00'..'\u9FFF' } -> "zh"
         text.any { it in '\u3040'..'\u30FF' } -> "ja"
         text.any { it in '\uAC00'..'\uD7A3' } -> "ko"
