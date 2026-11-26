@@ -108,6 +108,18 @@ import java.util.ArrayDeque
  * preserves bare-return control flow. Behavior is unchanged.
  */
 internal class SuggestionPipeline(private val svc: ShadeService) {
+    /** One in-flight engine reload at a time. Without this guard every keystroke
+     *  during a multi-second load launched ANOTHER concurrent reload of the same
+     *  engine (neuralLocale only updates after the load completes). */
+    @Volatile private var neuralReloadTarget: String? = null
+
+    private fun ensureNeuralLocale(desired: String) { with(svc) {
+        if (neuralLocale == desired || neuralReloadTarget == desired) return
+        neuralReloadTarget = desired
+        scope.launch(Dispatchers.Default) {
+            try { reloadNeuralEngine(desired) } finally { neuralReloadTarget = null }
+        }
+    }}
 
     // R2 — a learnable word is letters/marks (plus internal ' / -), bounded
     // length, no whitespace; excludes emoji, clipboard sentences and URLs.
@@ -181,10 +193,11 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
             val combined = (1f - modelWeight) * base + modelWeight * modelScore + learnedBoost + sessionBoost
             candidate to combined
         }
-        // Snapshot-then-putAll so readers see either old or new state,
-        // never half-mutated maps.
-        lastRankedFeatures.apply { clear(); putAll(newRankedFeatures) }
-        lastRawRankerScores.apply { clear(); putAll(newRawScores) }
+        // Atomic reference swap: clear()+putAll() on the LIVE map exposed an
+        // empty window to Main-thread pickSuggestion (positive features lost,
+        // acceptance training silently skipped).
+        lastRankedFeatures = newRankedFeatures
+        lastRawRankerScores = newRawScores
         // §3 — [lastShownCandidates] is now the FINAL displayed list, set in
         // [setCandidates] after injections and finalization, so rejection
         // tracking and negative ranker updates attribute to words the user
@@ -213,7 +226,9 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
     ) { with(svc) {
         val missing = shown.take(3).filter { it.isNotEmpty() && !lastRankedFeatures.containsKey(it) }
         if (missing.isEmpty()) return@with
-        missing.forEach { word ->
+        val addF = HashMap<String, FloatArray>(missing.size)
+        val addS = HashMap<String, Float>(missing.size)
+        for (word in missing) {
             val features = RankingFeatureExtractor.extract(
                 candidate = word,
                 typedWord = prefix,
@@ -221,9 +236,12 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                 userUnigramCount = userWordMemory.count(word),
                 userBigramCount = sessionBigramBoost.bigramCount(prev1, word)
             )
-            lastRankedFeatures[word] = features
-            lastRawRankerScores[word] = runCatching { rankingScorer?.score(features) ?: 0f }.getOrDefault(0f)
+            addF[word] = features
+            addS[word] = runCatching { rankingScorer?.score(features) ?: 0f }.getOrDefault(0f)
         }
+        // Copy-on-write: published maps are never mutated in place.
+        lastRankedFeatures = lastRankedFeatures + addF
+        lastRawRankerScores = lastRawRankerScores + addS
     }}
 
     internal fun updateSuggestions() { with(svc) {
@@ -263,9 +281,7 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
         if (typedWord.isEmpty()) {
             val contextWords = contextWordsExcluding("")
             val desiredLocale = desiredNeuralLocale(contextWords)
-            if (neuralLocale != desiredLocale) {
-                scope.launch(Dispatchers.Default) { reloadNeuralEngine(desiredLocale) }
-            }
+            ensureNeuralLocale(desiredLocale)
             val prev1 = contextWords.lastOrNull()
             val prev2 = contextWords.dropLast(1).lastOrNull()
             val context = neuralContext("")
@@ -339,9 +355,7 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
         val prefix = typedWord
         val contextWords = contextWordsExcluding(typedWord)
         val desiredLocale = desiredNeuralLocale(contextWords)
-        if (neuralLocale != desiredLocale) {
-            scope.launch(Dispatchers.Default) { reloadNeuralEngine(desiredLocale) }
-        }
+        ensureNeuralLocale(desiredLocale)
         val prev1 = contextWords.lastOrNull()
         val prev2 = contextWords.dropLast(1).lastOrNull()
         val touches = if (composingActive) touchTrace.last(touchTrace.size()) else emptyList()
