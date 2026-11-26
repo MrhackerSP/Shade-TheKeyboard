@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="clipboard_images" path="clipboard_images/" />
-    <cache-path name="updates" path="updates/" />
+    <!-- Updater downloads to filesDir/updates now (cache can be evicted before
+         the install intent runs). Keep the old cache root so APKs left there by
+         pre-0.6 installs still resolve. Names must be unique. -->
+    <files-path name="updates" path="updates/" />
+    <cache-path name="updates_cache" path="updates/" />
     <cache-path name="gif_send" path="gif_send/" />
 </paths>
