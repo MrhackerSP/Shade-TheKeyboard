@@ -282,6 +282,10 @@ class SlideDecoderTest {
         val out = decode(pathFor("helo"), dict)
         val ms = (System.nanoTime() - t0) / 1_000_000
         assertEquals("hello", out)
-        assertTrue("decode took $ms ms", ms < 5_000)
+        // Shared CI runners are 2 vCPUs under arbitrary load; a 5 s wall-clock
+        // budget there measures the runner, not the decoder. Strict locally,
+        // 4× headroom on CI (GitHub Actions sets CI=true).
+        val budget = if (System.getenv("CI") == "true") 20_000 else 5_000
+        assertTrue("decode took $ms ms (budget $budget ms)", ms < budget)
     }
 }
