@@ -12,6 +12,19 @@ import kotlin.math.min
 import kotlin.math.round
 import kotlin.math.sqrt
 
+/**
+ * Glide ("swipe") typing decoder.
+ *
+ * Every word of the lexicon is a candidate: each word is drawn as the polyline through its
+ * letters and compared with the swipe (shape, adherence, corners, length, prior, context),
+ * then optionally refined by a trained [SwipeModel] reranker whose correction is clamped so
+ * it can refine close calls but never overrule a confident hand-tuned margin.
+ *
+ * Provenance: from-scratch implementation for Shade, shaped by the published SHARK2
+ * ideal-word-path algorithm and the public behaviour of FUTO Keyboard's on-device glide
+ * decoder. No source code from other keyboards is used; reranker weights are fitted by
+ * scripts/train_swipe_model.py on simulated swipes.
+ */
 interface SlideDictionary {
     fun contains(word: String): Boolean
     fun glideLexicon(): GlideLexicon
@@ -53,7 +66,7 @@ class SlideDecoder(
             if (p.size < 2) continue
             val x = p[0] / geo.px
             val y = p[1] / geo.py
-            if (!x.isFinite() || !y.isFinite()) continue
+            if (x.isNaN() || y.isNaN()) continue
             if (n > 0) {
                 val dx = x - xs[n - 1]
                 val dy = y - ys[n - 1]
@@ -431,13 +444,11 @@ class SlideDecoder(
                 val spreadQuality = if (tpXRange > 0.1f && tpYRange < tpXRange * 2f) 0f
                     else W_SPREAD * (0.1f - tpXRange.coerceAtMost(0.1f))
 
-                // F1: Gate short-word penalty on excess travel
+                // F1 — only penalise a short word when the swipe has genuine excess
+                // travel. A straight h→i swipe must not charge "hi" for being 2 letters.
                 val excessTravel = length - total
-                val charNumFeature = if (len < 3 && excessTravel > 1.5f) W_CHAR_NUM * (3 - len) else 0f
-
-                // F3: Detour penalty (reduced weight to avoid breaking loop tests on short swipes)
-                val detourFraction = (total - length).coerceAtLeast(0f) / max(length, 1f)
-                val detourPenalty = 1.0f * detourFraction
+                val charNumFeature =
+                    if (len < 3 && excessTravel > SHORT_WORD_EXCESS) W_CHAR_NUM * (3 - len) else 0f
 
                 var omission = 0
                 var insertion = 0
@@ -480,7 +491,20 @@ class SlideDecoder(
                                 transposition++
                                 wi += 2; si += 2
                             } else if (si + 1 < swipeStr.length && swipeStr[si + 1] == wc) {
-                                insertion++
+                                // F2 — a key grazed while travelling between two consecutive
+                                // letters of the word is not a typed insertion (h→i passes
+                                // near j/u). Exempt it when the detour it adds is tiny.
+                                val sCode = sc - 'a'
+                                val wCode = wc - 'a'
+                                var travel = false
+                                if (wi > 0 && sCode in 0..25 && wCode in 0..25) {
+                                    val p = wordStr[wi - 1].lowercaseChar() - 'a'
+                                    val direct = geo.pair[p * 26 + wCode]
+                                    val via = geo.pair[p * 26 + sCode] + geo.pair[sCode * 26 + wCode]
+                                    travel = !direct.isNaN() && !via.isNaN() &&
+                                        via - direct <= TRAVEL_SLACK
+                                }
+                                if (!travel) insertion++
                                 si++
                             } else if (wi + 1 < wordStr.length && wordStr[wi + 1].lowercaseChar() == sc) {
                                 omission++
@@ -498,6 +522,7 @@ class SlideDecoder(
                         }
                     }
                     omission += (wordStr.length - wi).coerceAtLeast(0)
+                    // F2 — lift-off drift past the last letter is not a typed insertion.
                 }
 
                 val alignLen = maxOf(swipeStr.length, wordStr.length, 1)
@@ -522,7 +547,6 @@ class SlideDecoder(
                     vowelPenalty +
                     spreadQuality +
                     charNumFeature +
-                    detourPenalty +
                     editFeature +
                     oovFeature
 
@@ -558,8 +582,10 @@ class SlideDecoder(
                         f[14] = model.bigramScore(lex.words[i])
                         f[15] = keepAlign[h]
                         f[16] = model.trigramScore(lex.words[i])
-                        // F5: Clamp model correction
-                        score += model.penalty(f).coerceIn(-1.5f, 1.5f)
+                        // F5 — the reranker refines close calls; it can never overrule a
+                        // confident hand-tuned margin.
+                        score += model.penalty(f)
+                            .coerceIn(-MODEL_MAX_CORRECTION, MODEL_MAX_CORRECTION)
                     }
                 }
                 hits.add(Hit(lex.words[i], score))
@@ -610,6 +636,12 @@ class SlideDecoder(
         const val W_NEARBY_SUB = 0.4f
         const val W_GENERAL_SUB = 1.0f
         const val W_OOV = 5.0f
+        // F1 — excess swipe travel (key units) before a short word is penalised.
+        const val SHORT_WORD_EXCESS = 1.5f
+        // F2 — detour (key units) a grazed key may add and still count as travel.
+        const val TRAVEL_SLACK = 0.3f
+        // F5 — max magnitude of the trained reranker's correction.
+        const val MODEL_MAX_CORRECTION = 1.5f
 
         fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float {
             val dx = x1 - x2
@@ -672,6 +704,8 @@ class SlideDecoder(
             return out.toIntArray()
         }
 
+        // Original loop detector, unchanged: absolute turning + arc threshold.
+        // This is the behaviour aLoopOnAKeyFavoursTheDoubledSpelling pins.
         fun findLoops(xs: FloatArray, ys: FloatArray, n: Int, geo: Geometry): Int {
             var mask = 0
             var runLetter = -1
