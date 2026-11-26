@@ -143,8 +143,6 @@
     <string name="gif_loading">Loading…</string>
     <string name="gif_no_results">No GIFs found</string>
     <string name="gif_error">Couldn’t load GIFs. Check your connection.</string>
-    <string name="gif_unavailable">GIF search isn’t available in this build.</string>
-    <string name="gif_needs_key_title">GIF search needs a free API key</string>
     <string name="gif_needs_key_message">Get a free key from your GIF provider\'s website, then paste it below. The key stays on this device.</string>
     <string name="gif_key_hint">Paste API key</string>
     <string name="gif_key_save">Save</string>
@@ -161,7 +159,6 @@
     <string name="translator_translating">Translating…</string>
     <string name="translator_error">Translation failed — check your connection</string>
     <string name="translator_insert">Insert</string>
-    <string name="translator_enter_hint">Press ⏎ to insert the translation</string>
     <string name="pref_translator">Translator</string>
     <string name="pref_gif">GIF search (online)</string>
     <string name="pref_gif_api_key">GIF API key</string>

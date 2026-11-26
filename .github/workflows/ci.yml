@@ -25,16 +25,22 @@ jobs:
           java-version: 17
 
       # Ubuntu runners already include the Android SDK/cmdline tools; just make sure
-      # the platform we compile against is installed.
+      # the platform we compile against is installed. Fail loudly if it isn't —
+      # silently continuing produced confusing Gradle errors later.
       - name: Install Android SDK 37
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platforms;android-37" "build-tools;37.0.0" > /dev/null || \
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
-          if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -d "$ANDROID_HOME/platforms/android-37" ]; then
-            ln -sfn "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
+          sdkmanager_install() {
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$1" "build-tools;37.0.0" > /dev/null 2>&1
+          }
+          if ! sdkmanager_install "platforms;android-37"; then
+            sdkmanager_install "platforms;android-37.0" || {
+              echo "::error::Unable to install platforms;android-37 (neither naming variant available)"
+              exit 1
+            }
+            if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -d "$ANDROID_HOME/platforms/android-37" ]; then
+              ln -sfn "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
+            fi
           fi
 
       - uses: gradle/actions/setup-gradle@v5
@@ -53,8 +59,10 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      # Single run: the old "|| retry" masked flaky tests as green passes.
+      # Flaky tests should be annotated (@Retry) or fixed, not hidden.
       - name: Unit tests
-        run: ./gradlew test --stacktrace || ./gradlew test --stacktrace
+        run: ./gradlew test --stacktrace
 
       - name: Lint
         run: ./gradlew lintDebug --stacktrace

@@ -42,18 +42,15 @@ class OnlineRankerTrainer(context: Context) {
      * [EXPLORE_INV] calls so we occasionally surface a less-likely
      * candidate to learn whether it would have been accepted.
      *
-     * Implemented as a deterministic PRNG seeded by uptime — no privacy
-     * implications, no persistent state.
+     * Uses a per-instance SplittableRandom: nanoTime's low bits are not
+     * uniform, so hand-seeding produced a biased explore rate that varied
+     * with call timing. No persistent state, no privacy implications.
      */
-    // Thread.id is the documented entropy source here; threadId() does not
-    // exist on the minimum API level, so the deprecation is intentional.
-    @Suppress("DEPRECATION")
-    fun shouldExplore(): Boolean {
-        // XOR with current thread id + uptime as entropy source.
-        val seed = System.nanoTime() xor Thread.currentThread().id xor 0x2545F4914F6CDD1DL
-        val x = (seed ushr 32).toInt() and 0x7FFFFFFF
-        return (x % EXPLORE_INV) == 0
-    }
+    private val exploreRandom = java.util.concurrent.SplittableRandom(
+        System.nanoTime() xor 0x2545F4914F6CDD1DL
+    )
+
+    fun shouldExplore(): Boolean = exploreRandom.nextInt(EXPLORE_INV) == 0
 
     init {
         val savedVersion = prefs.getInt(SCHEMA_VERSION_KEY, -1)

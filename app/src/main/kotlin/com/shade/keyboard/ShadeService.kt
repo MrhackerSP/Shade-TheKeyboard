@@ -521,7 +521,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         super.onDestroy()
     }
 
-    override fun onEvaluateFullscreenMode(): Boolean = false
+    // Landscape fullscreen extract mode is opt-out: users can disable it via
+    // "fullscreen_landscape" if an app renders it badly. Hard-disabling it
+    // unconditionally left tall fields cramped in landscape.
+    override fun onEvaluateFullscreenMode(): Boolean =
+        prefs.getBoolean("fullscreen_landscape", true) && super.onEvaluateFullscreenMode()
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
@@ -1945,7 +1949,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 val uri = item.uri!!
                 scope.launch(Dispatchers.IO) {
                     val bytes = readCapped(uri, 12 * 1024 * 1024)
-                    if (bytes != null && bytes.isNotEmpty()) clips.addImage(bytes, mime)
+                    // Re-check privacy state after the async read: the user may
+                    // have toggled incognito on while we were loading the image.
+                    if (!incognito && !fieldSecureInput &&
+                        bytes != null && bytes.isNotEmpty()
+                    ) clips.addImage(bytes, mime)
                 }
                 return
             }

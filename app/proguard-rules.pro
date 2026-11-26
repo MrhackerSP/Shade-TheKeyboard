@@ -5,10 +5,8 @@
 -keep class com.shade.keyboard.SettingsActivity { *; }
 -keep class com.shade.keyboard.SettingsActivity$* { *; }
 -keep class com.shade.keyboard.SettingsAdapter$* { *; }
--keep class com.shade.keyboard.SettingsTree { *; }
 -keep class com.shade.keyboard.SettingsItem { *; }
 -keep class com.shade.keyboard.SettingsItem$* { *; }
--keep class com.shade.keyboard.SettingsPage { *; }
 -keep class com.shade.keyboard.TypingStatsActivity { *; }
 
 # Reflection-free code, so we can afford aggressive optimizations

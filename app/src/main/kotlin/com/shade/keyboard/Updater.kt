@@ -19,8 +19,7 @@ import java.net.URL
 object Updater {
 
     private const val TAG = "Updater"
-    // Change this to your GitHub repo: "username/Shade-TheKeyboard"
-    private const val REPO = "OWNER/REPO"
+    private const val REPO = "MrhackerSP/Shade-TheKeyboard"
     private const val PREF_AUTO = "auto_update_check"
 
     data class UpdateInfo(
@@ -51,6 +50,10 @@ object Updater {
     @Volatile
     var upToDate: Boolean = false
         private set
+
+    // Visible for the UpdaterConfigTest regression guard (the OWNER/REPO
+    // template placeholder silently broke every release check once).
+    internal fun repoForTests(): String = REPO
 
     private var autoChecked = false
 
@@ -198,8 +201,14 @@ object Updater {
     }
 
     private fun download(context: Context, info: UpdateInfo): File {
-        val dir = File(context.cacheDir, "updates").apply { mkdirs() }
-        dir.listFiles()?.forEach { it.delete() }
+        // filesDir (not cacheDir): the system can evict cache files between the
+        // download finishing and the user confirming the install intent, which
+        // made installs fail with "package not found".
+        val dir = File(context.filesDir, "updates").apply { mkdirs() }
+        // Delete only stale leftovers from previous attempts; never touch the
+        // file belonging to the release we are about to (re)download.
+        val keep = "Shade-${info.version}.apk"
+        dir.listFiles()?.filter { it.name != keep }?.forEach { it.delete() }
         val out = File(dir, "Shade-${info.version}.apk")
         var url = URL(info.apkUrl)
         val sha = MessageDigest.getInstance("SHA-256")

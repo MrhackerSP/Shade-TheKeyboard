@@ -6,8 +6,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.text.TextUtils
 import android.util.Base64
 import android.util.Log
@@ -24,12 +22,7 @@ import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.security.KeyStore
 import java.security.MessageDigest
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
@@ -61,64 +54,14 @@ class ClipboardStore(private val ctx: Context) {
     }
 
     private val prefs = ctx.getSharedPreferences("clip_history", Context.MODE_PRIVATE)
+    // Same Keystore alias as before, so existing on-disk history stays readable;
+    // the crypto itself now lives in SecureStore (single shared implementation).
     private val keyAlias = "shade_clipboard_key"
     private val imageDir = File(ctx.cacheDir, "clipboard_images").apply { mkdirs() }
 
-    private fun keyStore(): KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    private fun encrypt(plain: String): String? = SecureStore.encrypt(keyAlias, plain)
 
-    @Volatile private var cachedKey: SecretKey? = null
-
-    private fun secretKey(): SecretKey {
-        cachedKey?.let { return it }
-        return loadOrCreateKey().also { cachedKey = it }
-    }
-
-    private fun loadOrCreateKey(): SecretKey {
-        val ks = keyStore()
-        (ks.getEntry(keyAlias, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
-
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                keyAlias,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-            )
-                .setKeySize(256)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .build()
-        )
-        return generator.generateKey()
-    }
-
-    private fun encrypt(plain: String): String? {
-        return try {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, secretKey())
-            val iv = cipher.iv
-            val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
-            Base64.encodeToString(iv + encrypted, Base64.NO_WRAP)
-        } catch (t: Exception) {
-            ShadeLog.w("Clipboard", "clipboard encrypt failed", t, once = true)
-            cachedKey = null
-            null
-        }
-    }
-
-    private fun decrypt(stored: String): String? {
-        return try {
-            val bytes = Base64.decode(stored, Base64.NO_WRAP)
-            val iv = bytes.copyOfRange(0, 12)
-            val payload = bytes.copyOfRange(12, bytes.size)
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, iv))
-            String(cipher.doFinal(payload), Charsets.UTF_8)
-        } catch (t: Exception) {
-            ShadeLog.w("Clipboard", "clipboard decrypt failed", t, once = true)
-            cachedKey = null
-            null
-        }
-    }
+    private fun decrypt(stored: String): String? = SecureStore.decrypt(keyAlias, stored)
 
     // Decrypting every clip is slow, so the parsed list is reused until the stored
     // JSON actually changes (this also notices changes made by another instance).
