@@ -47,7 +47,6 @@ class TrainedSwipeRerankTest {
 
     private fun modelWith(letterWeight: Float, blend: Float = 1f): SwipeModel? {
         val weights = FloatArray(SwipeModel.FEATURE_NAMES.size)
-        // FIX: removed trailing space so it matches clean FEATURE_NAMES
         weights[SwipeModel.FEATURE_NAMES.indexOf("letters")] = letterWeight
         val w = weights.joinToString(", ") { v -> "$v " }
         return SwipeModel.parse(
@@ -74,7 +73,6 @@ class TrainedSwipeRerankTest {
 
     @Test
     fun extremeLetterWeightIsClampedAndCannotOverruleHandRanking() {
-        // Renamed to shortModel/longModel to avoid any shadowing/conflicts
         val shortModel = modelWith(-1000f)!!
         assertEquals("ads", candidates(shortModel).first())
         val longModel = modelWith(1000f)!!
