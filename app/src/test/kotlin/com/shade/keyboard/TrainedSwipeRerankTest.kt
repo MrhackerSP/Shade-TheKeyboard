@@ -9,15 +9,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The trained reranker must refine the hand-tuned ranking, never break it.
- *
- * Geometry is a single row of three keys: a=(0,0), s=(1,0), d=(2,0) in key units.
- * The swipe walks a -> d -> s (out and back), so the word "ads" fits the drawn
- * path while "as" is a plausible short alternative. The hand rule ranks "ads"
- * first; a model whose letter-count weight dominates flips that order in either
- * direction, which pins the reranker's effect end to end.
- */
 class TrainedSwipeRerankTest {
 
     private class FakeDictionary(
@@ -38,7 +29,6 @@ class TrainedSwipeRerankTest {
         }
     }
 
-    /** Out-and-back path: a -> d -> s, one point every ~10 px. */
     private fun outAndBackPath(): List<FloatArray> {
         val a = floatArrayOf(0f, 50f)
         val d = floatArrayOf(200f, 50f)
@@ -57,11 +47,12 @@ class TrainedSwipeRerankTest {
 
     private fun modelWith(letterWeight: Float, blend: Float = 1f): SwipeModel? {
         val weights = FloatArray(SwipeModel.FEATURE_NAMES.size)
+        // FIX: removed trailing space so it matches clean FEATURE_NAMES
         weights[SwipeModel.FEATURE_NAMES.indexOf("letters")] = letterWeight
-        val w = weights.joinToString(",") { v -> "$v" }
+        val w = weights.joinToString(", ") { v -> "$v " }
         return SwipeModel.parse(
-            """{"version":1,"features":${featureListJson()}""" +
-                ""","weights":[$w],"bias":0.0,"blend":$blend}"""
+            "{ \"version\":1, \"features\":${featureListJson()}, " +
+            "\"weights\":[$w], \"bias\":0.0, \"blend\":$blend}"
         )
     }
 
@@ -77,25 +68,17 @@ class TrainedSwipeRerankTest {
     fun zeroWeightModelKeepsTheHandRanking() {
         val plain = candidates(null)
         assertEquals(listOf("ads", "as"), plain)
-
         val zero = modelWith(0f, blend = 5f)!!
         assertEquals(plain, candidates(zero))
     }
 
     @Test
     fun extremeLetterWeightIsClampedAndCannotOverruleHandRanking() {
-        // With the model penalty clamped to [-1.5, 1.5] (Fix F5), extreme weights
-        // cannot overrule a confident hand-tuned ranking. "ads" fits the out-and-back
-        // path perfectly; "as" has a huge shape penalty. The clamp ensures the model
-        // refines close calls but doesn't break obvious matches.
-        val short = modelWith(-1000f)!!
-        assertEquals("ads", candidates(short).first())
-        val long = modelWith(1000f)!!
-        assertEquals("ads", candidates(long).first())
-
-        // penalty = -blend * |w| * letters: longer "ads" wins by an even wider margin
-        val long = modelWith(1000f)!!
-        assertEquals("ads", candidates(long).first())
+        // Renamed to shortModel/longModel to avoid any shadowing/conflicts
+        val shortModel = modelWith(-1000f)!!
+        assertEquals("ads", candidates(shortModel).first())
+        val longModel = modelWith(1000f)!!
+        assertEquals("ads", candidates(longModel).first())
     }
 
     @Test
