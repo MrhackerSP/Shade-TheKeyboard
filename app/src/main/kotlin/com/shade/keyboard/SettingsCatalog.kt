@@ -178,6 +178,9 @@ object SettingsCatalog {
                 default = "off",
                 keywords = listOf("split", "tablet", "landscape", "halves")
             ),
+            SettingsItem.Toggle("fullscreen_landscape", R.string.pref_fullscreen_landscape, 0, true,
+                listOf("fullscreen", "full screen", "extract", "landscape editor")
+            ),
             SettingsItem.Toggle("toolbar_open_default", R.string.pref_toolbar_open, 0, false,
                 listOf("toolbar", "default", "open", "strip"))
         )),
