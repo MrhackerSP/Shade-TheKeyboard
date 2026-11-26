@@ -54,6 +54,7 @@ class KeyboardView(context: Context) : View(context) {
     interface Listener {
         fun onKey(code: Int)
         fun onText(text: String)
+
         /**
          * Accent variant selected from a long-press popup.
          *
@@ -63,7 +64,7 @@ class KeyboardView(context: Context) : View(context) {
          *               (atomic replaceLast) or append.
          * @param accent the chosen accented character (already case-shifted).
          *
-         * Default impl falls back to [onText] for listeners that don’t care about the swap.
+         * Default impl falls back to [onText] for listeners that don't care about the swap.
          */
         fun onAccent(base: String, accent: String) { onText(accent) }
         fun onCursor(delta: Int)
@@ -75,6 +76,7 @@ class KeyboardView(context: Context) : View(context) {
         fun onDeleteWords(count: Int)
         /** A slide on the delete key has begun: remember the caret and start selecting backwards. */
         fun onDeleteSlideStart()
+
         /**
          * Move the selection edge by [units] steps (positive = further left, negative = back
          * towards the caret). A step is one word when [byWord] (fast slide) and one character
@@ -85,6 +87,7 @@ class KeyboardView(context: Context) : View(context) {
         fun onDeleteCancel()
         fun onSwipePath(path: List<FloatArray>): Boolean = false
         fun onTouchSample(key: Key, x: Float, y: Float) {}
+
         /**
          * Glide typing live preview — called while the finger is still moving, with the
          * gesture engine's sampled path (NOT the raw touch points). The listener should
@@ -109,6 +112,7 @@ class KeyboardView(context: Context) : View(context) {
     var rows: List<List<Key>> = emptyList()
         private set
     var contentHeightPx = 0
+
     /**
      * Emoji search mode owns the delete key (backspaces the query). The service
      * turns the slide-on-delete gesture off so a leftward drag while deleting
@@ -136,13 +140,10 @@ class KeyboardView(context: Context) : View(context) {
     var splitGapDp = 0f
         set(v) { field = v.coerceIn(0f, 120f); invalidate() }
     var showHints = true
-
     var longPressMs = 300L
     var repeatDelayMs = 350L
     var repeatIntervalMs = 40L
-
     var typingBurstEnabled = false
-
     var bgBitmap: Bitmap? = null
         set(v) {
             // The owner (ShadeService) is the only one that recycles; the view just drops the reference.
@@ -166,17 +167,16 @@ class KeyboardView(context: Context) : View(context) {
     var bgKeyAlpha = 0xFF
     /** 0..100 percent — how see-through the whole keyboard sheet is. */
     var bgTransparency = 0
-
     var trackpadEnabled = true
     /** Glide (swipe) typing: when off, swipes behave like plain taps. */
     var glideEnabled = true
+
     private var trackpadActive = false
     private var trackpadStartX = 0f
     private var trackpadStartY = 0f
     private var trackpadLastSentX = 0f
     private var trackpadLastSentY = 0f
     private val trackpadStep by lazy { dp(7f) }  // ~22 px on xxhdpi, density-aware
-
     private var deleteSlideActive = false
     private var deleteSlideStartX = 0f
     private var deleteSlideWordCount = 0 // characters currently selected by the slide
@@ -184,16 +184,12 @@ class KeyboardView(context: Context) : View(context) {
     private var deleteSlideLastT = 0L
     private var deleteSlideAccum = 0f
     private var deleteSlideSpeed = 0f // smoothed finger speed in dp per millisecond
-
     private var splitProgress = if (splitKeyboard) 1f else 0f
     private var splitAnimator: ValueAnimator? = null
-
     private var oneHandedProgress = 1f
     private var oneHandedAnimator: ValueAnimator? = null
-
     private var layoutAlpha = 1f
     private var layoutAnimator: ValueAnimator? = null
-
     private val handler = Handler(Looper.getMainLooper())
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -205,11 +201,9 @@ class KeyboardView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
-
     private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0x18000000
     }
-
     private val rect = RectF()
     private val dst = RectF()
     private val path = Path()
@@ -219,13 +213,10 @@ class KeyboardView(context: Context) : View(context) {
     private var cancelCount = 0
     private val pointerPool = ArrayDeque<Pointer>(8)
     private var rowHeight = 0f
-
     private var pressProgress = 1f
     private var pressAnimator: ValueAnimator? = null
-
     private var shiftTapProgress = 0f
     private var shiftTapAnimator: ValueAnimator? = null
-
     private var previewKey: Key? = null
     private var previewProgress = 0f
     private var previewAnimator: ValueAnimator? = null
@@ -268,7 +259,6 @@ class KeyboardView(context: Context) : View(context) {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
     }
-
     private var lastKeyTime = 0L
     private var burstCount = 0
     private var burstActive = false
@@ -290,6 +280,7 @@ class KeyboardView(context: Context) : View(context) {
         var consumed = false
         var swiping = false
         var repeated = false
+
         /**
          * True once the finger has moved far enough from [downX]/[downY] to be a glide
          * (not a tap). While true, key rollover is suppressed: the pointer stays on
@@ -317,9 +308,6 @@ class KeyboardView(context: Context) : View(context) {
     private var gestureEngine: GestureEngine? = null
     private var gestureStartTime = 0L
     private var lastGlidePreviewMs = 0L
-    // Last letter key the glide path crossed; used to pop one bubble per crossed key,
-    // instead of re-triggering on every move event.
-    private var glideHighlightKey: Key? = null
 
     private fun obtainPointer(k: Key?, x: Float, y: Float): Pointer {
         val p = pointerPool.pollFirst() ?: Pointer()
@@ -467,14 +455,12 @@ class KeyboardView(context: Context) : View(context) {
         val w = width.toFloat()
         val h = height.toFloat()
         if (w <= 0f || h <= 0f || rows.isEmpty()) return
-
         val availW = w * oneHandedProgress
         val offX = when (oneHanded) {
             1 -> 0f
             2 -> w - availW
             else -> 0f
         }
-
         // Reduced top and bottom padding so the bottom row hugs the edge.
         val padTop = dp(5f)
         val padBottom = dp(1f)
@@ -483,7 +469,6 @@ class KeyboardView(context: Context) : View(context) {
         rowHeight = (h - padTop - padBottom) / rows.size
         val maxGap = if (splitGapDp > 0f) dp(splitGapDp) else min(dp(72f), w * 0.15f)
         val gap = maxGap * splitProgress
-
         rows.forEachIndexed { r, row ->
             val isBottom = r == rows.lastIndex
             val padX = if (isBottom) bottomRowPad else defaultPad
@@ -492,7 +477,6 @@ class KeyboardView(context: Context) : View(context) {
             val total = row.sumOf { it.weight.toDouble() }.toFloat()
             val bottomExtraGaps = if (isBottom) dp(3f) * (row.size - 1) else 0f
             val unit = (availW - 2 * padX - rowGap - bottomExtraGaps) / total
-
             var x = offX + padX
             var gapDone = false
             val splitIdx = row.size / 2
@@ -510,7 +494,6 @@ class KeyboardView(context: Context) : View(context) {
                 if (isBottom && idx < row.size - 1) x += dp(3f)
             }
         }
-
         // Bottom-row outer corners: only the first and last *functional*
         // keys (not spacers) get a corner treatment so ?123 and Enter hug
         // the screen edge, matching modern keyboard.
@@ -564,24 +547,20 @@ class KeyboardView(context: Context) : View(context) {
                 c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
             }
         }
-
         pressedKeys.clear()
         val n = pointers.size()
         for (i in 0 until n) pointers.valueAt(i).key?.let { pressedKeys.add(it) }
-
         c.getClipBounds(clipBounds)
         val clipL = clipBounds.left.toFloat()
         val clipT = clipBounds.top.toFloat()
         val clipR = clipBounds.right.toFloat()
         val clipB = clipBounds.bottom.toFloat()
-
         val gx = dp(2.5f)
         val gy = dp(3f)
         val radius = dp(7f)
         val outerRadius = dp(24f)
         val combinedAlpha = (((if (trackpadActive) 0x88 else 0xFF) * layoutAlpha).toInt().coerceIn(0, 255) * bgKeyAlpha) / 255
         val pressDown = dp(0.7f)
-
         for (row in rows) for (k in row) {
             if (k.kind == KeyKind.SPACER) continue
             if (k.right < clipL || k.left > clipR || k.bottom < clipT || k.top > clipB) continue
@@ -594,13 +573,11 @@ class KeyboardView(context: Context) : View(context) {
                 k.right - gx,
                 k.bottom - gy + topShift
             )
-
             val special = k.kind == KeyKind.ENTER || (k.code == Codes.SHIFT && shiftState == 2)
             if (!keyBorders && !isPressed && !special) {
                 drawContent(c, k, combinedAlpha)
                 continue
             }
-
             if (keyBorders) {
                 shadowPaint.color = 0x18000000
                 rect.set(
@@ -621,7 +598,6 @@ class KeyboardView(context: Context) : View(context) {
                     k.bottom - gy + topShift
                 )
             }
-
             var baseCol = when {
                 k.kind == KeyKind.ENTER && enterIsPrimary -> kbTheme.accent
                 k.kind == KeyKind.ENTER -> kbTheme.keyFn
@@ -635,7 +611,6 @@ class KeyboardView(context: Context) : View(context) {
                 baseCol
             }
             fill.color = ColorUtils.setAlphaComponent(col, combinedAlpha)
-
             val outer = k.outerCorner
             if (outer == KeyOuterCorner.NONE) {
                 c.drawRoundRect(rect, radius, radius, fill)
@@ -643,12 +618,10 @@ class KeyboardView(context: Context) : View(context) {
                 drawOuterRoundedKey(c, k, radius, outerRadius, outer)
             }
             drawContent(c, k, combinedAlpha)
-
             if (k.code == Codes.DELETE && deleteSlideActive && deleteSlideWordCount > 0) {
                 drawDeleteSlideBadge(c, k)
             }
         }
-
         // Space-swipe trail (cursor move) — only while a space slide is in progress.
         if (trailActive && trailAlpha > 0f) drawSpaceSwipeTrail(c)
         // Gesture (glide typing) trail — independent of trailActive; the gesture engine
@@ -765,7 +738,6 @@ class KeyboardView(context: Context) : View(context) {
         val s = s0 * shiftBoost
         val cy = if (caps) cy0 - s * 0.15f else cy0
         val col = kbTheme.text
-
         path.reset()
         path.moveTo(cx, cy - s)
         path.lineTo(cx + s, cy)
@@ -779,7 +751,6 @@ class KeyboardView(context: Context) : View(context) {
         stroke.strokeWidth = dp(2f)
         stroke.style = if (shiftState > 0) Paint.Style.FILL_AND_STROKE else Paint.Style.STROKE
         c.drawPath(path, stroke)
-
         if (caps) {
             stroke.style = Paint.Style.STROKE
             stroke.strokeWidth = dp(2f)
@@ -826,15 +797,12 @@ class KeyboardView(context: Context) : View(context) {
             val y0 = trailStartY
             val x1 = trailEndX
             val y1 = trailEndY
-
             trailGlowPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0x22).toInt())
             trailGlowPaint.strokeWidth = dp(10f)
             c.drawLine(x0, y0, x1, y1, trailGlowPaint)
-
             trailPaint.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xAA).toInt())
             trailPaint.strokeWidth = dp(3f)
             c.drawLine(x0, y0, x1, y1, trailPaint)
-
             fill.color = ColorUtils.setAlphaComponent(kbTheme.accent, (a * 0xCC).toInt())
             c.drawCircle(x1, y1, dp(5f), fill)
         }
@@ -913,15 +881,12 @@ class KeyboardView(context: Context) : View(context) {
         }
         val r = dp(14f)
         val a = (255 * minOf(1f, t * 1.6f)).toInt()
-
         rect.set(cx - w / 2f, top + dp(2f), cx + w / 2f, bottom + dp(2f))
         previewShadow.color = ColorUtils.setAlphaComponent(0x000000, (0x40 * t).toInt())
         c.drawRoundRect(rect, r, r, previewShadow)
-
         rect.set(cx - w / 2f, top, cx + w / 2f, bottom)
         previewBg.color = ColorUtils.setAlphaComponent(kbTheme.popupBg, a)
         c.drawRoundRect(rect, r, r, previewBg)
-
         previewText.color = ColorUtils.setAlphaComponent(kbTheme.text, a)
         previewText.textSize = min(h * 0.5f, dp(32f))
         c.drawText(label, cx, (top + bottom) / 2f - (previewText.ascent() + previewText.descent()) / 2f, previewText)
@@ -980,18 +945,15 @@ class KeyboardView(context: Context) : View(context) {
         // The popup layer is the only renderer; without it there is no panel to show.
         if (!popupLayer.prepare()) return false
         val n = chars.size
-
         // The default item: the number printed on a top-row key (q -> 1, w -> 2 ...) or else the
         // first accent. Releasing without sliding commits it; it sits right above the key.
         val numberIdx = chars.indexOfFirst { it.length == 1 && it[0].isDigit() }
         val defaultItem = if (numberIdx >= 0) numberIdx else 0
-
         val margin = dp(4f)
         val pad = dp(6f)
         val preferredCell = dp(48f)
         // Reserve the strip/headroom above the keyboard; the layer knows how far up the window goes.
         val minTop = popupLayer.minTopInOwner()
-
         // Two passes: place once to learn the left edge, find the column above the key, then
         // build the layout around that column (the placement itself does not depend on it).
         val geo = AccentGrid.place(
@@ -1000,7 +962,6 @@ class KeyboardView(context: Context) : View(context) {
         )
         val anchorCol = AccentGrid.anchorColumn(k.centerX, geo.left, geo.pad, geo.cell, geo.cols)
         val layout = AccentGrid.layout(n, anchorCol, defaultItem)
-
         altItems = chars
         altBaseLabel = k.label
         altLayout = layout
@@ -1017,7 +978,6 @@ class KeyboardView(context: Context) : View(context) {
         val layout = altLayout ?: return
         val geo = altGeo ?: return
         if (!altShown || altItems.isEmpty()) return
-
         // While the finger is still on the pressed key (below the panel, within the key's width)
         // the default item stays selected, so a small wobble after the long press changes nothing.
         val item = if (y >= geo.bottom && x >= altKeyLeft && x <= altKeyRight) {
@@ -1171,22 +1131,29 @@ class KeyboardView(context: Context) : View(context) {
         for (id in ids) up(id, true)
     }
 
+    /**
+     * Gesture-first input model: touch-down only records the pointer and arms the
+     * long-press / repeat timers. Nothing visual happens here — no press highlight,
+     * no bubble — because the gesture is not yet known:
+     *  - a quick tap is registered on touch-UP (see [up]), with sound + haptic only;
+     *  - a long-press shows its accent / symbol popup when the timer fires;
+     *  - a glide shows only the trail once [GLIDE_START_KEY_WIDTHS] is crossed.
+     * This is what keeps glide typing free of tap artifacts and lets the three
+     * gestures stay cleanly distinguishable.
+     */
     private fun down(id: Int, x: Float, y: Float) {
         val k = hit(x, y) ?: return
         val p = obtainPointer(k, x, y)
         pointers.put(id, p)
         if (k.kind == KeyKind.CHAR) {
             listener?.onTouchSample(k, x, y)
-
             // Touch geometry: record the offset from key center
             val offset = TouchGeometry.computeTouchOffset(k, x, y)
             if (offset != null) touchOffsets.add(offset)
-
             if (glideEnabled) {
                 slidePointerId = id
                 slidePath.clear()
                 slidePath.addLast(floatArrayOf(x, y))
-
                 // Initialize gesture engine on first key down
                 val keyW = if (rows.isNotEmpty() && rows[0].isNotEmpty()) {
                     rows[0][0].right - rows[0][0].left
@@ -1196,14 +1163,11 @@ class KeyboardView(context: Context) : View(context) {
                     gestureEngine = GestureEngine(keyW)
                     gestureEngine?.setTrailDensity(resources.displayMetrics.density)
                 } else ge0.setKeyWidth(keyW)
-                glideHighlightKey = null
                 gestureStartTime = android.os.SystemClock.uptimeMillis()
                 gestureEngine?.onDown(x, y, 0)
             }
         }
-        feedback(k)
         onKeyBurst()
-        touchKey(k)
         pressKey(p)
         invalidate(k)
     }
@@ -1212,10 +1176,11 @@ class KeyboardView(context: Context) : View(context) {
     // Every key has its own pressAmt that eases towards 1 while held (fast) and back to 0 after
     // release (slower), so a key fades out instead of snapping back, and two keys pressed in
     // quick succession animate independently. Driven by Choreographer so it follows the display.
+    // With the gesture-first model nothing enqueues keys here for plain touches, so keys stay
+    // unhighlighted; the machinery remains for programmatic presses and future use.
     private val animKeys = ArrayList<Key>(8)
     private var pressTickRunning = false
     private var pressTickLastNanos = 0L
-
     private val pressTick = object : android.view.Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             val dtMs = if (pressTickLastNanos == 0L) 16f
@@ -1249,7 +1214,12 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun isHeld(k: Key): Boolean {
-        for (i in 0 until pointers.size()) if (pointers.valueAt(i).key === k) return true
+        for (i in 0 until pointers.size()) {
+            val p = pointers.valueAt(i)
+            // A gliding pointer keeps its original key for the tap fallback, but
+            // the key must not render as pressed — only the trail shows mid-glide.
+            if (p.key === k && !p.gliding) return true
+        }
         return false
     }
 
@@ -1274,7 +1244,6 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun startPressAnimation() { kickPressTick() }
-
     private fun stopPressAnimation() { kickPressTick() }
 
     private fun animateShiftTap() {
@@ -1324,12 +1293,14 @@ class KeyboardView(context: Context) : View(context) {
         if (k != null) invalidate(k) else invalidate()
     }
 
+    /**
+     * Arms the long-press / repeat timers for the pointer's current key. Deliberately
+     * shows NO bubble and NO highlight: the gesture is still undecided here, and each
+     * outcome carries its own feedback (tap → sound/haptic on up, long-press → popup,
+     * glide → trail).
+     */
     private fun pressKey(p: Pointer) {
         val k = p.key ?: return
-        if (k.kind == KeyKind.CHAR) showPreviewFor(k)
-        if (k.kind == KeyKind.FUNC && k.code == Codes.SHIFT) {
-            animateShiftTap()
-        }
         if (k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             val r = Runnable { startDeleteRepeat(p) }
             p.longRunnable = r
@@ -1351,12 +1322,10 @@ class KeyboardView(context: Context) : View(context) {
         val k = p.key ?: return
         if (k.kind != KeyKind.FUNC || k.code != Codes.DELETE) return
         if (p.consumed) return
-
         p.longRunnable = null
         p.repeated = true
         hapticTick()
         listener?.onKey(Codes.DELETE)
-
         val repeat = object : Runnable {
             var n = 0
             override fun run() {
@@ -1382,7 +1351,7 @@ class KeyboardView(context: Context) : View(context) {
         // Accent popup takes priority over everything: once the long-press popup is open, the
         // finger only navigates the accent strip. We must NOT feed the gesture engine or the
         // slide path here, otherwise the glide-typing system records the slide-over-accents as a
-        // glide word and commits it on finger-up (inserting “letters behind the popup”).
+        // glide word and commits it on finger-up (inserting "letters behind the popup").
         if (altShown) {
             p.lastX = p.downX
             p.lastY = y
@@ -1408,7 +1377,8 @@ class KeyboardView(context: Context) : View(context) {
                     p.gliding = true
                     // Cancel any pending long-press / repeat — a glide is not a hold.
                     cancelLong(p)
-                    // Hide the key preview popup — the trail is the only feedback now.
+                    // Nothing visual was shown on down, but hide defensively so a
+                    // stale bubble can never ride along into a glide.
                     hidePreview()
                     // Clear the live preview composing text so the first letter (if
                     // instant-typed) doesn't linger while the decoder hasn't run yet.
@@ -1416,30 +1386,19 @@ class KeyboardView(context: Context) : View(context) {
                     textHandleHaptic()
                 }
             }
-
             slidePath.addLast(floatArrayOf(x, y))
             if (slidePath.size > 240) slidePath.removeFirst()
-
             // Feed gesture engine for proper sampling + trail
             val elapsed = (android.os.SystemClock.uptimeMillis() - gestureStartTime).toInt()
             gestureEngine?.addEventPoint(x, y, elapsed)
             // Dense capture for the visible ribbon (the decode sampler above stays sparse).
             gestureEngine?.addTrailPoint(x, y)
-
             // Glide live preview — only once we're actually gliding (not during the
             // initial tap). The service decodes the sampled path through the real
             // SlideDecoder and surfaces a real word (or nothing) as composing text.
             if (p.gliding) {
-                // Every letter key the finger crosses pops its bubble, so the path visibly
-                // "lights up" the keys it passes over.
-                if (altShown.not()) {
-                    hit(x, y)?.let { hk ->
-                        if (hk.kind == KeyKind.CHAR && hk !== glideHighlightKey) {
-                            glideHighlightKey = hk
-                            showPreviewFor(hk)
-                        }
-                    }
-                }
+                // Trail-only glide: crossed keys do NOT pop preview bubbles or
+                // highlight — the glow ribbon is the only visual feedback.
                 val sampledPath = gestureEngine?.getIncrementalPath()
                 val nowMs = android.os.SystemClock.uptimeMillis()
                 if (sampledPath != null && sampledPath.size >= 6 &&
@@ -1448,10 +1407,8 @@ class KeyboardView(context: Context) : View(context) {
                     listener?.onGlidePreviewPath(sampledPath)
                 }
             }
-
             // Redraw so the gesture-engine trail follows the finger.
             invalidate()
-
             // While gliding, do NOT fall through to the key-rollover block below.
             // The pointer stays on the original key; crossed keys are not "pressed".
             if (p.gliding) return
@@ -1525,13 +1482,13 @@ class KeyboardView(context: Context) : View(context) {
             hidePreview()
             p.key = nk
             p.repeated = false
-            touchKey(nk)
+            // Re-arm the long-press timers for the new key (no visuals: pressKey
+            // only schedules timers now).
             pressKey(p)
             invalidate(old)
             invalidate(nk)
         }
     }
-
 
     private fun slidePathSpread(path: Collection<FloatArray>): Float {
         if (path.isEmpty()) return 0f
@@ -1550,7 +1507,6 @@ class KeyboardView(context: Context) : View(context) {
     // NOTE: live preview now goes through the real SlideDecoder via onGlidePreviewPath
     // (see ShadeService). The raw-crossing guess here used to surface "qwertyui" while
     // sliding, which read as "the slide triggers every key in its path". Removed.
-
     private fun up(id: Int, cancel: Boolean) {
         val p = pointers.get(id) ?: return
         pointers.remove(id)
@@ -1559,7 +1515,6 @@ class KeyboardView(context: Context) : View(context) {
         p.repeatRunnable = null
         hidePreview()
         if (p.swiping) endTrail()
-
         var slideConsumed = false
         // Don't commit a glide word if the finger ended on an accent selection — the accent
         // branch below handles that. Without this guard, a slide that started before the
@@ -1589,7 +1544,6 @@ class KeyboardView(context: Context) : View(context) {
             slidePointerId = -1
             slidePath.clear()
         }
-
         val k = p.key
         if (k != null && k.kind == KeyKind.FUNC && k.code == Codes.DELETE) {
             if (deleteSlideActive) {
@@ -1609,16 +1563,25 @@ class KeyboardView(context: Context) : View(context) {
             dismissAlt()
             if (!cancel && s != null) listener?.onText(s)
         } else if (!cancel && k != null && !p.consumed && !p.swiping) {
+            // ── Tap registration on touch-up ────────────────────────────────
+            // By lift-off the gesture is fully disambiguated: not a glide (p.gliding
+            // would have consumed it), not a long-press (p.consumed), not a space
+            // swipe (p.swiping), not a delete repeat (p.repeated). Only here does a
+            // tap become a key press — committed with sound + haptic feedback and,
+            // for shift, its tap pulse, but with NO press highlight and NO bubble:
+            // the finger is already gone, and the character appearing in the field
+            // is the visual confirmation.
+            feedback(k)
+            if (k.kind == KeyKind.FUNC && k.code == Codes.SHIFT) animateShiftTap()
             // Key-release path (kind=1 -> VIRTUAL_KEY_RELEASE with cutoff
             // rate limiting). The engine stays silent whenever the resolved
-            // mode/prefs say so — including right after the press haptic,
-            // since both share one rate-limiter timestamp.
+            // mode/prefs say so.
             PressEffectPlayer.get().applyPressEffect(this, PressEffectPlayer.KIND_KEY_RELEASE)
             fire(k)
         }
         if (k != null) invalidate(k)
         recyclePointer(p)
-        stopPressAnimation() // lets the released key fade out, even while another finger is down
+        stopPressAnimation() // lets any released key fade out, even while another finger is down
     }
 
     // Region invalidate is a deliberate redraw optimization.
@@ -1676,8 +1639,7 @@ class KeyboardView(context: Context) : View(context) {
             return
         }
         if (k.kind == KeyKind.CHAR && k.alts.isNotEmpty()) {
-            // Don't call hidePreview() — showAlt() will morph the existing bubble into the panel.
-            // If no panel could be shown, the key stays a normal tap instead of being swallowed.
+            // The accent panel is the long-press feedback; no bubble precedes it now.
             if (showAlt(p, k)) p.consumed = true
         }
     }
@@ -1686,7 +1648,6 @@ class KeyboardView(context: Context) : View(context) {
     // All haptics/sounds route through the press-effect engine (mode
     // resolution, pref gates, primitive composition vs one-shot, cutoff rate
     // limiting happen inside the engine).
-
     /**
      * Key-press feedback in one call: the mapped `AudioManager` press sound
      * (when the sound pref is on) followed by the basic tap effect (primitive
