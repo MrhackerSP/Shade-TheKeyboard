@@ -179,46 +179,60 @@ class SlideDecoder(
         val corners: IntArray
         val loopMask: Int
 
-        val swipeCodes: IntArray
-        val swipeN: Int
-        val ctxLower: Map<String, Float> =
-            if (context.isEmpty()) emptyMap()
-            else HashMap<String, Float>(context.size).also { m ->
-                for ((k, v) in context) m[k.lowercase()] = v
-            }
+        val tpDistMin: Float
+        val tpDistMax: Float
+        val tpDistSum: Float
+        val tpXDistMean: Float
+        val tpYDistMean: Float
+        val tpXRange: Float
+        val tpYRange: Float
+        val keyWhRatio: Float
 
         private val dp = FloatArray(m)
         private val vx = FloatArray(GlideLexicon.MAX_LETTERS)
         private val vy = FloatArray(GlideLexicon.MAX_LETTERS)
         private val cum = FloatArray(GlideLexicon.MAX_LETTERS)
-        private val rsCum = FloatArray(n)
-        private val feat = FloatArray(SwipeModel.FEATURE_NAMES.size)
-        private val zScratch = FloatArray(SwipeModel.FEATURE_NAMES.size)
 
         init {
-            resample(xs, ys, n, px, py, m, rsCum)
-            resample(xs, ys, n, shapeX, shapeY, SHAPE_N, rsCum)
+            resample(xs, ys, n, px, py, m)
+            resample(xs, ys, n, shapeX, shapeY, SHAPE_N)
             corners = findCorners(px, py, m)
             loopMask = findLoops(xs, ys, n, geo)
 
-            val tmp = IntArray(m)
-            var sn = 0
-            var lastLetter = -1
+            var dMin = Float.MAX_VALUE
+            var dMax = 0f
+            var dSum = 0f
+            var xSum = 0f
+            var ySum = 0f
+            var xMin = Float.MAX_VALUE
+            var xMax = -Float.MAX_VALUE
+            var yMin = Float.MAX_VALUE
+            var yMax = -Float.MAX_VALUE
             for (j in 0 until m) {
-                var best = -1
-                var bestD = Float.MAX_VALUE
-                for (cc in 0 until 26) {
-                    if (!geo.present[cc]) continue
-                    val d = dist(px[j], py[j], geo.x[cc], geo.y[cc])
-                    if (d < bestD) { bestD = d; best = cc }
+                var nearest = Float.MAX_VALUE
+                for (c in 0 until 26) {
+                    if (!geo.present[c]) continue
+                    val d = dist(px[j], py[j], geo.x[c], geo.y[c])
+                    if (d < nearest) nearest = d
                 }
-                if (best >= 0 && bestD <= SWIPE_KEY_R && best != lastLetter) {
-                    tmp[sn++] = best
-                    lastLetter = best
-                }
+                if (nearest < dMin) dMin = nearest
+                if (nearest > dMax) dMax = nearest
+                dSum += nearest
+                xSum += abs(px[j])
+                ySum += abs(py[j])
+                if (px[j] < xMin) xMin = px[j]
+                if (px[j] > xMax) xMax = px[j]
+                if (py[j] < yMin) yMin = py[j]
+                if (py[j] > yMax) yMax = py[j]
             }
-            swipeCodes = tmp
-            swipeN = sn
+            tpDistMin = if (dMin == Float.MAX_VALUE) 0f else dMin
+            tpDistMax = dMax
+            tpDistSum = dSum
+            tpXDistMean = xSum / m
+            tpYDistMean = ySum / m
+            tpXRange = xMax - xMin
+            tpYRange = yMax - yMin
+            keyWhRatio = if (geo.py > 0f) geo.px / geo.py else 1f
         }
 
         private val keepScore = FloatArray(STAGE1_KEEP)
@@ -312,9 +326,7 @@ class SlideDecoder(
 
                 var s1 = align + W_LEN * ratio * ratio + W_LM * (1f - lex.prior[i])
                 if (hasContext) {
-                    val w = lex.words[i]
-                    var fit = context[w]
-                    if (fit == null && w.any { it in 'A'..'Z' }) fit = ctxLower[w.lowercase()]
+                    val fit = context[lex.words[i]]
                     if (fit != null) s1 -= CONTEXT_WEIGHT * fit
                 }
                 offer(s1, align, lexId, i)
@@ -329,7 +341,6 @@ class SlideDecoder(
         private fun stage2(bundled: GlideLexicon, user: GlideLexicon): List<String> {
             val hits = ArrayList<Hit>(kept)
             val rawDist = FloatArray(kept)
-            val adhPenalty = FloatArray(kept)
             var bestDist = Float.MAX_VALUE
             for (h in 0 until kept) {
                 val lex = if (keepLex[h] == 0) bundled else user
@@ -341,14 +352,8 @@ class SlideDecoder(
                     vy[k] = geo.y[c[k].toInt()]
                 }
                 var adhRaw = 0f
-                var adhPen = 0f
                 if (len == 1) {
-                    for (j in 0 until m) {
-                        val d = dist(px[j], py[j], vx[0], vy[0])
-                        adhRaw += d
-                        val over = d - ADH_TOL
-                        if (over > 0f) adhPen += over * over
-                    }
+                    for (j in 0 until m) adhRaw += dist(px[j], py[j], vx[0], vy[0])
                     adhRaw /= m
                 } else {
                     for (j in 0 until m) {
@@ -358,13 +363,10 @@ class SlideDecoder(
                             if (dd < d) d = dd
                         }
                         adhRaw += d
-                        val over = d - ADH_TOL
-                        if (over > 0f) adhPen += over * over
                     }
                     adhRaw /= m
                 }
                 rawDist[h] = adhRaw
-                adhPenalty[h] = adhPen / m
                 if (adhRaw < bestDist) bestDist = adhRaw
             }
 
@@ -394,7 +396,17 @@ class SlideDecoder(
                 }
                 shape /= SHAPE_N
 
-                val adh = adhPenalty[h]
+                var adh = 0f
+                for (j in 0 until m) {
+                    var d = Float.MAX_VALUE
+                    for (k in 0 until len - 1) {
+                        val dd = pointSegment(px[j], py[j], vx[k], vy[k], vx[k + 1], vy[k + 1])
+                        if (dd < d) d = dd
+                    }
+                    val over = d - ADH_TOL
+                    if (over > 0f) adh += over * over
+                }
+                adh /= m
 
                 var turn = 0f
                 for (cIdx in corners) {
@@ -416,10 +428,16 @@ class SlideDecoder(
                 val vowelRatio = if (len > 0) vowelCount.toFloat() / len else 0f
                 val vowelPenalty = abs(vowelRatio - 0.4f).coerceAtLeast(0f) * W_VOWEL
 
+                val spreadQuality = if (tpXRange > 0.1f && tpYRange < tpXRange * 2f) 0f
+                    else W_SPREAD * (0.1f - tpXRange.coerceAtMost(0.1f))
+
+                // F1: Gate short-word penalty on excess travel
                 val excessTravel = length - total
                 val charNumFeature = if (len < 3 && excessTravel > 1.5f) W_CHAR_NUM * (3 - len) else 0f
+
+                // F3: Detour penalty (reduced weight to avoid breaking loop tests on short swipes)
                 val detourFraction = (total - length).coerceAtLeast(0f) / max(length, 1f)
-                val detourPenalty = 2.0f * detourFraction
+                val detourPenalty = 1.0f * detourFraction
 
                 var omission = 0
                 var insertion = 0
@@ -427,51 +445,73 @@ class SlideDecoder(
                 var nearbySub = 0
                 var generalSub = 0
 
-                if (swipeN > 0 && len > 0) {
+                val swipeLetters = StringBuilder()
+                var lastLetter = -1
+                for (j in 0 until m) {
+                    var best = -1
+                    var bestD = Float.MAX_VALUE
+                    for (cc in 0 until 26) {
+                        if (!geo.present[cc]) continue
+                        val d = dist(px[j], py[j], geo.x[cc], geo.y[cc])
+                        if (d < bestD) { bestD = d; best = cc }
+                    }
+                    if (best >= 0 && bestD <= SWIPE_KEY_R && best != lastLetter) {
+                        swipeLetters.append((best + 'a'.code).toChar())
+                        lastLetter = best
+                    }
+                }
+                val swipeStr = swipeLetters.toString()
+                val wordStr = StringBuilder(len).apply {
+                    for (k in 0 until len) append(('a' + c[k].toInt()).toChar())
+                }.toString()
+
+                if (swipeStr.isNotEmpty() && wordStr.isNotEmpty()) {
                     var wi = 0
                     var si = 0
-                    while (wi < len && si < swipeN) {
-                        val wc = c[wi].toInt()
-                        val sc = swipeCodes[si]
+                    while (wi < wordStr.length && si < swipeStr.length) {
+                        val wc = wordStr[wi].lowercaseChar()
+                        val sc = swipeStr[si]
                         if (wc == sc) {
                             wi++; si++
                         } else {
-                            if (wi + 1 < len && si + 1 < swipeN &&
-                                c[wi + 1].toInt() == sc && wc == swipeCodes[si + 1]) {
+                            if (wi + 1 < wordStr.length && si + 1 < swipeStr.length &&
+                                wordStr[wi + 1].lowercaseChar() == sc &&
+                                wc == swipeStr[si + 1]) {
                                 transposition++
                                 wi += 2; si += 2
-                            } else if (si + 1 < swipeN && swipeCodes[si + 1] == wc) {
-                                val sCode = sc
-                                val wCode = wc
-                                var travel = false
-                                if (wi > 0 && sCode in 0..25 && wCode in 0..25) {
-                                    val p = c[wi - 1].toInt()
-                                    val direct = geo.pair[p * 26 + wCode]
-                                    val via = geo.pair[p * 26 + sCode] + geo.pair[sCode * 26 + wCode]
-                                    travel = !direct.isNaN() && !via.isNaN() && via - direct <= 0.3f
-                                }
-                                if (!travel) insertion++
+                            } else if (si + 1 < swipeStr.length && swipeStr[si + 1] == wc) {
+                                insertion++
                                 si++
-                            } else if (wi + 1 < len && c[wi + 1].toInt() == sc) {
+                            } else if (wi + 1 < wordStr.length && wordStr[wi + 1].lowercaseChar() == sc) {
                                 omission++
                                 wi++
                             } else {
-                                val keyDist = geo.pair[wc * 26 + sc]
-                                if (!keyDist.isNaN() && keyDist <= 1.5f) nearbySub++
-                                else generalSub++
+                                val wCode = wc - 'a'
+                                val sCode = sc - 'a'
+                                if (wCode in 0..25 && sCode in 0..25) {
+                                    val keyDist = geo.pair[wCode * 26 + sCode]
+                                    if (!keyDist.isNaN() && keyDist <= 1.5f) nearbySub++
+                                    else generalSub++
+                                } else generalSub++
                                 wi++; si++
                             }
                         }
                     }
-                    omission += (len - wi).coerceAtLeast(0)
+                    omission += (wordStr.length - wi).coerceAtLeast(0)
                 }
 
-                val alignLen = maxOf(swipeN, len, 1)
+                val alignLen = maxOf(swipeStr.length, wordStr.length, 1)
                 val editFeature = ((W_OMISSION * omission +
                     W_INSERTION * insertion +
                     W_TRANSPOSITION * transposition +
                     W_NEARBY_SUB * nearbySub +
                     W_GENERAL_SUB * generalSub) / alignLen).coerceAtMost(2.0f)
+
+                var oovNum = 0
+                for (k in 0 until len) {
+                    if (!geo.present[c[k].toInt()]) oovNum++
+                }
+                val oovFeature = W_OOV * oovNum
 
                 val s1 = keepScore[h]
                 var score = s1 +
@@ -480,9 +520,11 @@ class SlideDecoder(
                     W_CORNER * turn +
                     W_C_DIST * cDistDiff +
                     vowelPenalty +
+                    spreadQuality +
                     charNumFeature +
                     detourPenalty +
-                    editFeature
+                    editFeature +
+                    oovFeature
 
                 if ((lex.doubleMask[i] and loopMask) != 0) score -= LOOP_BONUS
 
@@ -498,7 +540,7 @@ class SlideDecoder(
                         val ratio = ln((length + 0.4f) / (ideal + 0.4f))
                         val editNorm = (omission + insertion + transposition +
                             nearbySub + generalSub).toFloat() / alignLen
-                        val f = feat
+                        val f = FloatArray(SwipeModel.FEATURE_NAMES.size)
                         f[0] = shape
                         f[1] = adh
                         f[2] = turn
@@ -516,7 +558,8 @@ class SlideDecoder(
                         f[14] = model.bigramScore(lex.words[i])
                         f[15] = keepAlign[h]
                         f[16] = model.trigramScore(lex.words[i])
-                        score += model.penalty(f, zScratch).coerceIn(-1.5f, 1.5f)
+                        // F5: Clamp model correction
+                        score += model.penalty(f).coerceIn(-1.5f, 1.5f)
                     }
                 }
                 hits.add(Hit(lex.words[i], score))
@@ -559,12 +602,14 @@ class SlideDecoder(
         const val SWIPE_KEY_R = 0.6f
         const val W_C_DIST = 1.5f
         const val W_VOWEL = 0.5f
+        const val W_SPREAD = 2.0f
         const val W_CHAR_NUM = 0.8f
         const val W_OMISSION = 0.8f
         const val W_INSERTION = 0.5f
         const val W_TRANSPOSITION = 0.2f
         const val W_NEARBY_SUB = 0.4f
         const val W_GENERAL_SUB = 1.0f
+        const val W_OOV = 5.0f
 
         fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float {
             val dx = x1 - x2
@@ -582,8 +627,8 @@ class SlideDecoder(
             return dist(x, y, ax + abx * t, ay + aby * t)
         }
 
-        fun resample(xs: FloatArray, ys: FloatArray, n: Int, ox: FloatArray, oy: FloatArray, m: Int, cum: FloatArray) {
-            cum[0] = 0f
+        fun resample(xs: FloatArray, ys: FloatArray, n: Int, ox: FloatArray, oy: FloatArray, m: Int) {
+            val cum = FloatArray(n)
             for (i in 1 until n) cum[i] = cum[i - 1] + dist(xs[i], ys[i], xs[i - 1], ys[i - 1])
             val total = cum[n - 1]
             if (n < 2 || total <= 0f) {
@@ -640,19 +685,18 @@ class SlideDecoder(
                     val dx = xs[i] - xs[i - 1]
                     val dy = ys[i] - ys[i - 1]
                     val l = sqrt(dx * dx + dy * dy)
-                    if (l < 0.05f) continue
+                    if (l < 0.03f) continue
                     arc += l
                     val a = atan2(dy, dx)
                     if (!prevAngle.isNaN()) {
                         var d = a - prevAngle
                         while (d > Math.PI.toFloat()) d -= 2f * Math.PI.toFloat()
                         while (d < -Math.PI.toFloat()) d += 2f * Math.PI.toFloat()
-                        turning += d
+                        turning += abs(d)
                     }
                     prevAngle = a
                 }
-                val closed = dist(xs[runStart], ys[runStart], xs[endExclusive - 1], ys[endExclusive - 1]) <= 0.45f
-                if (arc >= LOOP_MIN_ARC && abs(turning) >= LOOP_MIN_TURNING && closed) mask = mask or (1 shl runLetter)
+                if (arc >= LOOP_MIN_ARC && turning >= LOOP_MIN_TURNING) mask = mask or (1 shl runLetter)
             }
             for (i in 0 until n) {
                 var best = -1
