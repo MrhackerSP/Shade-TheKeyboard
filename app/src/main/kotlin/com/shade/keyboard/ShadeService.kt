@@ -283,8 +283,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     internal var incognito = false
     internal var fieldNoPersonalizedLearning = false
     internal var fieldSecureInput = false
-    internal val lastRankedFeatures = java.util.concurrent.ConcurrentHashMap<String, FloatArray>()
-    internal val lastRawRankerScores = java.util.concurrent.ConcurrentHashMap<String, Float>()
+    // Published by atomic reference swap from the Default-dispatcher pipeline,
+    // read on Main. Never mutate a published map (copy-on-write only).
+    @Volatile internal var lastRankedFeatures: Map<String, FloatArray> = emptyMap()
+    @Volatile internal var lastRawRankerScores: Map<String, Float> = emptyMap()
     @Volatile
     internal var lastShownCandidates: List<String> = emptyList()
     // §3c — when the current candidate list was rendered. The rejection gate
