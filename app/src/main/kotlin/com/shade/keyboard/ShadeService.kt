@@ -2456,6 +2456,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     override fun onEnterLongPress() {
         showOneHandedMenu()
     }
+    override fun onOneHandedSwitchSide() {
+        val next = if (prefs.getString("one_handed", "off") == "left") "right" else "left"
+        prefs.edit().putString("one_handed", next).apply()
+        kb.setOneHandedAnimated(if (next == "left") 1 else 2)
+        prefsApplier.applyOneHandedToStrip()
+    }
+    override fun onOneHandedExit() {
+        prefs.edit().putString("one_handed", "off").apply()
+        kb.setOneHandedAnimated(0)
+        prefsApplier.applyOneHandedToStrip()
+    }
 
     private fun wordDeleteRange(wordCount: Int): Int {
         if (wordCount <= 0) return 0
