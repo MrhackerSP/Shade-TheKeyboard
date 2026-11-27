@@ -71,6 +71,10 @@ class KeyboardView(context: Context) : View(context) {
         fun onCursorMove(dx: Int, dy: Int)
         fun onLongPressSpecial()
         fun onEnterLongPress()
+        /** One-handed gutter button: move the keyboard to the opposite side. */
+        fun onOneHandedSwitchSide() {}
+        /** One-handed gutter button: leave one-handed mode (full-width keys). */
+        fun onOneHandedExit() {}
         fun onTrackpadEnter()
         fun onTrackpadExit()
         fun onDeleteWords(count: Int)
@@ -308,6 +312,11 @@ class KeyboardView(context: Context) : View(context) {
     private var gestureEngine: GestureEngine? = null
     private var gestureStartTime = 0L
     private var lastGlidePreviewMs = 0L
+    // One-handed gutter controls (switch side / expand to full width). Rects are
+    // recomputed in layoutKeys(); empty and invisible whenever keys are full-width.
+    private val oneHandSwitchRect = RectF()
+    private val oneHandExpandRect = RectF()
+    private var oneHandButtonsVisible = false
 
     private fun obtainPointer(k: Key?, x: Float, y: Float): Pointer {
         val p = pointerPool.pollFirst() ?: Pointer()
@@ -494,6 +503,24 @@ class KeyboardView(context: Context) : View(context) {
                 if (isBottom && idx < row.size - 1) x += dp(3f)
             }
         }
+        // One-handed gutter controls: switch-side button with the expand button
+        // below it, centred in the empty space beside the shrunken keys.
+        oneHandButtonsVisible = false
+        oneHandSwitchRect.setEmpty()
+        oneHandExpandRect.setEmpty()
+        if (oneHanded != 0 && oneHandedProgress < 0.999f) {
+            val gutterL = if (oneHanded == 1) offX + availW else 0f
+            val gutterR = if (oneHanded == 1) w else offX
+            val size = min(dp(48f), (gutterR - gutterL) - dp(8f))
+            if (size >= dp(28f)) {
+                val cx = (gutterL + gutterR) / 2f
+                val cy = h / 2f
+                val half = size / 2f
+                oneHandSwitchRect.set(cx - half, cy - half - dp(30f), cx + half, cy + half - dp(30f))
+                oneHandExpandRect.set(cx - half, cy - half + dp(30f), cx + half, cy + half + dp(30f))
+                oneHandButtonsVisible = true
+            }
+        }
         // Bottom-row outer corners: only the first and last *functional*
         // keys (not spacers) get a corner treatment so ?123 and Enter hug
         // the screen edge, matching modern keyboard.
@@ -516,7 +543,23 @@ class KeyboardView(context: Context) : View(context) {
     private fun applyInterpolatedRects(a: FloatArray, b: FloatArray, t: Float): Boolean =
         KeyboardLayoutMath.blendRects(rows, a, b, t, dp(3f).toInt())
 
-    private fun hit(x: Float, y: Float): Key? = KeyboardLayoutMath.hitKey(rows, x, y)
+    private fun hit(x: Float, y: Float): Key? {
+        // hitKey clamps x to the nearest key so edge keys reach the screen border.
+        // In one-handed mode the view is still full-width but the keys are not:
+        // without this guard a tap in the empty gutter clamps to the outermost key
+        // and types it. Reject anything outside the active key span instead.
+        if (oneHandedProgress < 0.999f) {
+            val w = width.toFloat()
+            val availW = w * oneHandedProgress
+            val offX = when (oneHanded) {
+                1 -> 0f
+                2 -> w - availW
+                else -> 0f
+            }
+            if (x < offX || x > offX + availW) return null
+        }
+        return KeyboardLayoutMath.hitKey(rows, x, y)
+    }
 
     private fun display(s: String): String {
         if (shiftState > 0 && s.length == 1 && s[0].isLetter()) {
@@ -622,6 +665,7 @@ class KeyboardView(context: Context) : View(context) {
                 drawDeleteSlideBadge(c, k)
             }
         }
+        if (oneHandButtonsVisible) drawOneHandedButtons(c, combinedAlpha)
         // Space-swipe trail (cursor move) — only while a space slide is in progress.
         if (trailActive && trailAlpha > 0f) drawSpaceSwipeTrail(c)
         // Gesture (glide typing) trail — independent of trailActive; the gesture engine
@@ -785,6 +829,32 @@ class KeyboardView(context: Context) : View(context) {
         c.drawCircle(cx + s * 0.35f, cy - s * 0.25f, s * 0.11f, fill)
         rect.set(cx - s * 0.5f, cy - s * 0.45f, cx + s * 0.5f, cy + s * 0.45f)
         c.drawArc(rect, 20f, 140f, false, stroke)
+    }
+
+    private fun drawOneHandedButtons(c: Canvas, alpha: Int) {
+        val r = dp(14f)
+        fill.color = ColorUtils.setAlphaComponent(kbTheme.keyFn, alpha)
+        c.drawRoundRect(oneHandSwitchRect, r, r, fill)
+        c.drawRoundRect(oneHandExpandRect, r, r, fill)
+        stroke.color = ColorUtils.setAlphaComponent(kbTheme.text, alpha)
+        stroke.strokeWidth = dp(2f)
+        stroke.style = Paint.Style.STROKE
+        // Switch side: horizontal double-headed arrow.
+        val s = oneHandSwitchRect
+        val sx = s.centerX(); val sy = s.centerY(); val a = s.width() * 0.26f
+        path.reset()
+        path.moveTo(sx - a, sy); path.lineTo(sx + a, sy)
+        path.moveTo(sx - a * 0.4f, sy - a * 0.6f); path.lineTo(sx - a, sy); path.lineTo(sx - a * 0.4f, sy + a * 0.6f)
+        path.moveTo(sx + a * 0.4f, sy - a * 0.6f); path.lineTo(sx + a, sy); path.lineTo(sx + a * 0.4f, sy + a * 0.6f)
+        c.drawPath(path, stroke)
+        // Expand: diagonal double-headed arrow (grow to full width).
+        val e = oneHandExpandRect
+        val ex = e.centerX(); val ey = e.centerY(); val b = e.width() * 0.24f
+        path.reset()
+        path.moveTo(ex - b, ey + b); path.lineTo(ex + b, ey - b)
+        path.moveTo(ex - b, ey + b * 0.1f); path.lineTo(ex - b, ey + b); path.lineTo(ex - b * 0.1f, ey + b)
+        path.moveTo(ex + b, ey - b * 0.1f); path.lineTo(ex + b, ey - b); path.lineTo(ex + b * 0.1f, ey - b)
+        c.drawPath(path, stroke)
     }
 
     // ------------------------------------------------------------------ spacebar trail
@@ -1142,6 +1212,18 @@ class KeyboardView(context: Context) : View(context) {
      * gestures stay cleanly distinguishable.
      */
     private fun down(id: Int, x: Float, y: Float) {
+        if (oneHandButtonsVisible) {
+            if (oneHandSwitchRect.contains(x, y)) {
+                hapticTick()
+                listener?.onOneHandedSwitchSide()
+                return
+            }
+            if (oneHandExpandRect.contains(x, y)) {
+                hapticTick()
+                listener?.onOneHandedExit()
+                return
+            }
+        }
         val k = hit(x, y) ?: return
         val p = obtainPointer(k, x, y)
         pointers.put(id, p)
