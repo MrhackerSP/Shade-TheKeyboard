@@ -163,6 +163,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private var translatorResult: String? = null
     internal var translateBar: TranslatePanel? = null
     internal lateinit var strip: LinearLayout
+    /** Fixed-height home for the strip and every header that replaces it (emoji/GIF/translate), so panel switches never resize the window. */
+    private lateinit var stripSlot: FrameLayout
     internal lateinit var toggle: TextView
     // floating drag handle above the keyboard. Dragging vertically
     // resizes the keyboard (adjusts key_height live). Long-pressing then
@@ -726,12 +728,24 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             setOnTouchListener(ResizeHandleTouchListener())
         }
 
-        root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(strip, LinearLayout.LayoutParams(MATCH, dp(52f).toInt()))
+        // One fixed-height slot hosts the suggestion strip and every panel header that
+        // replaces it. They all occupy exactly the same vertical space, so switching
+        // between keyboard / emoji / clip / GIF / translate never changes the window
+        // height (the old WRAP-height headers were a few dp off the 52dp strip and made
+        // the keyboard jump on every panel switch). clipChildren=false lets a header
+        // that grows during search (live results bar) draw over the content area
+        // instead of resizing the whole IME window.
+        stripSlot = FrameLayout(this).apply {
+            clipChildren = false
+            clipToPadding = false
+            addView(strip, FrameLayout.LayoutParams(MATCH, MATCH))
             // Emoji header: the search box (plus its live results bar) sits in the
             // place of the suggestion strip whenever the emoji panel is open.
-            addView(emoji.header, LinearLayout.LayoutParams(MATCH, WRAP))
+            addView(emoji.header, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.TOP))
+        }
+        root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(stripSlot, LinearLayout.LayoutParams(MATCH, dp(52f).toInt()))
             addView(resizeHandle, LinearLayout.LayoutParams(MATCH, dp(22f).toInt()))
             addView(content, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
         }
@@ -749,8 +763,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // The vertical GIF grid occupies the same content slot as the emoji and clipboard panels.
         content.addView(gifController.panel, FrameLayout.LayoutParams(MATCH, MATCH))
         // The GIF header (back button + search box + setup card) sits in the place of the
-        // suggestion strip whenever the GIF panel is open.
-        root.addView(gifController.panel.header, 2, LinearLayout.LayoutParams(MATCH, WRAP))
+        // suggestion strip whenever the GIF panel is open — same fixed slot, same height.
+        stripSlot.addView(gifController.panel.header, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.TOP))
 
         // Translator bar: replaces the suggestion strip while translating. It owns a visible
         // input field (the missing "text field"), the target-language chip and the result row.
@@ -773,7 +787,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
         }).also {
             it.visibility = View.GONE
-            root.addView(it, 3, LinearLayout.LayoutParams(MATCH, WRAP))
+            stripSlot.addView(it, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.TOP))
         }
 
         // [root] (opaque keyboard background, side/nav-bar padding, float offset) is wrapped so a
