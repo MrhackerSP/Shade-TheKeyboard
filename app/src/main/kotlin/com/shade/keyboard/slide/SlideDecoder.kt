@@ -541,7 +541,10 @@ class SlideDecoder(
                         f[14] = model.bigramScore(lex.words[i])
                         f[15] = keepAlign[h]
                         f[16] = model.trigramScore(lex.words[i])
+                        // F5 — the trained correction refines close calls but can never
+                        // overrule a confident hand-tuned margin.
                         score += model.penalty(f)
+                            .coerceIn(-MODEL_MAX_CORRECTION, MODEL_MAX_CORRECTION)
                     }
                 }
                 hits.add(Hit(lex.words[i], score))
@@ -598,6 +601,8 @@ class SlideDecoder(
         const val TRAVEL_SLACK = 0.3f
         /** Weight of the detour penalty (ideal path longer than the swipe). */
         const val W_DETOUR = 2.0f
+        /** F5: max magnitude of the trained reranker's score correction. */
+        const val MODEL_MAX_CORRECTION = 1.5f
 
         fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float {
             val dx = x1 - x2
