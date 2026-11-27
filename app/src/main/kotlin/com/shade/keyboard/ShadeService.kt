@@ -171,6 +171,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // dragging moves the keyboard up from the bottom (floating offset).
     private lateinit var resizeHandle: View
     private lateinit var resizeOverlay: FrameLayout
+    /** Fixed slot hosting kb / emoji / clip / GIF panels; its height tracks key_height. */
+    internal lateinit var contentFrame: FrameLayout
     internal lateinit var autofillScroll: HorizontalScrollView
     internal lateinit var autofillRow: LinearLayout
     internal var autofillCount = 0
@@ -685,7 +687,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         panel = Panel.NONE
 
         resizeOverlay = buildResizeOverlay()
-        val content = FrameLayout(this).apply {
+        contentFrame = FrameLayout(this).apply {
             addView(kb, FrameLayout.LayoutParams(MATCH, MATCH))
             addView(emoji, FrameLayout.LayoutParams(MATCH, MATCH))
             addView(clipPanel, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -761,7 +763,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         // below the GIF header and the grid steps aside (same model as the emoji search box).
         gifController.panel.onInputModeChanged = { syncGifSurfaces() }
         // The vertical GIF grid occupies the same content slot as the emoji and clipboard panels.
-        content.addView(gifController.panel, FrameLayout.LayoutParams(MATCH, MATCH))
+        contentFrame.addView(gifController.panel, FrameLayout.LayoutParams(MATCH, MATCH))
         // The GIF header (back button + search box + setup card) sits in the place of the
         // suggestion strip whenever the GIF panel is open — same fixed slot, same height.
         stripSlot.addView(gifController.panel.header, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.TOP))
@@ -881,6 +883,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         closeGif()
         closeTranslator()
         hideRemoveSuggestionDialog()
+        // A proofread in flight belongs to the previous field: its snapshot edit
+        // must never land in the new one.
+        proofJob?.cancel()
+        proofJob = null
+        proofInFlight = false
         info = editorInfo
         fieldNoPersonalizedLearning =
             (editorInfo.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
@@ -994,6 +1001,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         closeTranslator()
         toolbarC.clearAutofillChips()
         stopVoice() // a late result must not land in the next field
+        proofJob?.cancel()
+        proofJob = null
+        proofInFlight = false
         suggestJob?.cancel()
         suggestDebounceJob?.cancel()
         correctionJob?.cancel()
@@ -1425,10 +1435,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             neuralResolve = { w -> neuralSpell?.correct(w) ?: emptyList() }
         )
     }
-
     // One proofread at a time: a double tap would otherwise re-delete the
     // already-replaced span, and NeuralSpellChecker is single-threaded.
     private var proofInFlight = false
+    private var proofJob: Job? = null
+    /** proofread() caps its input internally; replacing a longer selection with a
+     *  truncated proof would silently delete the tail the model never saw. */
+    private val proofMaxSelection = 5000
 
     private fun runProofread() {
         if (proofInFlight) return
@@ -1437,15 +1450,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val selection = ic.getSelectedText(0)?.toString()
         val fromSelection = !selection.isNullOrEmpty()
         val text: String
+        val before: String
+        val after: String
         val beforeLen: Int
         val afterLen: Int
+        val caretAtTap = cursorPos
         if (fromSelection) {
             text = selection!!
-            beforeLen = 0
-            afterLen = 0
+            if (text.length > proofMaxSelection) {
+                Log.w("ShadeService", "proofread: selection too long, refusing")
+                return
+            }
+            before = ""; after = ""
+            beforeLen = 0; afterLen = 0
         } else {
-            val before = ic.getTextBeforeCursor(PROOFREAD_BEFORE, 0)?.toString() ?: ""
-            val after = ic.getTextAfterCursor(PROOFREAD_AFTER, 0)?.toString() ?: ""
+            before = ic.getTextBeforeCursor(PROOFREAD_BEFORE, 0)?.toString() ?: ""
+            after = ic.getTextAfterCursor(PROOFREAD_AFTER, 0)?.toString() ?: ""
             if (before.isBlank() && after.isBlank()) {
                 Toast.makeText(this, R.string.proofread_nothing, Toast.LENGTH_SHORT).show()
                 return
@@ -1455,13 +1475,29 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             afterLen = after.length
         }
         proofInFlight = true
-        scope.launch {
+        proofJob = scope.launch {
             try {
                 val result = withContext(Dispatchers.Default) { proofreader.proofread(text) }
                 val conn = currentInputConnection ?: return@launch
                 if (result.fixCount == 0 || result.text == text) {
                     Toast.makeText(this@ShadeService, R.string.proofread_clean, Toast.LENGTH_SHORT).show()
                     return@launch
+                }
+                // Re-validate the snapshot: typing, caret moves or a field switch between
+                // tap and apply would otherwise make deleteSurroundingText/commitText
+                // destroy text the model never saw. Abort silently (logged) instead.
+                if (fromSelection) {
+                    if (conn.getSelectedText(0)?.toString() != text) {
+                        Log.w("ShadeService", "proofread: selection changed mid-flight, aborting")
+                        return@launch
+                    }
+                } else {
+                    val nowBefore = conn.getTextBeforeCursor(beforeLen, 0)?.toString()
+                    val nowAfter = conn.getTextAfterCursor(afterLen, 0)?.toString()
+                    if (nowBefore != before || nowAfter != after) {
+                        Log.w("ShadeService", "proofread: text changed mid-flight, aborting")
+                        return@launch
+                    }
                 }
                 conn.beginBatchEdit()
                 try {
@@ -1470,6 +1506,13 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                     } else {
                         conn.deleteSurroundingText(beforeLen, afterLen)
                         conn.commitText(result.text, 1)
+                        // Restore the caret to where it was (end of the "before" half,
+                        // clamped into the new text) instead of leaving it at the end
+                        // of the whole proofread span.
+                        if (caretAtTap >= beforeLen) {
+                            val pos = (caretAtTap - beforeLen) + minOf(beforeLen, result.text.length)
+                            conn.setSelection(pos, pos)
+                        }
                     }
                 } finally {
                     conn.endBatchEdit()
@@ -1848,6 +1891,22 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 }
             }
             return false
+        }
+    }
+
+    /**
+     * Resize the content FrameLayout (keyboard, emoji, clipboard and GIF panels all
+     * live inside it) so the IME window height follows key_height changes. The children
+     * are MATCH_PARENT inside it; writing their own layoutParams (the old
+     * `as? LinearLayout.LayoutParams` casts) was a silent no-op, which left the measured
+     * keyboard clipped by a stale 200dp frame — the glitchy jump on every resize drag.
+     */
+    internal fun setContentHeight(h: Int) {
+        if (!this::contentFrame.isInitialized) return
+        val lp = contentFrame.layoutParams as? LinearLayout.LayoutParams ?: return
+        if (lp.height != h) {
+            lp.height = h
+            contentFrame.layoutParams = lp
         }
     }
 
