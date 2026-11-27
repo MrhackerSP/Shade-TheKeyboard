@@ -3,103 +3,20 @@ package com.shade.keyboard
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
-import android.content.ClipDescription
-import android.content.ClipboardManager
-import android.content.Context
-import android.content.Intent
-import android.content.SharedPreferences
-import android.content.res.Configuration
-import android.app.WallpaperManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.ColorDrawable
-import android.widget.ImageView
-import android.inputmethodservice.InputMethodService
-import android.os.Build
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
 import android.os.SystemClock
-import android.util.TypedValue
-import android.text.InputType
-import android.view.Gravity
-import android.view.KeyEvent
-import android.view.MotionEvent
 import android.view.View
-import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputContentInfo
-import android.view.inputmethod.InputMethodManager
-import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
-import android.widget.LinearLayout
-import android.widget.PopupMenu
-import android.widget.TextView
-import android.widget.Toast
-import androidx.core.view.ViewCompat
-import androidx.core.content.FileProvider
-import androidx.core.view.inputmethod.EditorInfoCompat
-import com.shade.keyboard.gif.GifController
-import com.shade.keyboard.translate.TranslationService
-import com.shade.keyboard.translate.TranslatePanel
-import com.shade.keyboard.gif.GifItem
-import com.shade.keyboard.gif.GifConfig
-import androidx.core.view.WindowInsetsAnimationCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.widget.TextViewCompat
-import androidx.dynamicanimation.animation.DynamicAnimation
-import androidx.dynamicanimation.animation.SpringAnimation
-import androidx.dynamicanimation.animation.SpringForce
-import androidx.preference.PreferenceManager
-import com.shade.keyboard.ai.NeuralPredictionEngine
-import com.shade.keyboard.analytics.TouchBiasModel
-import com.shade.keyboard.analytics.TypingStatsStore
-import com.shade.keyboard.emoji.EmojiPredictionEngine
+import com.shade.keyboard.engine.CandidateRanker
 import com.shade.keyboard.engine.GrammarEngine
 import com.shade.keyboard.engine.HeuristicSuggestionEngine
-import com.shade.keyboard.engine.CandidateRanker
-import com.shade.keyboard.engine.NeuralSpellChecker
-import com.shade.keyboard.engine.TfliteCandidateRankingScorer
-import com.shade.keyboard.engine.TfliteContextEncoder
-import com.shade.keyboard.engine.TfliteNextWordScorer
-import com.shade.keyboard.engine.EmojiPredictor
-import com.shade.keyboard.engine.LanguageModelEngine
-import com.shade.keyboard.engine.UserWordMemory
-import com.shade.keyboard.engine.AdaptiveWordMemory
-import com.shade.keyboard.engine.AppContextModel
-import com.shade.keyboard.engine.AutocorrectSuppressor
-import com.shade.keyboard.engine.ConfidenceCalibrator
-import com.shade.keyboard.engine.CorrectionConfidence
-import com.shade.keyboard.engine.OnlineRankerTrainer
+import com.shade.keyboard.engine.NeuralPredictionEngine
 import com.shade.keyboard.engine.RankingFeatureExtractor
-import com.shade.keyboard.engine.RewriteModelManager
-import com.shade.keyboard.engine.SessionBigramBoost
-import com.shade.keyboard.engine.SentencePositionScorer
-import com.shade.keyboard.engine.SuggestionRejectionTracker
-import com.shade.keyboard.engine.AcceptanceRateAdapter
-import com.shade.keyboard.engine.PerAppVocabularySnapshot
 import com.shade.keyboard.motion.ShadeMotion
-import com.shade.keyboard.slide.SlideDecoder
-import com.shade.keyboard.voice.VoiceInputController
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import java.io.File
-import java.util.ArrayDeque
 
 internal class SuggestionPipeline(private val svc: ShadeService) {
     private fun isWordChar(c: Char): Boolean {
@@ -110,7 +27,7 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
 
     private fun isLearnableWord(s: String): Boolean =
         s.length in 1..30 && s.any { it.isLetter() } &&
-        !s.any { it.isWhitespace() } && s.all { isWordChar(it) }
+            !s.any { it.isWhitespace() } && s.all { isWordChar(it) }
 
     internal fun learnedRankCandidates(
         candidates: List<String>,
@@ -155,11 +72,17 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
             val combined = (1f - modelWeight) * base + modelWeight * modelScore + learnedBoost + sessionBoost
             candidate to combined
         }
+        // Atomic reference swap: clear()+putAll() on the LIVE map exposed an empty
+        // window to Main-thread pickSuggestion (positive features lost, acceptance
+        // training silently skipped).
         lastRankedFeatures = newRankedFeatures
         lastRawRankerScores = newRawScores
         return rescored.sortedByDescending { it.second }.map { it.first } + candidates.drop(8)
     }}
 
+    /** One in-flight engine reload at a time: without this guard every keystroke
+     *  during a multi-second load launched ANOTHER concurrent reload of the same
+     *  engine (neuralLocale only updates after the load completes). */
     @Volatile private var neuralReloadTarget: String? = null
 
     private fun ensureNeuralLocale(desired: String) { with(svc) {
@@ -190,6 +113,7 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
             addF[word] = features
             addS[word] = runCatching { rankingScorer?.score(features) ?: 0f }.getOrDefault(0f)
         }
+        // Copy-on-write: a published map is never mutated in place.
         lastRankedFeatures = lastRankedFeatures + addF
         lastRawRankerScores = lastRawRankerScores + addS
     }}
@@ -294,8 +218,12 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
             delay(ShadeService.SUGGEST_DEBOUNCE_MS)
             if (!isActive) return@launch
             suggestJob = scope.launch(Dispatchers.Default) {
-                com.shade.keyboard.engine.SuggestionCache.salt = "$configuredLocale|$incognito|" +
+                // S4 — capture the salt: a cancelled sibling pipeline can overwrite the
+                // global between our get and put, filing this result under the wrong
+                // app/locale/incognito context. Re-check before writing.
+                val cacheSalt = "$configuredLocale|$incognito|" +
                     "${currentAppPackage().orEmpty()}|$phraseSuggestionsOn|$blockOffensiveOn|$learningGeneration"
+                com.shade.keyboard.engine.SuggestionCache.salt = cacheSalt
                 com.shade.keyboard.engine.SuggestionCache.get(prev2, prev1, prefix)?.let { cached ->
                     ensureFinalShownFeatures(cached, prefix, prev1)
                     withContext(Dispatchers.Main.immediate) { setCandidates(cached) }
@@ -388,7 +316,7 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                     com.shade.keyboard.engine.CrossSentenceContext.endsWithSentenceTerminator(rawBeforeForSentence)) {
                     val starters = com.shade.keyboard.engine.CrossSentenceContext.sentenceStarters(prefix, limit = 2)
                     val filteredStarters = if (phraseSuggestionsOn) starters
-                        else starters.filter { !it.contains(' ') }
+                    else starters.filter { !it.contains(' ') }
                     if (filteredStarters.isNotEmpty()) injections.add(0.70f to filteredStarters)
                 }
                 val timeWords = com.shade.keyboard.engine.GreetingTimeBias.timeAwareWords(prefix)
@@ -431,7 +359,7 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                     val sentenceCompletions = com.shade.keyboard.engine.SentenceCompleter
                         .suggest(contextWords, limit = 2)
                     val kept = if (phraseSuggestionsOn) sentenceCompletions
-                        else sentenceCompletions.filter { !it.contains(' ') }
+                    else sentenceCompletions.filter { !it.contains(' ') }
                     if (kept.isNotEmpty()) injections.add(0.85f to kept)
                 }
                 if (!known && prefix.length >= 3) {
@@ -447,7 +375,12 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                 ranked = mergedScores.keys.toList()
                 ranked = rejectionTracker.filter(ranked)
                 ranked = com.shade.keyboard.engine.MorphologicalDiversity.deduplicate(ranked, limit = 6)
-                if (onlineRankerTrainer.shouldExplore() && ranked.size > 2) {
+                // S3 — exploration exists to learn which candidate wins; in incognito or
+                // learning-off sessions nothing is learned, so shuffling the bar only
+                // degrades suggestions for no data.
+                if (personalLearningAllowed() && rankerLearningAllowed() &&
+                    onlineRankerTrainer.shouldExplore() && ranked.size > 2
+                ) {
                     val s0 = mergedScores[ranked[0]]
                     val s1 = mergedScores[ranked[1]]
                     val knownTopVsUnknownRunner = dict.contains(ranked[0].lowercase()) &&
@@ -473,7 +406,9 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
                     phraseSuggestionsOn = phraseSuggestionsOn
                 )
                 ensureFinalShownFeatures(shown, prefix, prev1)
-                com.shade.keyboard.engine.SuggestionCache.put(prev2, prev1, prefix, shown)
+                if (com.shade.keyboard.engine.SuggestionCache.salt == cacheSalt) {
+                    com.shade.keyboard.engine.SuggestionCache.put(prev2, prev1, prefix, shown)
+                }
                 withContext(Dispatchers.Main.immediate) { setCandidates(shown) }
             }
         }
@@ -534,13 +469,13 @@ internal class SuggestionPipeline(private val svc: ShadeService) {
             lastClipText = null
         }
         val effective: List<String> =
-        if (list.isEmpty() && lastClipText != null && !incognito &&
-            !fieldNoPersonalizedLearning && !fieldSecureInput
-        ) {
-            listOf(lastClipText!!)
-        } else {
-            list
-        }
+            if (list.isEmpty() && lastClipText != null && !incognito &&
+                !fieldNoPersonalizedLearning && !fieldSecureInput
+            ) {
+                listOf(lastClipText!!)
+            } else {
+                list
+            }
         val display = casedCandidates(effective)
         val rawChanged = effective != candidates
         if (!rawChanged && display == shownWords) return
