@@ -20,6 +20,9 @@ import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Emoji panel: two pieces.
@@ -113,6 +116,22 @@ class EmojiPanel(
 
     /** query word -> canonical keyword alternatives, for the synonym search bridge */
     private val synonymMap: Map<String, List<String>> by lazy { loadSynonymMap() }
+
+    @Volatile private var searchTablesPreloaded = false
+
+    /**
+     * Warms the three search TSV maps off the main thread. Call once when the
+     * emoji panel opens (ShadeService does it right after construction); without
+     * this the FIRST search keystroke parses all three emoji-keyword TSV assets
+     * inline on the main thread — a visible hitch on mid-range devices.
+     */
+    fun preloadSearchTables(scope: CoroutineScope) {
+        if (searchTablesPreloaded) return
+        searchTablesPreloaded = true
+        scope.launch(Dispatchers.Default) {
+            keywordMap; relatedMap; synonymMap  // force the lazy initializers
+        }
+    }
 
     private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
 

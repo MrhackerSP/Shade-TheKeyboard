@@ -149,6 +149,10 @@ class SwipeModelTest {
         assertEquals(0f, model.bigramScore(""), 1e-4f)
         // apostrophes are skipped, matching the trainer's bigram_feature
         assertEquals(-0.6931f, model.bigramScore("a'b"), 1e-4f)
+        // letters are LOWERCASED first (not skipped): "NASA"-style all-caps words
+        // must score like their lowercase form, never 0
+        assertEquals((-0.6931f + -1.3863f) / 2f, model.bigramScore("ABC"), 1e-4f)
+        assertEquals((-0.6931f + -1.3863f) / 2f, model.bigramScore("Ab'C"), 1e-4f)
     }
 
     @Test
@@ -164,6 +168,8 @@ class SwipeModelTest {
         assertEquals(-1.0986f, model.trigramScore("abc"), 1e-4f)
         // "abcd" = mean of a,b->c and b,c->d
         assertEquals((-1.0986f + -0.4055f) / 2f, model.trigramScore("abcd"), 1e-4f)
+        // lowercased first (not skipped): all-caps must score like the lowercase form
+        assertEquals(-1.0986f, model.trigramScore("ABC"), 1e-4f)
         // fewer than three letters score 0
         assertEquals(0f, model.trigramScore("ab"), 1e-6f)
         assertEquals(0f, model.trigramScore("a"), 1e-6f)

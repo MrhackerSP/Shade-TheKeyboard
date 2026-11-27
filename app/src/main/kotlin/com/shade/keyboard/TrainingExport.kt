@@ -15,8 +15,10 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * Exports Shade's locally-learned data to a file on this device. NOTHING is uploaded:
- * the app has no INTERNET permission. The user shares the file manually if they choose to.
+ * Exports Shade's locally-learned data to a file on this device. THIS code path
+ * uploads nothing: the export is only written locally, and the user shares the
+ * file manually if they choose to. (The app itself does declare INTERNET for the
+ * GIF/translate/updater features — unrelated to this exporter.)
  *
  * Two modes:
  *  - exportToUri(): user-initiated, writes to a chosen file via SAF.
@@ -125,6 +127,10 @@ object TrainingExport {
         val entries = WordDictionary.openUserStore(ctx).load().orEmpty()
             .entries
             .filter { UserWordCodec.isValidWord(it.key) }
+            // Learning already gates sensitive text, but the export path must not
+            // blindly trust that: belt-and-braces re-filter (passwords/tokens/OTP
+            // shapes never leave the device even if they somehow got learned).
+            .filter { !SuggestionHeuristics.isLikelySensitiveText(it.key) }
             .sortedByDescending { it.value }
 
         zip.putNextEntry(ZipEntry("user_words.txt"))

@@ -14,6 +14,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -34,14 +35,31 @@ class GifImageLoader(private val context: Context, private val scope: CoroutineS
     }
     private val gate = Semaphore(MAX_PARALLEL)
 
+    /** Downloads currently in flight, shared by every thumbnail showing the same URL
+     *  (trending strips repeat items; without this each copy fetched separately). */
+    private val inFlight =
+        java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<ByteArray>>()
+
     fun load(url: String, into: ImageView) {
         (into.tag as? Binding)?.job?.cancel()
         into.setImageDrawable(null)
         val job = scope.launch {
             val drawable: Drawable? = try {
                 withContext(Dispatchers.IO) {
-                    val bytes = cache.get(url) ?: gate.withPermit {
-                        HttpFetch.getBytes(url, MAX_PREVIEW_BYTES).also { cache.put(url, it) }
+                    val bytes = cache.get(url) ?: run {
+                        val deferred = inFlight.computeIfAbsent(url) {
+                            scope.async(Dispatchers.IO) {
+                                gate.withPermit {
+                                    HttpFetch.getBytes(url, MAX_PREVIEW_BYTES).also { cache.put(url, it) }
+                                }
+                            }
+                        }
+                        try {
+                            deferred.await()
+                        } finally {
+                            // Remove only if still ours: a newer download must not be evicted.
+                            if (!deferred.isActive) inFlight.remove(url, deferred)
+                        }
                     }
                     decode(bytes)
                 }

@@ -647,6 +647,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             onBack = { transitionToPanel(Panel.NONE) },
             onDelete = { backspace() }
         )
+        // Parse the emoji-search TSVs off the main thread now, so the first
+        // search keystroke doesn't hitch on the lazy initializers.
+        emoji.preloadSearchTables(scope)
         // Emoji search: while the query box owns input, the real keyboard is drawn
         // below the search header (which replaces the suggestion strip) and the
         // emoji grid steps aside. The slide-on-delete gesture is disabled so
