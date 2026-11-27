@@ -9,7 +9,7 @@ import android.view.View
 import com.shade.keyboard.engine.CandidateRanker
 import com.shade.keyboard.engine.GrammarEngine
 import com.shade.keyboard.engine.HeuristicSuggestionEngine
-import com.shade.keyboard.engine.NeuralPredictionEngine
+import com.shade.keyboard.ai.NeuralPredictionEngine
 import com.shade.keyboard.engine.RankingFeatureExtractor
 import com.shade.keyboard.motion.ShadeMotion
 import kotlinx.coroutines.Dispatchers
