@@ -749,7 +749,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             orientation = LinearLayout.VERTICAL
             addView(stripSlot, LinearLayout.LayoutParams(MATCH, dp(52f).toInt()))
             addView(resizeHandle, LinearLayout.LayoutParams(MATCH, dp(22f).toInt()))
-            addView(content, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
+            addView(contentFrame, LinearLayout.LayoutParams(MATCH, dp(200f).toInt()))
         }
 
         gifController = GifController(
