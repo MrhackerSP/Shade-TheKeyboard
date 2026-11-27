@@ -17,7 +17,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object Updater {
-
     private const val TAG = "Updater"
     private const val REPO = "MrhackerSP/Shade-TheKeyboard"
     private const val PREF_AUTO = "auto_update_check"
@@ -28,37 +27,25 @@ object Updater {
         val apkUrl: String,
         val size: Long,
         val page: String,
-        val sha256: String = "" // lowercase hex from the release asset digest, "" if GitHub didn't provide one
+        val sha256: String = ""
     )
 
-    @Volatile
-    var available: UpdateInfo? = null
+    @Volatile var available: UpdateInfo? = null
+        private set
+    @Volatile var checking: Boolean = false
+        private set
+    @Volatile var progress: Float? = null
+        private set
+    @Volatile var error: String? = null
+        private set
+    @Volatile var upToDate: Boolean = false
         private set
 
-    @Volatile
-    var checking: Boolean = false
-        private set
-
-    @Volatile
-    var progress: Float? = null
-        private set
-
-    @Volatile
-    var error: String? = null
-        private set
-
-    @Volatile
-    var upToDate: Boolean = false
-        private set
-
-    // Visible for the UpdaterConfigTest regression guard (the OWNER/REPO
-    // template placeholder silently broke every release check once).
     internal fun repoForTests(): String = REPO
 
+    @Volatile
     private var autoChecked = false
 
-    // The Settings switch writes to the default preferences file; this used to read a different
-    // file ("shade_prefs"), so the toggle did nothing. Off by default: no network unless opted in.
     fun autoEnabled(context: Context): Boolean =
         PreferenceManager.getDefaultSharedPreferences(context).getBoolean(PREF_AUTO, false)
 
@@ -74,7 +61,6 @@ object Updater {
         }.getOrNull().orEmpty().substringBefore('-')
     }
 
-    /** "1.2.3" > "1.2.2": compare version segments numerically. */
     internal fun newer(remote: String, local: String): Boolean {
         fun parts(v: String) = v.trim().removePrefix("v").substringBefore('-')
             .split('.').map { it.toIntOrNull() ?: 0 }
@@ -88,14 +74,12 @@ object Updater {
         return false
     }
 
-    /** Called once per app launch if auto-check is enabled. */
     suspend fun autoCheck(context: Context) {
         if (autoChecked || !autoEnabled(context)) return
         autoChecked = true
         check(context, quiet = true)
     }
 
-    /** Check GitHub for the latest release. */
     suspend fun check(context: Context, quiet: Boolean = false) {
         if (checking) return
         checking = true
@@ -109,11 +93,21 @@ object Updater {
             if (!quiet && available != null) {
                 Log.i(TAG, "Update available: ${available!!.version}")
             }
+            withContext(Dispatchers.IO) { pruneStaleUpdates(context, local) }
         } catch (e: Exception) {
             if (!quiet) error = if (e is NoReleaseException) "No update has been published yet" else "Could not check for updates"
             Log.w(TAG, "Update check failed", e)
         } finally {
             checking = false
+        }
+    }
+
+    /** Drops update APKs that are not newer than what is installed (post-install leftovers). */
+    private fun pruneStaleUpdates(context: Context, current: String) {
+        File(context.filesDir, "updates").listFiles()?.forEach { f ->
+            if (!f.name.startsWith("Shade-") || !f.name.endsWith(".apk")) return@forEach
+            val v = f.name.removePrefix("Shade-").removeSuffix(".apk")
+            if (!newer(v, current)) f.delete()
         }
     }
 
@@ -135,9 +129,6 @@ object Updater {
         val o = JSONObject(body)
         val tag = o.optString("tag_name").ifEmpty { throw NoReleaseException() }
         val assets = o.optJSONArray("assets") ?: throw NoReleaseException()
-        // Pick deterministically: prefer "Shade*" names (first one wins instead of the
-        // last matching asset overwriting it, which made the choice depend on the
-        // order GitHub happened to list the release assets in).
         var best: JSONObject? = null
         for (i in 0 until assets.length()) {
             val a = assets.optJSONObject(i) ?: continue
@@ -150,7 +141,6 @@ object Updater {
         }
         val apk = best ?: throw NoReleaseException()
         val apkUrl = apk.optString("browser_download_url")
-        // Only ever download over HTTPS from GitHub.
         if (!apkUrl.startsWith("https://github.com/")) throw java.io.IOException("Unexpected download URL")
         return UpdateInfo(
             version = tag.removePrefix("v"),
@@ -162,13 +152,8 @@ object Updater {
         )
     }
 
-    /**
-     * Download the APK and open the system installer.
-     * Requires "Install unknown apps" permission on Android 8+.
-     */
     suspend fun downloadAndInstall(context: Context, info: UpdateInfo) {
         if (progress != null) return
-        // canRequestPackageInstalls() is API 26+, exactly our minSdk: no guard needed.
         if (!context.packageManager.canRequestPackageInstalls()) {
             error = "Allow update installation in settings, then try again"
             runCatching {
@@ -201,12 +186,7 @@ object Updater {
     }
 
     private fun download(context: Context, info: UpdateInfo): File {
-        // filesDir (not cacheDir): the system can evict cache files between the
-        // download finishing and the user confirming the install intent, which
-        // made installs fail with "package not found".
         val dir = File(context.filesDir, "updates").apply { mkdirs() }
-        // Delete only stale leftovers from previous attempts; never touch the
-        // file belonging to the release we are about to (re)download.
         val keep = "Shade-${info.version}.apk"
         dir.listFiles()?.filter { it.name != keep }?.forEach { it.delete() }
         val out = File(dir, "Shade-${info.version}.apk")
@@ -214,7 +194,6 @@ object Updater {
         val sha = MessageDigest.getInstance("SHA-256")
         var conn: HttpURLConnection
         var hops = 0
-        // Follow GitHub redirects manually
         while (true) {
             conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10000
@@ -266,11 +245,6 @@ object Updater {
         return out
     }
 
-    /**
-     * The downloaded file must be this very app (same package), newer, and signed with the same
-     * certificate as the installed copy. Android's installer enforces the signature too, but
-     * failing here avoids offering a file that can never install.
-     */
     @Suppress("DEPRECATION")
     private fun verifyApk(context: Context, file: File) {
         val pm = context.packageManager
@@ -287,6 +261,10 @@ object Updater {
         val a = sigs(archive)
         if (a.isEmpty() || a != sigs(installed)) {
             file.delete(); throw java.io.IOException("signature mismatch")
+        }
+        // Never offer a file that is not actually newer than what is installed.
+        if (!newer(archive.versionName.orEmpty().substringBefore('-'), currentVersion(context))) {
+            file.delete(); throw java.io.IOException("not a newer version")
         }
     }
 }
