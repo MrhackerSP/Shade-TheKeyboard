@@ -89,6 +89,7 @@ internal class PrefsApplier(private val svc: ShadeService) {
         loadBackground()
         kb.kbTheme = kbTheme
         kb.contentHeightPx = contentH
+        svc.setContentHeight(contentH)
         kb.setSplitAnimated(split)
         kb.keyBorders = prefs.getBoolean("key_borders", true)
         kb.showHints = prefs.getBoolean("show_hints", true)
@@ -112,9 +113,8 @@ internal class PrefsApplier(private val svc: ShadeService) {
             "left" -> 1; "right" -> 2; else -> 0
         }
         kb.setOneHandedAnimated(side)
-        (kb.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
-        (emoji.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
-        (clipPanel.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
+        // kb/emoji/clip are MATCH_PARENT children of the content FrameLayout;
+        // resizing that frame (setContentHeight) is what moves the window height.
         emoji.setTheme(kbTheme)
         clipPanel.setTheme(kbTheme)
         if (svc.gifControllerReady()) gifController.panel.setTheme(kbTheme)
@@ -215,13 +215,7 @@ internal class PrefsApplier(private val svc: ShadeService) {
         val factor = if (landscape) 0.65f else 1f
         val contentH = (dp(keyH.toFloat()) * (if (numberRow) 4.7f else 4f) * factor).toInt()
         kb.contentHeightPx = contentH
-        (kb.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
-        if (svc.emojiReady()) {
-            (emoji.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
-        }
-        if (svc.clipPanelReady()) {
-            (clipPanel.layoutParams as? LinearLayout.LayoutParams)?.let { it.height = contentH }
-        }
+        svc.setContentHeight(contentH)
         kb.requestLayout()
     }}
 
