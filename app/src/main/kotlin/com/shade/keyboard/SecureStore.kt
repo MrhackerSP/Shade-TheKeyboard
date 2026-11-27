@@ -4,6 +4,9 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.security.KeyStore
+import java.security.UnrecoverableKeyException
+import android.security.keystore.KeyPermanentlyInvalidatedException
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -11,20 +14,23 @@ import javax.crypto.spec.GCMParameterSpec
 
 /**
  * AES-256-GCM helper backed by an Android Keystore key (one key per [alias]).
- *
- * Output format: Base64(iv[12] + ciphertext + tag). This matches the format the
- * old per-class helpers in WordDictionary / BigramModel produced, so existing
- * on-disk data stays readable.
- *
+ * Output format: Base64(iv[12] + ciphertext + tag).
  * Both calls FAIL CLOSED: they return null on any error and never fall back to
  * plaintext. Callers must treat null as "don't persist".
  */
 object SecureStore {
-
     private const val IV_SIZE = 12
     private const val TAG_BITS = 128
 
-    // Keystore lookups are slow (can be tens of ms); keep the key handle in memory.
+    /** Why a decrypt failed: data/key permanently unusable vs. retry-later error. */
+    sealed interface DecryptOutcome {
+        class Plain(val text: String) : DecryptOutcome
+        /** Malformed payload, bad GCM tag, or a lost/invalidated key: the bytes are gone. */
+        object Corrupt : DecryptOutcome
+        /** Keystore daemon / IPC hiccup: the file may still be fine — retry later. */
+        object Transient : DecryptOutcome
+    }
+
     private val keyCache = java.util.concurrent.ConcurrentHashMap<String, SecretKey>()
 
     private fun secretKey(alias: String): SecretKey {
@@ -57,22 +63,33 @@ object SecureStore {
         null
     }
 
-    fun decrypt(alias: String, stored: String): String? = try {
-        val bytes = Base64.decode(stored.trim(), Base64.NO_WRAP)
-        if (bytes.size <= IV_SIZE) {
-            null
-        } else {
+    fun decryptTyped(alias: String, stored: String): DecryptOutcome {
+        val bytes = try {
+            Base64.decode(stored.trim(), Base64.NO_WRAP)
+        } catch (t: Exception) {
+            return DecryptOutcome.Corrupt
+        }
+        if (bytes.size <= IV_SIZE) return DecryptOutcome.Corrupt
+        return try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(
                 Cipher.DECRYPT_MODE,
                 secretKey(alias),
                 GCMParameterSpec(TAG_BITS, bytes.copyOfRange(0, IV_SIZE))
             )
-            String(cipher.doFinal(bytes.copyOfRange(IV_SIZE, bytes.size)), Charsets.UTF_8)
+            DecryptOutcome.Plain(String(cipher.doFinal(bytes.copyOfRange(IV_SIZE, bytes.size)), Charsets.UTF_8))
+        } catch (t: Exception) {
+            ShadeLog.w("SecureStore", "keystore decrypt failed", t, once = true)
+            keyCache.remove(alias)
+            when (t) {
+                is AEADBadTagException,
+                is KeyPermanentlyInvalidatedException,
+                is UnrecoverableKeyException -> DecryptOutcome.Corrupt
+                else -> DecryptOutcome.Transient
+            }
         }
-    } catch (t: Exception) {
-        ShadeLog.w("SecureStore", "keystore decrypt failed", t, once = true)
-        keyCache.remove(alias)
-        null
     }
+
+    fun decrypt(alias: String, stored: String): String? =
+        (decryptTyped(alias, stored) as? DecryptOutcome.Plain)?.text
 }
