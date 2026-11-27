@@ -9,6 +9,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import com.shade.keyboard.gif.GifConfig
 import kotlinx.coroutines.Dispatchers
@@ -240,7 +241,9 @@ internal class PrefsApplier(private val svc: ShadeService) {
         val w = root.width.toFloat()
         if (w <= 0f) return
         val availW = w * 0.75f
-        val lp = strip.layoutParams as? LinearLayout.LayoutParams ?: return
+        // The strip lives inside the fixed-height stripSlot (a FrameLayout) since the
+        // panel-header height-jitter fix, so its params are FrameLayout's.
+        val lp = strip.layoutParams as? FrameLayout.LayoutParams ?: return
         when (kb.oneHanded) {
             1 -> { lp.width = availW.toInt(); lp.gravity = Gravity.START }
             2 -> { lp.width = availW.toInt(); lp.gravity = Gravity.END }
