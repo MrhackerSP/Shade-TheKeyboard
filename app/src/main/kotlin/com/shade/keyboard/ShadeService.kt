@@ -125,15 +125,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     )
 
     internal val toolDefs = listOf(
-        "clip" to "📋", "emoji" to "😀", "gif" to "GIF", "translate" to "🌐", "numpad" to "123", "left" to "◀", "right" to "▶",
+        "clip" to "📋", "gif" to "GIF", "translate" to "Translate", "numpad" to "123",
+        "left" to "◀", "right" to "▶", "up" to "▲", "down" to "▼",
         "selectall" to "All", "copy" to "Copy", "cut" to "Cut", "paste" to "Paste",
-        "undo" to "Undo", "proof" to "Proof", "incognito" to "🕶", "onehand" to "1-hand",
+        "undo" to "Undo", "proof" to "Proof", "incognito" to "🕶", "onehand" to "One-hand",
         "resize" to "Resize", "voice" to "🎤", "settings" to "⚙"
     )
     internal val toolIcons = mapOf(
-        "clip" to R.drawable.ic_tb_clip, "emoji" to R.drawable.ic_tb_emoji, "gif" to R.drawable.ic_tb_gif, "translate" to R.drawable.ic_tb_translate,
+        "clip" to R.drawable.ic_tb_clip, "gif" to R.drawable.ic_tb_gif, "translate" to R.drawable.ic_tb_translate,
         "numpad" to R.drawable.ic_tb_numpad, "left" to R.drawable.ic_tb_left,
-        "right" to R.drawable.ic_tb_right, "selectall" to R.drawable.ic_tb_selectall,
+        "right" to R.drawable.ic_tb_right, "up" to R.drawable.ic_tb_up, "down" to R.drawable.ic_tb_down,
+        "selectall" to R.drawable.ic_tb_selectall,
         "copy" to R.drawable.ic_tb_copy, "cut" to R.drawable.ic_tb_cut,
         "paste" to R.drawable.ic_tb_paste, "undo" to R.drawable.ic_tb_undo, "proof" to R.drawable.ic_tb_proof,
         "incognito" to R.drawable.ic_tb_incognito, "onehand" to R.drawable.ic_tb_onehand,
@@ -1278,10 +1280,15 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     // ------------------------------------------------------------------ Translator
-
     private fun openTranslator() {
-        if (!prefs.getBoolean("translator_enabled", true)) return
-        if (fieldSecureInput || currentFieldType == FieldTypeDetector.FieldType.PASSWORD) return
+        if (!prefs.getBoolean("translator_enabled", true)) {
+            Toast.makeText(this, R.string.translator_disabled, Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (fieldSecureInput || currentFieldType == FieldTypeDetector.FieldType.PASSWORD) {
+            Toast.makeText(this, R.string.translator_blocked_secure, Toast.LENGTH_SHORT).show()
+            return
+        }
         endWord()
         if (panel != Panel.NONE) transitionToPanel(Panel.NONE)
         if (gifActive) closeGif()
@@ -1369,7 +1376,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection
         when (id) {
             "clip" -> transitionToPanel(Panel.CLIP)
-            "emoji" -> transitionToPanel(Panel.EMOJI)
             "gif" -> openGif()
             "translate" -> openTranslator()
             "voice" -> {
@@ -1388,6 +1394,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
             "left" -> onCursor(-1)
             "right" -> onCursor(1)
+            "up" -> { endWord(); onCursorMove(0, -1) }
+            "down" -> { endWord(); onCursorMove(0, 1) }
             "selectall" -> ic?.performContextMenuAction(android.R.id.selectAll)
             "copy" -> ic?.performContextMenuAction(android.R.id.copy)
             "cut" -> ic?.performContextMenuAction(android.R.id.cut)
@@ -1399,7 +1407,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 prefs.edit().putBoolean("incognito", incognito).apply()
                 toolbarC.rebuildToolbar()
             }
-            "onehand" -> cycleOneHanded()
+            "onehand" -> showOneHandedMenu()
             "resize" -> setResizeMode(true)
             "settings" -> startActivity(
                 Intent(this, SettingsActivity::class.java)
@@ -1701,19 +1709,6 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         return true
     }
 
-
-    private fun cycleOneHanded() {
-        val next = when (prefs.getString("one_handed", "off")) {
-            "off" -> "left"
-            "left" -> "right"
-            else -> "off"
-        }
-        prefs.edit().putString("one_handed", next).apply()
-        val side = when (next) { "left" -> 1; "right" -> 2; else -> 0 }
-        kb.setOneHandedAnimated(side)
-        prefsApplier.applyOneHandedToStrip()
-    }
-
     // ------------------------------------------------------------------ resize & float
 
     /**
@@ -1975,9 +1970,11 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
 
     private fun showOneHandedMenu() {
         val popup = PopupMenu(this, toggle)
-        popup.menu.add(0, 1, 0, "One-handed: Left")
-        popup.menu.add(0, 2, 1, "One-handed: Right")
-        popup.menu.add(0, 3, 2, "One-handed: Off")
+        val cur = prefs.getString("one_handed", "off")
+        fun mark(side: String, label: String) = (if (cur == side) "✓ " else "") + label
+        popup.menu.add(0, 1, 0, mark("left", "One-handed: Left"))
+        popup.menu.add(0, 2, 1, mark("right", "One-handed: Right"))
+        popup.menu.add(0, 3, 2, mark("off", "Full-width keyboard"))
         popup.menu.add(0, 4, 3, "Dock keyboard (reset position)")
         popup.menu.add(0, 5, 4, "Reset keyboard size")
         popup.setOnMenuItemClickListener { item ->
