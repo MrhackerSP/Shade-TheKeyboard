@@ -175,6 +175,13 @@ class SlideDecoder(
         val loopMask: Int
         val tpXRange: Float
         val tpYRange: Float
+        /**
+         * The letter sequence the swipe implies (keys the finger actually visited).
+         * Depends only on the resampled path and the layout — computed ONCE per swipe
+         * here instead of once per surviving candidate in stage 2 (it was stage 2's
+         * heaviest inner loop after adherence).
+         */
+        val swipeStr: String
 
         private val dp = FloatArray(m)
         private val vx = FloatArray(GlideLexicon.MAX_LETTERS)
@@ -198,6 +205,25 @@ class SlideDecoder(
             }
             tpXRange = xMax - xMin
             tpYRange = yMax - yMin
+            // Points further than SWIPE_KEY_R from every key centre are between-key
+            // travel, not key hits — counting them charged graze letters like the
+            // "y"/"g" between t→h and inflated every edit penalty.
+            val letters = StringBuilder()
+            var lastLetter = -1
+            for (j in 0 until m) {
+                var best = -1
+                var bestD = Float.MAX_VALUE
+                for (cc in 0 until 26) {
+                    if (!geo.present[cc]) continue
+                    val d = dist(px[j], py[j], geo.x[cc], geo.y[cc])
+                    if (d < bestD) { bestD = d; best = cc }
+                }
+                if (best >= 0 && bestD <= SWIPE_KEY_R && best != lastLetter) {
+                    letters.append((best + 'a'.code).toChar())
+                    lastLetter = best
+                }
+            }
+            swipeStr = letters.toString()
         }
 
         private val keepScore = FloatArray(STAGE1_KEEP)
@@ -363,7 +389,6 @@ class SlideDecoder(
                     shape += dist(qx, qy, shapeX[q], shapeY[q])
                 }
                 shape /= SHAPE_N
-
                 var adh = 0f
                 for (j in 0 until m) {
                     var d = Float.MAX_VALUE
@@ -375,7 +400,6 @@ class SlideDecoder(
                     if (over > 0f) adh += over * over
                 }
                 adh /= m
-
                 var turn = 0f
                 for (cIdx in corners) {
                     var d = Float.MAX_VALUE
@@ -385,9 +409,7 @@ class SlideDecoder(
                     }
                     if (d > CORNER_FREE) turn += d - CORNER_FREE
                 }
-
                 val cDistDiff = (rawDist[h] - bestDist).coerceIn(0f, 1.5f)
-
                 var vowelCount = 0
                 for (k in 0 until len) {
                     val ch = c[k].toInt()
@@ -395,14 +417,11 @@ class SlideDecoder(
                 }
                 val vowelRatio = if (len > 0) vowelCount.toFloat() / len else 0f
                 val vowelPenalty = abs(vowelRatio - 0.4f).coerceAtLeast(0f) * W_VOWEL
-
                 val spreadQuality = if (tpXRange > 0.1f && tpYRange < tpXRange * 2f) 0f
                     else W_SPREAD * (0.1f - tpXRange.coerceAtMost(0.1f))
-
                 val excessTravel = length - total
                 val charNumFeature =
                     if (len < 3 && (loopDrawn || excessTravel > SHORT_WORD_EXCESS)) W_CHAR_NUM * (3 - len) else 0f
-
                 val detourFraction = (total - length).coerceAtLeast(0f) / max(length, 1f)
                 val detourPenalty = if (loopDrawn) 0f else W_DETOUR * detourFraction
 
@@ -412,22 +431,8 @@ class SlideDecoder(
                 var nearbySub = 0
                 var generalSub = 0
 
-                val swipeLetters = StringBuilder()
-                var lastLetter = -1
-                for (j in 0 until m) {
-                    var best = -1
-                    var bestD = Float.MAX_VALUE
-                    for (cc in 0 until 26) {
-                        if (!geo.present[cc]) continue
-                        val d = dist(px[j], py[j], geo.x[cc], geo.y[cc])
-                        if (d < bestD) { bestD = d; best = cc }
-                    }
-                    if (best >= 0 && bestD <= SWIPE_KEY_R && best != lastLetter) {
-                        swipeLetters.append((best + 'a'.code).toChar())
-                        lastLetter = best
-                    }
-                }
-                val swipeStr = swipeLetters.toString()
+                // Compare against the COLLAPSED letter path (GlideLexicon strips apostrophes
+                // and double letters), not the raw word. [swipeStr] comes from Run.init.
                 val wordStr = StringBuilder(len).apply {
                     for (k in 0 until len) append(('a' + c[k].toInt()).toChar())
                 }.toString()
@@ -482,14 +487,12 @@ class SlideDecoder(
                     // looped swipes, where the old counting is preserved verbatim.
                     if (loopDrawn) insertion += (swipeStr.length - si).coerceAtLeast(0)
                 }
-
                 val alignLen = maxOf(swipeStr.length, wordStr.length, 1)
                 val editFeature = ((W_OMISSION * omission +
                     W_INSERTION * insertion +
                     W_TRANSPOSITION * transposition +
                     W_NEARBY_SUB * nearbySub +
                     W_GENERAL_SUB * generalSub) / alignLen).coerceAtMost(2.0f)
-
                 var oovNum = 0
                 for (k in 0 until len) {
                     if (!geo.present[c[k].toInt()]) oovNum++
@@ -508,7 +511,6 @@ class SlideDecoder(
                     detourPenalty +
                     editFeature +
                     oovFeature
-
                 if ((lex.doubleMask[i] and loopMask) != 0) score -= LOOP_BONUS
 
                 if (model != null) {
@@ -541,8 +543,9 @@ class SlideDecoder(
                         f[14] = model.bigramScore(lex.words[i])
                         f[15] = keepAlign[h]
                         f[16] = model.trigramScore(lex.words[i])
-                        // F5 — the trained correction refines close calls but can never
-                        // overrule a confident hand-tuned margin.
+                        // Reranker discipline: the trained correction refines close calls
+                        // but can never overrule a confident hand-tuned margin
+                        // (pinned by TrainedSwipeRerankTest).
                         score += model.penalty(f)
                             .coerceIn(-MODEL_MAX_CORRECTION, MODEL_MAX_CORRECTION)
                     }
@@ -601,7 +604,7 @@ class SlideDecoder(
         const val TRAVEL_SLACK = 0.3f
         /** Weight of the detour penalty (ideal path longer than the swipe). */
         const val W_DETOUR = 2.0f
-        /** F5: max magnitude of the trained reranker's score correction. */
+        /** Max magnitude of the trained reranker's score correction. */
         const val MODEL_MAX_CORRECTION = 1.5f
 
         fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float {
@@ -665,6 +668,8 @@ class SlideDecoder(
             return out.toIntArray()
         }
 
+        // Original loop detector, unchanged: absolute turning + arc threshold.
+        // This is the behaviour aLoopOnAKeyFavoursTheDoubledSpelling pins.
         fun findLoops(xs: FloatArray, ys: FloatArray, n: Int, geo: Geometry): Int {
             var mask = 0
             var runLetter = -1
