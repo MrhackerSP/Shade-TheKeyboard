@@ -7,19 +7,68 @@ import org.json.JSONException
 import org.json.JSONObject
 import kotlin.math.tanh
 
+/**
+ * Fitted reranker for glide decoding, trained on simulated swipes
+ * (see `scripts/train_swipe_model.py` for the trainer and the feature parity rules).
+ *
+ * Stage 2 of [SlideDecoder] already produces a calibrated hand-tuned score. The
+ * trained model adds a correction on top: each surviving candidate's raw stage-2
+ * feature vector is scored by the model (higher = more likely the word the finger
+ * meant), and `blend x score` is subtracted from the hand-tuned penalty (lower
+ * total score = better candidate). The decoder clamps that correction
+ * (SlideDecoder.MODEL_MAX_CORRECTION) so the model refines close calls but can
+ * never overrule a confident geometric match.
+ *
+ * Model classes; the trainer emits whichever wins on a word-disjoint hold-out set:
+ *  version 1: a linear logit (`weights` + `bias`);
+ *  version 2: a one-hidden-layer network on raw features (legacy, still loadable);
+ *  version 3: a one-hidden-layer network on standardised features - the JSON
+ *  carries per-feature mean/std (`norm`), inputs are z-scored and clipped to
+ *  +/-3.5 standard deviations before the hidden layer.
+ *
+ * Every model may also carry two frozen language-model tables:
+ *  `bigrams`, 676 natural log-probabilities (row-major prev*26+next);
+ *  `trigrams`, 17,576 natural log-probabilities (row-major prev2*676+prev1*26+next).
+ *
+ * Credit: the idea of fitting a correction on top of a hand-tuned glide score follows
+ * FUTO Keyboard's trained glide typing (https://github.com/futo-futo/keyboard). This
+ * reranker, its feature vector and its weights are Shade's own, fitted by
+ * scripts/train_swipe_model.py on simulated swipes.
+ *
+ * With no bundled asset [load] returns null and the decoder behaves exactly as
+ * before. A present-but-unparseable asset is LOGGED, not swallowed: silent fallback
+ * here once hid a dead reranker for weeks.
+ */
 class SwipeModel private constructor(
+    /** Version 1: linear weights (empty for versions 2/3). */
     private val weights: FloatArray,
+    /** Version 1: linear bias (unused for versions 2/3). */
     private val bias: Float,
+    /** Versions 2/3: hidden layer weights, row-major units x features (empty for version 1). */
     private val hiddenW: FloatArray,
+    /** Versions 2/3: hidden layer bias. */
     private val hiddenB: FloatArray,
+    /** Versions 2/3: output weights (empty for version 1). */
     private val outW: FloatArray,
+    /** Versions 2/3: output bias. */
     private val outB: Float,
+    /** Version 3: per-feature means (empty otherwise). */
     private val normMean: FloatArray,
+    /** Version 3: per-feature standard deviations, all > 0 (empty otherwise). */
     private val normStd: FloatArray,
+    /** Frozen letter-bigram log-probabilities (prev*26+next), null when absent. */
     private val bigrams: FloatArray?,
+    /** Frozen letter-trigram log-probabilities (prev2*676+prev1*26+next), null when absent. */
     private val trigrams: FloatArray?,
+    /** How strongly the fitted score corrects the hand-tuned score. */
     val blend: Float
 ) {
+    /**
+     * Penalty added to a candidate's hand-tuned score.
+     * Returns 0 for a feature vector of unexpected size (defensive; never breaks ranking).
+     * [scratch]: optional caller-owned buffer for the z-scored copy — stage 2 calls this
+     * once per surviving candidate per swipe, so reusing one array avoids 250 allocs/swipe.
+     */
     fun penalty(features: FloatArray, scratch: FloatArray? = null): Float {
         if (features.size != FEATURE_NAMES.size) return 0f
         val logit = if (hiddenW.isEmpty()) {
@@ -29,7 +78,7 @@ class SwipeModel private constructor(
         } else {
             val f = if (normMean.size == features.size) {
                 val dst = if (scratch != null && scratch.size == features.size) scratch
-                          else FloatArray(features.size)
+                else FloatArray(features.size)
                 for (i in features.indices) {
                     val z = (features[i] - normMean[i]) / normStd[i]
                     dst[i] = when {
@@ -53,6 +102,15 @@ class SwipeModel private constructor(
         return -blend * logit
     }
 
+    /**
+     * Mean letter-bigram log-probability of [word] under the frozen table shipped
+     * in the model JSON (higher = a more plausible English letter sequence).
+     * Mirrors the trainer's bigram_feature: letters are lowercased first, then
+     * non a-z letters are skipped, fewer than two letters score 0, and the sum is
+     * divided by the transition count. (Skipping uppercase instead of lowercasing
+     * made all-caps words score 0 — above every real mean log-prob — an artificial
+     * bonus for "NASA"-style entries.) Returns 0 when the model carries no table.
+     */
     fun bigramScore(word: String): Float {
         val table = bigrams ?: return 0f
         var prev = -1
@@ -71,6 +129,11 @@ class SwipeModel private constructor(
         return if (n > 0) sum / n else 0f
     }
 
+    /**
+     * Mean letter-trigram log-probability of [word] under the frozen table
+     * shipped in the model JSON. Same casing rule as [bigramScore]: lowercase,
+     * skip non a-z, fewer than three letters score 0, divide by transition count.
+     */
     fun trigramScore(word: String): Float {
         val table = trigrams ?: return 0f
         var prev2 = -1
@@ -92,21 +155,32 @@ class SwipeModel private constructor(
     }
 
     companion object {
+        /**
+         * Raw stage-2 features fed to the model, in order. The trainer must
+         * compute these exactly like [SlideDecoder] does - both sides keep the
+         * same names and the same order. NO trailing whitespace: the bundled
+         * swipe_model.json carries these names clean and [parse] compares verbatim.
+         */
         val FEATURE_NAMES = listOf(
             "shape", "adh", "corner", "cdist", "vowel", "edit",
             "lenratio", "prior", "letters",
             "shape2", "adh2", "editlen", "startd", "endd", "bigram",
             "align", "trigram"
         )
+        /** Bigram table size: 26 x 26 natural log-probabilities, row-major. */
         const val BIGRAM_TABLE_SIZE = 26 * 26
+        /** Trigram table size: 26 x 26 x 26 natural log-probabilities, row-major. */
         const val TRIGRAM_TABLE_SIZE = 26 * 26 * 26
+        /** Version-3 z-score clamp, mirrored from the trainer's CLIP_Z. */
         private const val Z_CLAMP = 3.5f
+        /** Sanity cap: blend scales the whole logit; a corrupt huge value would bulldoze the calibrated hand score. */
         private const val MAX_BLEND = 10f
         const val ASSET = "swipe_model.json"
 
         @Volatile
         private var cached: SwipeModel? = null
 
+        /** Parses a model description; null when the JSON is unusable (and logs why). */
         fun parse(json: String): SwipeModel? {
             return try {
                 val obj = JSONObject(json)
@@ -193,6 +267,11 @@ class SwipeModel private constructor(
             }
         }
 
+        /**
+         * Optional frozen bigram table; null when absent. A malformed table
+         * (wrong length, non-numeric or non-finite entries) throws so the
+         * model is rejected rather than silently loaded without its table.
+         */
         private fun parseBigrams(obj: JSONObject): FloatArray? {
             val arr = obj.optJSONArray("bigrams") ?: return null
             val table = FloatArray(BIGRAM_TABLE_SIZE)
@@ -204,6 +283,7 @@ class SwipeModel private constructor(
             return table
         }
 
+        /** Same contract as [parseBigrams] for the trigram table. */
         private fun parseTrigrams(obj: JSONObject): FloatArray? {
             val arr = obj.optJSONArray("trigrams") ?: return null
             val table = FloatArray(TRIGRAM_TABLE_SIZE)
@@ -215,6 +295,12 @@ class SwipeModel private constructor(
             return table
         }
 
+        /**
+         * Loads the bundled model once per process. Distinguishes the two failure
+         * modes that used to be indistinguishable (and invisible): asset absent
+         * (fine - decoder runs unaided) vs asset present but rejected by [parse]
+         * (a bug: parity/format drift, worth a log line).
+         */
         @Synchronized
         fun load(context: Context): SwipeModel? {
             cached?.let { return it }
@@ -234,6 +320,7 @@ class SwipeModel private constructor(
             return parsed
         }
 
+        /** Drops the cached model (used by tests). */
         fun resetForTests() {
             cached = null
         }
