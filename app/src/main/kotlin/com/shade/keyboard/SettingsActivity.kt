@@ -351,11 +351,11 @@ class SettingsActivity : AppCompatActivity() {
             .setPositiveButton(R.string.clear_confirm_button) { _, _ ->
                 lifecycleScope.launch(Dispatchers.IO) {
                     try {
+                        // clearAll covers the adaptive stores AND the service's live
+                        // WordDictionary + BigramModel (when the keyboard has started in
+                        // this process); file-only deletes would be resurrected by their
+                        // in-memory maps on the next debounced save.
                         LearningDataCleaner.clearAll(applicationContext)
-                        WordDictionary.clearLearned(applicationContext)
-                        // Learned next-word bigrams live in their own file; clearing it makes
-                        // the model re-seed from the bundled primer on the next start.
-                        java.io.File(applicationContext.filesDir, "ngram.json").delete()
                     } catch (e: Exception) { Log.w("SettingsActivity", "Failed to clear learned data", e) }
                     withContext(Dispatchers.Main) {
                         // Was R.string.backup_done ("Backup saved") — wrong message for a wipe.

@@ -410,9 +410,12 @@ class EmojiPanel(
 
     /** Removes the last query character (backspace key routing while searching). */
     fun searchBackspace() {
-        val t = searchField.text
-        if (t.isNotEmpty()) {
-            searchField.setText(t.substring(0, t.length - 1))
+        val s = searchField.text.toString()
+        if (s.isNotEmpty()) {
+            // Code-point safe: never cut a surrogate pair (an emoji pasted into
+            // the query) in half — same treatment as GifController.backspace().
+            val cut = s.offsetByCodePoints(s.length, -1)
+            searchField.setText(s.substring(0, cut))
             searchField.setSelection(searchField.text.length)
         }
     }

@@ -31,6 +31,24 @@ object LearningDataCleaner {
         LiveStores.get { OnlineRankerTrainer(ctx.applicationContext) }.clear()
         LiveStores.get { TouchBiasModel(ctx.applicationContext) }.clear()
         UserWordMemory(ctx).clear()
+
+        // The service's live WordDictionary + BigramModel hold their data in memory
+        // with debounced savers — deleting the files underneath them would only last
+        // until the next save rewrote the old state. Clear through the live instance
+        // when the keyboard has started in this process; otherwise the file deletes
+        // below are sufficient (nothing is holding the data).
+        val dict = WordDictionary.live
+        if (dict != null) {
+            dict.clearLearnedInPlace()
+            dict.bigramModel?.clear()
+            // Belt and braces: if the model is still loading in the background it
+            // hasn't received the clear() yet — removing the file makes its late
+            // load start from scratch instead of resurrecting the old stats.
+            try { java.io.File(ctx.filesDir, "ngram.json").delete() } catch (_: Exception) {}
+        } else {
+            WordDictionary.clearLearned(ctx)
+            try { java.io.File(ctx.filesDir, "ngram.json").delete() } catch (_: Exception) {}
+        }
     }
 
     fun clearOne(ctx: Context, prefsFile: String) {
@@ -61,5 +79,8 @@ object LearningDataCleaner {
         UserWordMemory(ctx).reload()
         // ConfidenceCalibrator reads SharedPreferences on every call (no cache)
         // and picks up restored data on its own.
+        // The service's learned-word map must re-read the restored file even if it
+        // still holds unsaved pre-restore changes — the restore is the truth.
+        WordDictionary.live?.reloadUserForce()
     }
 }

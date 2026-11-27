@@ -66,7 +66,10 @@ class WordDictionary(private val ctx: Context) {
         "hes" to "he's", "shes" to "she's", "lets" to "let's"
     )
 
-    init { reloadUser() }
+    init {
+        live = this
+        reloadUser()
+    }
 
     suspend fun configure(localeId: String = "en") {
         if (loadedId == localeId) return
@@ -252,6 +255,39 @@ class WordDictionary(private val ctx: Context) {
         rebuildUserPrefixIndex()
     }
 
+    /**
+     * Clears the learned words in THIS instance as well as on disk. Settings'
+     * "clear learned data" must use this (via [live]); deleting only the file
+     * is undone by the next debounced save, which rewrites this object's
+     * still-populated in-memory map — the cleared words resurrect.
+     */
+    @Synchronized
+    fun clearLearnedInPlace() {
+        user.clear()
+        rebuildUserPrefixIndex()
+        userDirty = false
+        userVersion++
+        openUserStore(ctx).delete()
+        legacyPrefs.edit().clear().apply()
+        userStamp = userStore.stamp()
+    }
+
+    /**
+     * Re-reads the learned words even when unsaved in-memory changes exist.
+     * Used after a backup restore: the freshly written file is the truth, and
+     * the pre-restore in-memory state (still dirty from earlier typing) must
+     * be discarded, not allowed to win — otherwise the next save overwrites
+     * the restore.
+     */
+    @Synchronized
+    fun reloadUserForce() {
+        userDirty = false
+        userVersion++
+        user = userStore.load() ?: migrateLegacyUsers()
+        userStamp = userStore.stamp()
+        rebuildUserPrefixIndex()
+    }
+
     /** One-time import of the old SharedPreferences store (random-IV ciphertext keys). */
     private fun migrateLegacyUsers(): MutableMap<String, Float> {
         val all = legacyPrefs.all
@@ -281,6 +317,9 @@ class WordDictionary(private val ctx: Context) {
             snapshot = HashMap(user)
             version = userVersion
         }
+        // A clear/restore that ran between the snapshot and here must win: drop
+        // the stale write instead of resurrecting the pre-clear map.
+        if (userVersion != version) return
         if (userStore.save(snapshot)) {
             synchronized(this) {
                 if (userVersion == version) userDirty = false
@@ -909,6 +948,13 @@ class WordDictionary(private val ctx: Context) {
         private const val SAVE_DELAY_MS = 2000L
         private const val USER_FILE = "user_words.enc"
         const val USER_KEY_ALIAS = "shade_user_words_key"
+
+        /**
+         * The service's live instance (same process as the settings screen). Settings-side
+         * "clear learned data" and backup restores go through it — a bare file delete would
+         * be resurrected by this object's in-memory map and debounced saver.
+         */
+        @Volatile internal var live: WordDictionary? = null
 
         fun openUserStore(ctx: Context) = EncryptedMapFile(ctx, USER_FILE, USER_KEY_ALIAS)
 
