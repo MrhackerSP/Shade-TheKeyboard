@@ -1737,7 +1737,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         PrefsMigration.writeOffsetY(prefs, keyboardOffsetY)
                     }
                     // Haptic feedback on release
-                    v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                    PressEffectPlayer.get().applyPressEffect(v, PressEffectPlayer.KIND_BASIC_TAP)
                     // After the user finishes dragging, the
                     // resize handle auto-hides. The keyboard stays at the new
                     // size; the handle only reappears if the user re-enters
@@ -1826,7 +1826,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                         .putInt("kb_inset_left", (kbInsetLeftPx / dp(1f)).toInt())
                         .putInt("kb_inset_right", (kbInsetRightPx / dp(1f)).toInt())
                         .apply()
-                    v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                    PressEffectPlayer.get().applyPressEffect(v, PressEffectPlayer.KIND_BASIC_TAP)
                     return true
                 }
             }
