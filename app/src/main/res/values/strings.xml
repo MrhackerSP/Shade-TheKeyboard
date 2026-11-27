@@ -315,4 +315,6 @@
         <item quantity="one">Proofread — %d fix applied</item>
         <item quantity="other">Proofread — %d fixes applied</item>
     </plurals>
+    <string name="translator_disabled">Translator is turned off in Settings</string>
+    <string name="translator_blocked_secure">Translator is unavailable in password fields</string>
 </resources>
