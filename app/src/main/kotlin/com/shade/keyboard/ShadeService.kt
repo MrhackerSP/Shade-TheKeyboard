@@ -168,6 +168,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     /** Fixed-height home for the strip and every header that replaces it (emoji/GIF/translate), so panel switches never resize the window. */
     private lateinit var stripSlot: FrameLayout
     internal lateinit var toggle: TextView
+    // Permanent voice button on the RIGHT edge of the suggestion strip — the
+    // counterpart of the left toggle. Always the mic (never swapped for other
+    // tools); shown or hidden by the "strip_voice_button" setting (default on).
+    internal lateinit var stripVoiceBtn: ImageView
     // floating drag handle above the keyboard. Dragging vertically
     // resizes the keyboard (adjusts key_height live). Long-pressing then
     // dragging moves the keyboard up from the bottom (floating offset).
@@ -566,6 +570,18 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
         }
 
+        // Right-edge voice button: mirror of the left toggle's slot. Tap runs
+        // voice input; visibility follows the strip_voice_button setting.
+        stripVoiceBtn = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(12f).toInt(), dp(14f).toInt(), dp(12f).toInt(), dp(14f).toInt())
+            isClickable = true
+            isFocusable = false
+            contentDescription = getString(R.string.pref_voice_input)
+            setOnClickListener { onTool("voice") }
+        }
+        refreshVoiceStripBtn()
+
         slots = List(3) { i ->
             TextView(this).apply {
                 gravity = Gravity.CENTER
@@ -643,6 +659,9 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             gravity = Gravity.CENTER_VERTICAL
             addView(toggle, LinearLayout.LayoutParams(dp(40f).toInt(), MATCH))
             addView(frame, LinearLayout.LayoutParams(0, MATCH, 1f))
+            // Permanent voice button on the right edge (visibility follows the
+            // strip_voice_button setting — see refreshStrip).
+            addView(stripVoiceBtn, LinearLayout.LayoutParams(dp(40f).toInt(), MATCH))
         }
 
         emoji = EmojiPanel(
@@ -1967,6 +1986,17 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             }
             addView(buttons, FrameLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.CENTER })
         }
+    }
+
+    /** Whether the strip's permanent voice button is shown (setting, default on). */
+    internal fun stripVoiceVisible(): Boolean = prefs.getBoolean("strip_voice_button", true)
+
+    /** Applies the voice button's icon, tint and visibility. */
+    internal fun refreshVoiceStripBtn() {
+        if (!this::stripVoiceBtn.isInitialized) return
+        stripVoiceBtn.setImageResource(R.drawable.ic_tb_mic)
+        stripVoiceBtn.setColorFilter(kbTheme.text)
+        stripVoiceBtn.visibility = if (stripVoiceVisible()) View.VISIBLE else View.GONE
     }
 
     private fun showOneHandedMenu() {
@@ -3543,7 +3573,10 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         currentInputConnection?.commitText("$cleaned ", 1)
         appendTail("$cleaned ")
         if (personalLearningAllowed()) userWordMemory.bump(cleaned)
-        pushUndo(cleaned.length + 1, "")
+        // Deliberately NO pushUndo here: a dictation is many words, and one
+        // undo record spanning the whole insertion makes a single backspace
+        // wipe it all. Without an entry the backspace path falls through to a
+        // plain KEYCODE_DEL and deletes character by character, like normal.
         composing.clear()
         afterText()
     }

@@ -117,6 +117,9 @@ internal class ToolbarController(private val svc: ShadeService) {
         val enabled = prefs.getStringSet("toolbar_keys", null) ?: toolDefs.map { it.first }.toSet()
         for ((id, label) in toolDefs) {
             if (enabled.contains(id) == false) continue
+            // The strip's right-edge voice button already shows the mic — don't
+            // repeat it in the row. (Hidden button → voice returns to the row.)
+            if (id == "voice" && stripVoiceVisible()) continue
             if (id == "gif" && !gifAvailable()) continue
             val tv = ImageView(this).apply {
                 setImageResource(toolIcons[id] ?: R.drawable.ic_tb_settings)
@@ -187,6 +190,8 @@ internal class ToolbarController(private val svc: ShadeService) {
 
         toggle.text = if (showTools) "‹" else "›"
         toggle.visibility = if (suggestionsActive) View.VISIBLE else View.GONE
+        // Voice button follows its setting live (PrefsApplier → refreshStrip).
+        refreshVoiceStripBtn()
         strip.visibility = View.VISIBLE
     }}
 

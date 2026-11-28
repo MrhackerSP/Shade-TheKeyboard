@@ -321,6 +321,9 @@ object SettingsCatalog {
             SettingsItem.Toggle("voice_on_device", R.string.pref_voice_on_device,
                 R.string.pref_voice_on_device_sum, true,
                 listOf("voice", "offline", "on-device", "speech", "recognition")),
+            SettingsItem.Toggle("strip_voice_button", R.string.pref_strip_voice_button,
+                R.string.pref_strip_voice_button_sum, true,
+                listOf("voice", "mic", "strip", "toolbar", "button", "suggestion")),
             SettingsItem.Toggle("clipboard_history", R.string.pref_clipboard_history, 0, true,
                 listOf("clipboard", "history", "copy", "paste"))
         )),
