@@ -1,17 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Shade settings — Gboard-style.
-  A pitch-black canvas with a slim top bar (round back button + inline title),
-  an optional pinned search field (home only) and one RecyclerView that shows
-  either the grouped category cards (home) or the cards of one settings page.
+    Shade settings — Gboard-style.
+    A pitch-black canvas with a slim top bar (round back button + inline title),
+    an optional pinned search field (home only) and one RecyclerView that shows
+    either the grouped category cards (home) or the cards of one settings page.
 -->
 <!-- Explicit background: keeps the noir surface color behind translucent system bars. -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools" tools:ignore="Overdraw"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@color/noir_background"
-    android:fitsSystemWindows="true">
+    android:fitsSystemWindows="true"
+    tools:ignore="Overdraw">
 
     <FrameLayout
         android:layout_width="match_parent"
@@ -28,8 +31,8 @@
             android:padding="10dp"
             android:scaleType="fitCenter"
             android:src="@drawable/ic_back"
-            android:tint="@color/noir_text"
-            android:visibility="gone" />
+            android:visibility="gone"
+            app:tint="@color/noir_text" />
 
         <TextView
             android:id="@+id/noir_header_title"
@@ -64,7 +67,6 @@
         android:layout_marginBottom="12dp"
         android:background="@drawable/bg_noir_search"
         android:drawableStart="@drawable/ic_search"
-        android:drawableTint="@color/noir_text_tertiary"
         android:drawablePadding="10dp"
         android:paddingHorizontal="16dp"
         android:hint="@string/settings_search_hint"
@@ -75,7 +77,8 @@
         android:imeOptions="actionSearch"
         android:maxLines="1"
         android:singleLine="true"
-        android:importantForAutofill="no" />
+        android:importantForAutofill="no"
+        app:drawableTint="@color/noir_text_tertiary" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/noir_list"
