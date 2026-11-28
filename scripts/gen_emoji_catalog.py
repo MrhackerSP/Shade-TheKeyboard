@@ -27,7 +27,7 @@ import os
 import re
 import urllib.request
 
-ROOT = "/home/z/my-project/work/Shade-TheKeyboard-main"
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 ASSET_DIR = os.path.join(ROOT, "app/src/main/assets/emoji")
 KT_OUT = os.path.join(ROOT, "app/src/main/kotlin/com/shade/keyboard/EmojiCatalog.kt")
 TSV_OUT = os.path.join(ASSET_DIR, "emoji_keywords_catalog.tsv")

@@ -111,6 +111,7 @@ MIT licensed.
 
 ### Backup & portability
 - JSON backup/restore of settings and learned words.
+- Gboard-style settings: a home of grouped category cards (Languages, Preferences, Theme / Corrections and suggestions, Glide typing, Voice typing, Emojis and GIFs / Clipboard, Dictionary / Privacy, About, Advanced settings, Shade updates), each opening its own page, with Gboard's check / X switch. Pages and rows live in `SettingsCatalog`; rendering is in `SettingsAdapter`.
 - Import of words exported from another keyboard (backup archive, dictionary JSON or
   plain word list) into the on-device learned memory.
 - Optional training-data export for your own experiments.

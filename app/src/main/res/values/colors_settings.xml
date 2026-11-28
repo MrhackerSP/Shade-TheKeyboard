@@ -20,4 +20,20 @@
     <color name="noir_track">#333333</color>
     <color name="noir_ripple">#33FFFFFF</color>
     <color name="noir_control_normal">#6B6B6B</color>
+
+    <!-- Gboard-style grouped cards (settings home + sub-pages). -->
+    <color name="noir_card">#171717</color>
+    <color name="noir_hero_on">#D4D4D4</color>
+    <color name="noir_circle_button">#1F1F1F</color>
+    <color name="noir_disabled_text">#676767</color>
+
+    <!-- Gboard-style switch. ON: white track + dark thumb with a check.
+         OFF: dark track with a grey outline + grey thumb with an X. -->
+    <color name="noir_switch_on_track">#FFFFFF</color>
+    <color name="noir_switch_on_thumb">#171717</color>
+    <color name="noir_switch_on_icon">#FFFFFF</color>
+    <color name="noir_switch_off_track">#111111</color>
+    <color name="noir_switch_off_outline">#919191</color>
+    <color name="noir_switch_off_thumb">#919191</color>
+    <color name="noir_switch_off_icon">#171717</color>
 </resources>

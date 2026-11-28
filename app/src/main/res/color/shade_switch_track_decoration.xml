@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 2dp outline around the track: only visible when the switch is off. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_checked="true" android:color="@android:color/transparent" />
+    <item android:state_enabled="false" android:color="#3A3A3A" />
+    <item android:color="@color/noir_switch_off_outline" />
+</selector>

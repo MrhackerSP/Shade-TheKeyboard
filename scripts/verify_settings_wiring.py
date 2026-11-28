@@ -4,10 +4,11 @@
    Themes/...) with a matching type and compatible default.
 2. Every titleRes/subtitleRes/sectionRes in the catalog must exist in strings.xml.
 3. Color keys must be consumed by Themes.custom()."""
+import os
 import re
 import glob
 
-ROOT = "/home/z/my-project/work/Shade-TheKeyboard-main"
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 CAT = open(f"{ROOT}/app/src/main/kotlin/com/shade/keyboard/SettingsCatalog.kt", encoding="utf-8").read()
 
 # 1. Collect catalog (key, kind, default) triples.

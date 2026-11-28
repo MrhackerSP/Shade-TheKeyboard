@@ -29,22 +29,70 @@ class SettingsCatalogTest {
         assertEquals(
             listOf(
                 SettingsCatalog.SECTION_LANGUAGES,
-                SettingsCatalog.SECTION_TYPING,
-                SettingsCatalog.SECTION_SUGGESTIONS,
-                SettingsCatalog.SECTION_GESTURES,
+                SettingsCatalog.SECTION_KEYS,
                 SettingsCatalog.SECTION_LAYOUT,
+                SettingsCatalog.SECTION_SHORTCUTS,
+                SettingsCatalog.SECTION_KEY_TAP,
                 SettingsCatalog.SECTION_APPEARANCE,
                 SettingsCatalog.SECTION_COLORS,
                 SettingsCatalog.SECTION_BACKGROUND,
-                SettingsCatalog.SECTION_FEEDBACK,
-                SettingsCatalog.SECTION_MEDIA,
-                SettingsCatalog.SECTION_LEARNING,
+                SettingsCatalog.SECTION_CORRECTIONS,
+                SettingsCatalog.SECTION_SUGGESTIONS,
+                SettingsCatalog.SECTION_GESTURES,
+                SettingsCatalog.SECTION_VOICE_MAIN,
+                SettingsCatalog.SECTION_VOICE,
+                SettingsCatalog.SECTION_EMOJI,
+                SettingsCatalog.SECTION_GIF,
+                SettingsCatalog.SECTION_CLIPBOARD,
+                SettingsCatalog.SECTION_DICTIONARY,
+                SettingsCatalog.SECTION_PRIVACY,
+                SettingsCatalog.SECTION_SHARING,
+                SettingsCatalog.SECTION_ABOUT,
+                SettingsCatalog.SECTION_UPDATES,
+                SettingsCatalog.SECTION_FEATURES,
                 SettingsCatalog.SECTION_ENGINE,
-                SettingsCatalog.SECTION_BACKUP,
-                SettingsCatalog.SECTION_ABOUT
+                SettingsCatalog.SECTION_BACKUP
             ),
             ids
         )
+    }
+
+    @Test
+    fun home_listsEveryPageExactlyOnce_inGboardGroups() {
+        val shown = SettingsCatalog.homeGroups.flatten()
+        assertEquals("a page is listed twice on the home", shown.size, shown.toSet().size)
+        assertEquals(SettingsCatalog.pages.map { it.id }.toSet(), shown.toSet())
+        // Gboard's grouping: [Languages, Preferences, Theme] / [Corrections, Glide,
+        // Voice, Emojis] / [Clipboard, Dictionary] / [Privacy, About, Advanced, Updates].
+        assertEquals(
+            listOf(
+                listOf(SettingsCatalog.PAGE_LANGUAGES, SettingsCatalog.PAGE_PREFERENCES, SettingsCatalog.PAGE_THEME),
+                listOf(SettingsCatalog.PAGE_CORRECTIONS, SettingsCatalog.PAGE_GLIDE,
+                    SettingsCatalog.PAGE_VOICE, SettingsCatalog.PAGE_EMOJI),
+                listOf(SettingsCatalog.PAGE_CLIPBOARD, SettingsCatalog.PAGE_DICTIONARY),
+                listOf(SettingsCatalog.PAGE_PRIVACY, SettingsCatalog.PAGE_ABOUT,
+                    SettingsCatalog.PAGE_ADVANCED, SettingsCatalog.PAGE_UPDATES)
+            ),
+            SettingsCatalog.homeGroups
+        )
+    }
+
+    @Test
+    fun pages_haveUniqueIds_titlesAndIcons_andContent() {
+        val ids = SettingsCatalog.pages.map { it.id }
+        assertEquals(ids.size, ids.toSet().size)
+        for (p in SettingsCatalog.pages) {
+            assertTrue("page ${p.id} has no title", p.titleRes != 0)
+            assertTrue("page ${p.id} has no icon", p.iconRes != 0)
+            assertTrue("page ${p.id} has no sections", p.sections.isNotEmpty())
+        }
+        assertEquals(null, SettingsCatalog.page(99))
+    }
+
+    @Test
+    fun onlyTheVoiceMasterSwitch_isAHero() {
+        val heroes = toggles.filter { it.hero }.map { it.key }
+        assertEquals(listOf("voice_input"), heroes)
     }
 
     @Test
@@ -80,16 +128,37 @@ class SettingsCatalogTest {
                 else -> null
             }
         }.toSet()
-        assertTrue("number_row" in keysIn(SettingsCatalog.SECTION_LANGUAGES))
+        fun keysOnPage(id: Int) = SettingsCatalog.page(id)!!.sections.flatMap { keysIn(it.id) }.toSet()
+
         assertTrue("layout" in keysIn(SettingsCatalog.SECTION_LANGUAGES))
-        assertTrue("emoji_suggestions" in keysIn(SettingsCatalog.SECTION_SUGGESTIONS))
+        assertTrue("number_row" in keysIn(SettingsCatalog.SECTION_KEYS))
+        assertTrue("key_height" in keysIn(SettingsCatalog.SECTION_LAYOUT))
+        assertTrue("double_space" in keysIn(SettingsCatalog.SECTION_SHORTCUTS))
+        assertTrue("haptic" in keysIn(SettingsCatalog.SECTION_KEY_TAP))
+        assertTrue("repeat_delay" in keysIn(SettingsCatalog.SECTION_KEY_TAP))
+        assertTrue("autocorrect" in keysIn(SettingsCatalog.SECTION_CORRECTIONS))
+        assertTrue("suggestions" in keysIn(SettingsCatalog.SECTION_SUGGESTIONS))
         assertTrue("glide_typing" in keysIn(SettingsCatalog.SECTION_GESTURES))
-        assertTrue("repeat_delay" in keysIn(SettingsCatalog.SECTION_GESTURES))
-        assertTrue("clipboard_history" in keysIn(SettingsCatalog.SECTION_MEDIA))
-        assertTrue("contribute_data" in keysIn(SettingsCatalog.SECTION_LEARNING))
-        assertTrue("typing_insights" in keysIn(SettingsCatalog.SECTION_LEARNING))
+        assertTrue("voice_input" in keysIn(SettingsCatalog.SECTION_VOICE_MAIN))
+        assertTrue("emoji_suggestions" in keysIn(SettingsCatalog.SECTION_EMOJI))
+        assertTrue("gif_enabled" in keysIn(SettingsCatalog.SECTION_GIF))
+        assertTrue("clipboard_history" in keysIn(SettingsCatalog.SECTION_CLIPBOARD))
+        assertTrue("typing_insights" in keysIn(SettingsCatalog.SECTION_PRIVACY))
+        assertTrue("contribute_data" in keysIn(SettingsCatalog.SECTION_SHARING))
         assertTrue("learning_ranker" in keysIn(SettingsCatalog.SECTION_ENGINE))
         assertTrue("typing_insights" !in keysIn(SettingsCatalog.SECTION_ABOUT))
+
+        // Page level: the categories Gboard users expect.
+        assertTrue("theme" in keysOnPage(SettingsCatalog.PAGE_THEME))
+        assertTrue("color_bg" in keysOnPage(SettingsCatalog.PAGE_THEME))
+        assertTrue("bg_blur" in keysOnPage(SettingsCatalog.PAGE_THEME))
+        assertTrue("sound" in keysOnPage(SettingsCatalog.PAGE_PREFERENCES))
+        assertTrue("trackpad_mode" in keysOnPage(SettingsCatalog.PAGE_GLIDE))
+        assertTrue("voice_on_device" in keysOnPage(SettingsCatalog.PAGE_VOICE))
+        assertTrue("strip_voice_button" in keysOnPage(SettingsCatalog.PAGE_VOICE))
+        assertTrue("learn_words" in keysOnPage(SettingsCatalog.PAGE_PRIVACY))
+        assertTrue("translator_enabled" in keysOnPage(SettingsCatalog.PAGE_ADVANCED))
+        assertTrue("auto_update_check" in keysOnPage(SettingsCatalog.PAGE_UPDATES))
     }
 
     @Test
@@ -315,7 +384,7 @@ class SettingsCatalogTest {
 
     @Test
     fun section_lookup() {
-        assertNotNull(SettingsCatalog.section(SettingsCatalog.SECTION_TYPING))
+        assertNotNull(SettingsCatalog.section(SettingsCatalog.SECTION_CORRECTIONS))
         assertEquals(null, SettingsCatalog.section(99))
     }
 }

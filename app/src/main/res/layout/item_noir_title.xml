@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Large page title shown at the top of a page; the slim top bar takes over once it scrolls away. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/noir_page_title"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingStart="28dp"
+    android:paddingEnd="28dp"
+    android:paddingTop="32dp"
+    android:paddingBottom="24dp"
+    android:textColor="@color/noir_text"
+    android:textSize="36sp" />

@@ -5,7 +5,6 @@ import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -15,6 +14,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Parcelable
 import android.util.AtomicFile
 import android.text.Editable
 import android.text.InputType
@@ -28,49 +28,46 @@ import android.view.Window
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.core.view.AccessibilityDelegateCompat
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.SimpleItemAnimator
 import androidx.lifecycle.lifecycleScope
 import com.shade.keyboard.gif.GifConfig
-import com.shade.keyboard.keypresseffect.PressEffectPlayer
 import com.shade.keyboard.migration.DictionaryImport
-import com.google.android.material.button.MaterialButton
-import com.google.android.material.button.MaterialButtonToggleGroup
-import com.google.android.material.materialswitch.MaterialSwitch
-import com.google.android.material.slider.Slider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.Locale
 
 // ============================================================================
-// Shade settings — "Noir" redesign.
+// Shade settings — Gboard-style.
 //
-// One pitch-black screen, white type, hairline dividers, no cards, no page
-// navigation: all sections are collapsible groups on a single list that opens
-// fully collapsed, and a compact header with the search field stays pinned. Color rows open an HSV picker
-// sheet (saturation/brightness square + hue rail) built entirely in-project.
+// A pitch-black "Noir" canvas like Gboard's dark settings: the HOME lists the
+// categories as grouped rounded cards (Languages, Preferences, Theme /
+// Corrections and suggestions, Glide typing, Voice typing, Emojis and GIFs /
+// Clipboard, Dictionary / Privacy, About, Advanced settings, Shade updates);
+// each category opens a PAGE of labelled sub-sections whose rows use Gboard's
+// check / X switch. Search stays pinned on the home screen. Color rows open an
+// HSV picker sheet built entirely in-project.
+//
+// Navigation is a single activity: the adapter swaps between home and page
+// rows, a round back button / the system Back gesture returns to the home.
 //
 // All SharedPreferences keys and defaults match what ShadeService.applyPrefs()
-// reads — see SettingsCatalog. The catalog additionally exposes prefs the old
-// card UI never showed (color_keyfn, color_text, phrase suggestions, autofill
-// chips, learning fine-tuning, key-repeat timing, typing insights).
+// reads — see SettingsCatalog (pages + sections) and SettingsAdapter (rows).
 // ============================================================================
 
 class SettingsActivity : AppCompatActivity() {
@@ -79,6 +76,13 @@ class SettingsActivity : AppCompatActivity() {
     internal lateinit var adapter: SettingsAdapter
     private lateinit var list: RecyclerView
     private lateinit var searchInput: EditText
+    private lateinit var backButton: ImageButton
+    private lateinit var headerTitle: TextView
+    private lateinit var headerVersion: TextView
+    private lateinit var backCallback: OnBackPressedCallback
+    private var versionLabel: String? = null
+    /** Home-list scroll position, restored when coming back from a page. */
+    private var homeScroll: Parcelable? = null
 
     // Backup file pickers (SAF). The result flows into askBackupPassphrase(),
     // which runs Backup.export/import on IO.
@@ -122,23 +126,24 @@ class SettingsActivity : AppCompatActivity() {
 
         list = findViewById(R.id.noir_list)
         searchInput = findViewById(R.id.noir_search_input)
+        backButton = findViewById(R.id.noir_back)
+        headerTitle = findViewById(R.id.noir_header_title)
+        headerVersion = findViewById(R.id.noir_header_version)
 
-        findViewById<TextView>(R.id.noir_header_version).apply {
-            val version = try {
-                packageManager.getPackageInfo(packageName, 0).versionName
-            } catch (t: Exception) { ShadeLog.w("SettingsActivity", "version lookup failed", t, once = true); null }
-            if (!version.isNullOrBlank()) {
-                text = "v$version"
-                visibility = View.VISIBLE
-            }
-        }
+        versionLabel = try {
+            packageManager.getPackageInfo(packageName, 0).versionName
+                ?.takeIf { it.isNotBlank() }?.let { "v$it" }
+        } catch (t: Exception) { ShadeLog.w("SettingsActivity", "version lookup failed", t, once = true); null }
+        headerVersion.text = versionLabel.orEmpty()
 
         adapter = SettingsAdapter(this, prefs)
-        savedInstanceState?.getIntArray(STATE_EXPANDED)?.let { adapter.setExpanded(it) }
+        savedInstanceState?.getInt(STATE_PAGE, SettingsAdapter.HOME)?.let {
+            if (it != SettingsAdapter.HOME) adapter.showPage(it)
+        }
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
         // A header "change" animation cross-fades two copies of the row, which
-        // reads as a flicker when the chevron flips.
+        // reads as a flicker.
         (list.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
 
         // The IME's search key used to do nothing, leaving the keyboard up.
@@ -156,7 +161,20 @@ class SettingsActivity : AppCompatActivity() {
             }
         })
 
+        // Back: page -> home. On the home the system default applies (leave settings).
+        backCallback = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() { goHome() }
+        }
+        onBackPressedDispatcher.addCallback(this, backCallback)
+        backButton.setOnClickListener { goHome() }
+
+        // The large page title collapses into the top bar as it scrolls away.
+        list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) { updateInlineTitle() }
+        })
+
         adapter.rebuild()
+        renderChrome()
     }
 
     override fun onResume() {
@@ -167,16 +185,78 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        // Rotation recreates the activity; keep the sections the person opened.
-        outState.putIntArray(STATE_EXPANDED, adapter.expandedIds())
+        // Rotation recreates the activity; keep the page the person is on.
+        outState.putInt(STATE_PAGE, adapter.currentPageId)
+    }
+
+    // ── Navigation (home <-> page) ─────────────────────────────────────────
+
+    /** Opens one settings category (called by a home-screen row). */
+    internal fun openPage(pageId: Int) {
+        if (adapter.currentPageId == pageId) return
+        if (adapter.isHome) homeScroll = list.layoutManager?.onSaveInstanceState()
+        adapter.showPage(pageId)
+        list.scrollToPosition(0)
+        renderChrome()
+        animateSwap(forward = true)
+    }
+
+    /** Returns to the settings home, restoring its scroll position. */
+    internal fun goHome() {
+        if (adapter.isHome) return
+        adapter.showHome()
+        val state = homeScroll
+        if (state != null) list.post { list.layoutManager?.onRestoreInstanceState(state) }
+        else list.scrollToPosition(0)
+        renderChrome()
+        animateSwap(forward = false)
+    }
+
+    /** Top bar, search field and system-back state for the current screen. */
+    private fun renderChrome() {
+        val home = adapter.isHome
+        val page = adapter.currentPage()
+        backButton.visibility = if (home) View.GONE else View.VISIBLE
+        searchInput.visibility = if (home) View.VISIBLE else View.GONE
+        headerVersion.visibility = if (home && !versionLabel.isNullOrEmpty()) View.VISIBLE else View.GONE
+        backCallback.isEnabled = !home
+        headerTitle.text = getString(page?.titleRes ?: R.string.settings_title)
+        (headerTitle.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            // Pages leave room for the 44dp round back button (16dp margins either side).
+            lp.marginStart = dp(if (home) 28f else 76f).toInt()
+            headerTitle.layoutParams = lp
+        }
+        updateInlineTitle()
+    }
+
+    /**
+     * Home and small-title pages always show the top-bar title; large-title pages
+     * fade it in once the big heading has scrolled out of view.
+     */
+    private fun updateInlineTitle() {
+        val page = adapter.currentPage()
+        if (page == null || !page.largeTitle) { headerTitle.alpha = 1f; return }
+        val lm = list.layoutManager as? LinearLayoutManager ?: return
+        val first = lm.findFirstVisibleItemPosition()
+        headerTitle.alpha = when {
+            first < 0 -> 0f
+            first > 0 -> 1f
+            else -> {
+                val v = lm.findViewByPosition(0)
+                if (v == null || v.height <= 0) 1f
+                else ((-v.top).toFloat() / (v.height * 0.6f)).coerceIn(0f, 1f)
+            }
+        }
+    }
+
+    private fun animateSwap(forward: Boolean) {
+        list.animate().cancel()
+        list.alpha = 0f
+        list.translationX = dp(24f) * (if (forward) 1f else -1f)
+        list.animate().alpha(1f).translationX(0f).setDuration(180L).start()
     }
 
     private fun dp(v: Float): Float = v * resources.displayMetrics.density
-
-    /** Brings an expanded section's header to the top so its rows are in view. */
-    internal fun scrollRowToTop(position: Int) {
-        (list.layoutManager as? LinearLayoutManager)?.scrollToPositionWithOffset(position, 0)
-    }
 
     private fun passphraseField(hintRes: Int) = EditText(this).apply {
         hint = getString(hintRes)
@@ -620,480 +700,6 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private companion object {
-        const val STATE_EXPANDED = "expanded_sections"
+        const val STATE_PAGE = "settings_page"
     }
 }
-
-// ============================================================================
-// Adapter — one flat RecyclerView of collapsible section headers and child
-// rows. Every section starts collapsed, so the screen opens as a short index
-// instead of a 100-row wall; search swaps the whole list for matching items.
-// ============================================================================
-
-internal class SettingsAdapter(
-    private val ctx: SettingsActivity,
-    private val prefs: SharedPreferences
-) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-
-    private sealed class Row {
-        class Section(val def: SettingsCatalog.Section) : Row()
-        class Child(val def: SettingsCatalog.Section, val item: SettingsItem, val isLast: Boolean) : Row()
-        class Empty(val textRes: Int) : Row()
-    }
-
-    private val rows = ArrayList<Row>()
-    private val collapsed = HashSet<Int>(SettingsCatalog.sections.map { it.id })
-    private var searching = false
-
-    internal val TYPE_SECTION = 0
-    internal val TYPE_TOGGLE = 1
-    internal val TYPE_SLIDER = 2
-    internal val TYPE_ACTION = 3
-    internal val TYPE_CHOICE = 4
-    internal val TYPE_COLOR = 5
-    internal val TYPE_INFO = 6
-    internal val TYPE_EMPTY = 8
-
-    init {
-        rebuild()
-    }
-
-    // ── State transitions ────────────────────────────────────────────────
-
-    fun applySearch(query: String) {
-        val q = query.trim()
-        rows.clear()
-        if (q.isEmpty()) {
-            searching = false
-            appendCatalog()
-        } else {
-            searching = true
-            val results = SettingsCatalog.search(q) { ctx.getString(it) }
-            if (results.isEmpty()) {
-                rows.add(Row.Empty(R.string.info_no_results))
-            } else {
-                results.forEachIndexed { i, item ->
-                    rows.add(Row.Child(SettingsCatalog.sections.first(), item, isLast = i == results.lastIndex))
-                }
-            }
-        }
-        notifyDataSetChanged()
-    }
-
-    fun rebuild() {
-        rows.clear()
-        if (searching) {
-            // Re-run the current query so external pref changes show up.
-            applySearch(searchInputQuery())
-            return
-        }
-        appendCatalog()
-        notifyDataSetChanged()
-    }
-
-    private fun searchInputQuery(): String =
-        ctx.findViewById<EditText>(R.id.noir_search_input)?.text?.toString().orEmpty()
-
-    private fun appendCatalog() {
-        for (section in SettingsCatalog.sections) {
-            rows.add(Row.Section(section))
-            if (section.id !in collapsed) appendChildren(section)
-        }
-    }
-
-    private fun childrenOf(section: SettingsCatalog.Section): List<Row.Child> =
-        section.items.mapIndexed { i, item ->
-            Row.Child(section, item, isLast = i == section.items.lastIndex)
-        }
-
-    private fun appendChildren(section: SettingsCatalog.Section) {
-        rows.addAll(childrenOf(section))
-    }
-
-    /** Collapses a section, removing its children with a range notification. */
-    fun collapse(sectionId: Int) {
-        val headerPos = rows.indexOfFirst { it is Row.Section && it.def.id == sectionId }
-        if (headerPos < 0) return
-        var n = 0
-        while (headerPos + 1 + n < rows.size && rows[headerPos + 1 + n] is Row.Child) n++
-        if (n == 0) return
-        collapsed.add(sectionId)
-        repeat(n) { rows.removeAt(headerPos + 1) }
-        notifyItemRangeRemoved(headerPos + 1, n)
-        notifyItemChanged(headerPos)
-    }
-
-    /** Expands a section, inserting its children with a range notification. */
-    fun expand(sectionId: Int) {
-        val headerPos = rows.indexOfFirst { it is Row.Section && it.def.id == sectionId }
-        if (headerPos < 0) return
-        val section = (rows[headerPos] as Row.Section).def
-        if (section.id !in collapsed) return
-        collapsed.remove(sectionId)
-        val children = childrenOf(section)
-        rows.addAll(headerPos + 1, children)
-        notifyItemRangeInserted(headerPos + 1, children.size)
-        notifyItemChanged(headerPos)
-        ctx.scrollRowToTop(headerPos)
-    }
-
-    fun toggleSection(sectionId: Int) {
-        if (sectionId in collapsed) expand(sectionId) else collapse(sectionId)
-    }
-
-    fun isSectionCollapsed(sectionId: Int): Boolean = sectionId in collapsed
-
-    /** Ids of the sections currently open, for saving across rotation. */
-    fun expandedIds(): IntArray =
-        SettingsCatalog.sections.map { it.id }.filter { it !in collapsed }.toIntArray()
-
-    /** Restores [expandedIds]; every other section is collapsed. */
-    fun setExpanded(ids: IntArray) {
-        collapsed.clear()
-        collapsed.addAll(SettingsCatalog.sections.map { it.id })
-        ids.forEach { collapsed.remove(it) }
-        rebuild()
-    }
-
-    /** The item rendered at [position], or null for structural rows. */
-    internal fun itemAt(position: Int): SettingsItem? =
-        (rows.getOrNull(position) as? Row.Child)?.item
-
-    fun sectionAt(position: Int): SettingsCatalog.Section? =
-        (rows.getOrNull(position) as? Row.Section)?.def
-
-    // ── RecyclerView plumbing ────────────────────────────────────────────
-
-    override fun getItemViewType(position: Int): Int = when (val r = rows[position]) {
-        is Row.Section -> TYPE_SECTION
-        is Row.Empty -> TYPE_EMPTY
-        is Row.Child -> when (r.item) {
-            is SettingsItem.Toggle -> TYPE_TOGGLE
-            is SettingsItem.Slider -> TYPE_SLIDER
-            is SettingsItem.Action -> TYPE_ACTION
-            is SettingsItem.Choice -> TYPE_CHOICE
-            is SettingsItem.Color -> TYPE_COLOR
-            is SettingsItem.Info -> TYPE_INFO
-        }
-    }
-
-    override fun getItemCount(): Int = rows.size
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
-        val inf = LayoutInflater.from(ctx)
-        return when (viewType) {
-            TYPE_SECTION -> SectionVH(inf.inflate(R.layout.item_noir_section, parent, false))
-            TYPE_TOGGLE -> ToggleVH(inf.inflate(R.layout.item_noir_toggle, parent, false))
-            TYPE_SLIDER -> SliderVH(inf.inflate(R.layout.item_noir_slider, parent, false))
-            TYPE_ACTION -> ActionVH(inf.inflate(R.layout.item_noir_action, parent, false))
-            TYPE_CHOICE -> ChoiceVH(inf.inflate(R.layout.item_noir_choice, parent, false))
-            TYPE_COLOR -> ColorVH(inf.inflate(R.layout.item_noir_color, parent, false))
-            TYPE_INFO -> InfoVH(inf.inflate(R.layout.item_noir_info, parent, false))
-            TYPE_EMPTY -> InfoVH(inf.inflate(R.layout.item_noir_info, parent, false))
-            else -> throw IllegalArgumentException("Unknown type $viewType")
-        }
-    }
-
-    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-        when (val row = rows[position]) {
-            is Row.Section -> (holder as SectionVH).bind(row.def, row.def.id in collapsed) { id ->
-                toggleSection(id)
-            }
-            is Row.Empty -> (holder as InfoVH).bind(row.textRes)
-            is Row.Child -> when (val item = row.item) {
-                is SettingsItem.Toggle -> (holder as ToggleVH).bind(item, prefs, row.isLast)
-                is SettingsItem.Slider -> (holder as SliderVH).bind(item, prefs, row.isLast)
-                is SettingsItem.Action -> (holder as ActionVH).bind(item, prefs, row.isLast)
-                is SettingsItem.Choice -> (holder as ChoiceVH).bind(item, prefs, row.isLast)
-                is SettingsItem.Color -> (holder as ColorVH).bind(item, prefs, row.isLast)
-                is SettingsItem.Info -> (holder as InfoVH).bind(item.textRes, row.isLast)
-            }
-        }
-    }
-
-    // ── ViewHolders ──────────────────────────────────────────────────────
-
-    internal class SectionVH(v: View) : RecyclerView.ViewHolder(v) {
-        fun bind(def: SettingsCatalog.Section, isCollapsed: Boolean, onToggle: (Int) -> Unit) {
-            val c = itemView.context
-            itemView.findViewById<TextView>(R.id.noir_section_title).text = c.getString(def.titleRes)
-            itemView.findViewById<View>(R.id.noir_section_arrow).rotation = if (isCollapsed) 0f else 90f
-            // TalkBack otherwise reads a header with no hint that it opens.
-            ViewCompat.setStateDescription(
-                itemView,
-                c.getString(if (isCollapsed) R.string.state_collapsed else R.string.state_expanded)
-            )
-            itemView.setOnClickListener { onToggle(def.id) }
-        }
-    }
-
-    internal class ToggleVH(v: View) : RecyclerView.ViewHolder(v) {
-        fun bind(item: SettingsItem.Toggle, prefs: SharedPreferences, isLast: Boolean) {
-            val c = itemView.context
-            itemView.findViewById<TextView>(R.id.noir_title).text = c.getString(item.titleRes)
-            val sub = itemView.findViewById<TextView>(R.id.noir_subtitle)
-            if (item.subtitleRes != 0) {
-                sub.text = c.getString(item.subtitleRes)
-                sub.visibility = View.VISIBLE
-            } else sub.visibility = View.GONE
-
-            val sw = itemView.findViewById<MaterialSwitch>(R.id.noir_switch)
-            // Avoid listener feedback while restoring the checked state.
-            sw.setOnCheckedChangeListener(null)
-            sw.isChecked = prefs.getBoolean(item.key, item.default)
-            sw.setOnCheckedChangeListener { _, checked ->
-                prefs.edit().putBoolean(item.key, checked).apply()
-            }
-            itemView.setOnClickListener { sw.isChecked = !sw.isChecked }
-            // The switch itself is hidden from accessibility (the whole row is the
-            // target), so the row must announce itself as a switch with its state.
-            ViewCompat.setAccessibilityDelegate(itemView, object : AccessibilityDelegateCompat() {
-                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
-                    super.onInitializeAccessibilityNodeInfo(host, info)
-                    info.className = "android.widget.Switch"
-                    info.isCheckable = true
-                    info.isChecked = sw.isChecked
-                }
-            })
-            itemView.bindDivider(isLast)
-        }
-    }
-
-    internal class SliderVH(v: View) : RecyclerView.ViewHolder(v) {
-
-        /**
-         * Vibration strength uses the stock keyboard's labels: "System default"
-         * until the slider is first moved (the engine's default state — the OS
-         * keyboard tap), then the engine's dual unit — "N ms" on legacy
-         * devices, "N%" on haptic-primitive hardware.
-         */
-        private fun labelFor(item: SettingsItem.Slider, value: Int, customized: Boolean): String {
-            if (item.key == "vibration_duration") {
-                if (!customized) return itemView.context.getString(R.string.vibration_system_default)
-                runCatching {
-                    val label = PressEffectPlayer.get().formatVibrationLabel(value)
-                    if (label.isNotEmpty()) return label
-                }
-            }
-            return String.format(Locale.US, item.format, value)
-        }
-
-        fun bind(item: SettingsItem.Slider, prefs: SharedPreferences, isLast: Boolean) {
-            val c = itemView.context
-            itemView.findViewById<TextView>(R.id.noir_title).text = c.getString(item.titleRes)
-            val valueTv = itemView.findViewById<TextView>(R.id.noir_value)
-            val slider = itemView.findViewById<Slider>(R.id.noir_slider)
-
-            // Detach the previous row's listeners FIRST: on a recycled holder,
-            // assigning the new value below would otherwise fire the old item's
-            // callbacks against this row.
-            slider.clearOnChangeListeners()
-            slider.clearOnSliderTouchListeners()
-
-            slider.valueFrom = item.min.toFloat()
-            slider.valueTo = item.max.toFloat()
-            slider.stepSize = item.step.toFloat()
-            // Material's Slider throws when the value is not aligned to a step
-            // from valueFrom — align defensively so a legacy pref value can
-            // never crash the bind.
-            val raw = prefs.getInt(item.key, item.default)
-                .coerceIn(item.min, item.max)
-            val steps = Math.round((raw - item.min).toFloat() / item.step)
-            val aligned = (item.min + steps * item.step).coerceIn(item.min, item.max)
-            slider.value = aligned.toFloat()
-            valueTv.text = labelFor(item, aligned, prefs.contains(item.key))
-
-            var touching = false
-            slider.addOnChangeListener { _, value, fromUser ->
-                val v = value.toInt()
-                // Dragging the slider is by definition choosing a custom
-                // strength, so the label renders the engine's dual unit.
-                valueTv.text = labelFor(item, v, true)
-                if (item.key == "vibration_duration" && fromUser) {
-                    // Live preview: each slider tick plays the effect
-                    // immediately.
-                    runCatching { PressEffectPlayer.get().playCustomVibration(v) }
-                }
-                // Touch drags save on release (below); a change that arrives with
-                // no touch — TalkBack/D-pad adjustments — used to be lost entirely.
-                if (fromUser && !touching) prefs.edit().putInt(item.key, v).apply()
-            }
-            slider.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) { touching = true }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    touching = false
-                    prefs.edit().putInt(item.key, slider.value.toInt()).apply()
-                }
-            })
-            itemView.bindDivider(isLast)
-        }
-    }
-
-    internal class ActionVH(v: View) : RecyclerView.ViewHolder(v) {
-        fun bind(item: SettingsItem.Action, prefs: SharedPreferences, isLast: Boolean) {
-            val c = itemView.context
-            itemView.findViewById<TextView>(R.id.noir_title).text = c.getString(item.titleRes)
-            val sub = itemView.findViewById<TextView>(R.id.noir_subtitle)
-            if (item.subtitleRes != 0) {
-                sub.text = c.getString(item.subtitleRes)
-                sub.visibility = View.VISIBLE
-            } else sub.visibility = View.GONE
-            itemView.setOnClickListener { item.onClick(c, prefs) }
-            itemView.bindDivider(isLast)
-        }
-    }
-
-    internal class ChoiceVH(v: View) : RecyclerView.ViewHolder(v) {
-
-        private companion object {
-            /** Up to this many options fit side by side as a segmented control. */
-            const val SEGMENT_MAX = 3
-        }
-
-        fun bind(item: SettingsItem.Choice, prefs: SharedPreferences, isLast: Boolean) {
-            val c = itemView.context
-            itemView.findViewById<TextView>(R.id.noir_title).text = c.getString(item.titleRes)
-            val group = itemView.findViewById<MaterialButtonToggleGroup>(R.id.noir_group)
-            val valueTv = itemView.findViewById<TextView>(R.id.noir_choice_value)
-            val chevron = itemView.findViewById<View>(R.id.noir_choice_chevron)
-
-            // A stored value that is no longer an option (renamed/legacy pref)
-            // used to leave NOTHING selected; fall back to the default.
-            val current = prefs.getString(item.key, item.default)
-                ?.takeIf { v -> item.options.any { it.first == v } } ?: item.default
-
-            group.clearOnButtonCheckedListeners()
-            group.removeAllViews()
-
-            if (item.options.size > SEGMENT_MAX) {
-                // Six theme names or seven design names cannot share one phone-wide
-                // row without wrapping mid-word: show the value, pick from a list.
-                group.visibility = View.GONE
-                valueTv.visibility = View.VISIBLE
-                chevron.visibility = View.VISIBLE
-                valueTv.text = labelOf(item, current)
-                itemView.isClickable = true
-                itemView.setOnClickListener {
-                    val saved = prefs.getString(item.key, item.default)
-                    val now = item.options.indexOfFirst { it.first == saved }.coerceAtLeast(0)
-                    val labels = item.options.map { c.getString(it.second) }.toTypedArray()
-                    AlertDialog.Builder(c, R.style.ShadeDialogTheme)
-                        .setTitle(c.getString(item.titleRes))
-                        .setSingleChoiceItems(labels, now) { dialog, which ->
-                            prefs.edit().putString(item.key, item.options[which].first).apply()
-                            valueTv.text = labels[which]
-                            dialog.dismiss()
-                        }
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .show()
-                }
-            } else {
-                valueTv.visibility = View.GONE
-                chevron.visibility = View.GONE
-                group.visibility = View.VISIBLE
-                itemView.setOnClickListener(null)
-                itemView.isClickable = false
-                bindSegments(item, prefs, group, current)
-            }
-            itemView.bindDivider(isLast)
-        }
-
-        private fun labelOf(item: SettingsItem.Choice, value: String): String {
-            val res = item.options.firstOrNull { it.first == value }?.second ?: item.options.first().second
-            return itemView.context.getString(res)
-        }
-
-        private fun bindSegments(
-            item: SettingsItem.Choice, prefs: SharedPreferences,
-            group: MaterialButtonToggleGroup, current: String
-        ) {
-            val c = itemView.context
-            // singleSelection is FALSE by default in Material 1.12: without this, tapping a new
-            // option leaves the old one checked, and tapping the checked one deselects it.
-            group.isSingleSelection = true
-            group.isSelectionRequired = true
-
-            val white = c.getColor(R.color.noir_text)
-            val black = c.getColor(R.color.noir_on_button)
-            val checkedState = intArrayOf(android.R.attr.state_checked)
-            item.options.forEach { (value, labelRes) ->
-                val btn = MaterialButton(c, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-                    text = c.getString(labelRes)
-                    id = View.generateViewId()
-                    isAllCaps = false
-                    maxLines = 1
-                    textSize = 14f
-                    stateListAnimator = null
-                    insetTop = 0
-                    insetBottom = 0
-                    strokeWidth = c.dp(1f).toInt()
-                    strokeColor = ColorStateList.valueOf(c.getColor(R.color.noir_outline))
-                    rippleColor = ColorStateList.valueOf(c.getColor(R.color.noir_ripple))
-                    backgroundTintList = ColorStateList(
-                        arrayOf(checkedState, intArrayOf()),
-                        intArrayOf(white, Color.TRANSPARENT)
-                    )
-                    setTextColor(ColorStateList(arrayOf(checkedState, intArrayOf()), intArrayOf(black, white)))
-                    minimumHeight = c.dp(44f).toInt()
-                    if (value == current) isChecked = true
-                }
-                group.addView(btn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            }
-            group.addOnButtonCheckedListener { g, checkedId, isChecked ->
-                if (isChecked) {
-                    val idx = g.indexOfChild(g.findViewById(checkedId))
-                    if (idx in item.options.indices) {
-                        prefs.edit().putString(item.key, item.options[idx].first).apply()
-                    }
-                }
-            }
-        }
-    }
-
-    internal class ColorVH(v: View) : RecyclerView.ViewHolder(v) {
-        fun bind(item: SettingsItem.Color, prefs: SharedPreferences, isLast: Boolean) {
-            val c = itemView.context
-            itemView.findViewById<TextView>(R.id.noir_title).text = c.getString(item.titleRes)
-            val swatch = itemView.findViewById<View>(R.id.noir_swatch)
-            val valueTv = itemView.findViewById<TextView>(R.id.noir_color_value)
-            val raw = prefs.getString(item.key, null)
-            val shown: Int
-            if (raw.isNullOrEmpty()) {
-                shown = item.autoColor
-                valueTv.text = c.getString(R.string.color_auto)
-            } else {
-                shown = ColorMath.parseHex(raw) ?: item.autoColor
-                valueTv.text = ColorMath.formatHex(shown)
-            }
-            swatch.background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = c.dp(8f)
-                setColor(shown)
-                setStroke(c.dp(1f).toInt(), c.getColor(R.color.noir_outline))
-            }
-            itemView.setOnClickListener {
-                (c as? SettingsActivity)?.showColorPicker(item.key, item.titleRes, item.autoColor)
-            }
-            itemView.bindDivider(isLast)
-        }
-    }
-
-    internal class InfoVH(v: View) : RecyclerView.ViewHolder(v) {
-        fun bind(textRes: Int, isLast: Boolean = true) {
-            itemView.findViewById<TextView>(R.id.noir_info_text).text =
-                itemView.context.getString(textRes)
-            itemView.bindDivider(isLast)
-        }
-    }
-
-}
-
-// File-private top-level extensions: the settings item view-holders above are nested
-// (non-inner) classes, which cannot call the activity's private members. Declaring them
-// here makes them visible to every class in this file without widening access.
-private fun View.bindDivider(isLast: Boolean) {
-    findViewById<View>(R.id.noir_divider).visibility =
-        if (isLast) View.GONE else View.VISIBLE
-}
-
-private fun Context.dp(v: Float): Float = v * resources.displayMetrics.density

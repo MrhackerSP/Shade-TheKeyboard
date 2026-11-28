@@ -93,8 +93,21 @@
         <item name="colorControlActivated">@color/noir_text</item>
         <item name="colorControlHighlight">#22FFFFFF</item>
         <!-- MaterialSwitch + Slider + MaterialButtonToggleGroup use these -->
-        <item name="materialSwitchStyle">@style/Widget.Material3.CompoundButton.Switch</item>
+        <item name="materialSwitchStyle">@style/Widget.Shade.Switch</item>
         <item name="sliderStyle">@style/Widget.Noir.Slider</item>
+    </style>
+
+    <!-- Gboard-style switch (Material 3 switch with icons).
+         ON : white track, dark thumb with a check.
+         OFF: dark track with a 2dp grey outline, grey thumb with an X.
+         The old theme pointed materialSwitchStyle at the legacy SwitchMaterial
+         style, which MaterialSwitch cannot use for its thumb icons. -->
+    <style name="Widget.Shade.Switch" parent="Widget.Material3.CompoundButton.MaterialSwitch">
+        <item name="thumbIcon">@drawable/shade_switch_glyph</item>
+        <item name="thumbIconTint">@color/shade_switch_thumb_icon</item>
+        <item name="thumbTint">@color/shade_switch_thumb</item>
+        <item name="trackTint">@color/shade_switch_track</item>
+        <item name="trackDecorationTint">@color/shade_switch_track_decoration</item>
     </style>
 
     <!-- Minimal slider: 2dp white track, small thumb, no tick marks (a stepped

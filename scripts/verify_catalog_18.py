@@ -2,9 +2,10 @@
 """Verify the regenerated EmojiCatalog.kt covers the official Emoji 15.1 base set
 (superset check) plus all Emoji 16.0/17.0/18.0 additions. Extracts Category(...)
 blocks directly, no unicode_escape mangling."""
+import os
 import re
 
-ROOT = "/home/z/my-project/work/Shade-TheKeyboard-main"
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 NEW = open(f"{ROOT}/app/src/main/kotlin/com/shade/keyboard/EmojiCatalog.kt", encoding="utf-8").read()
 
 strip = lambda s: s.replace("\uFE0F", "")

@@ -1,8 +1,11 @@
 package com.shade.keyboard
 
+import android.os.Bundle
 import android.view.View
 import android.widget.EditText
+import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.materialswitch.MaterialSwitch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -15,10 +18,10 @@ import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowDialog
 
 /**
- * Drives the redesigned (Noir) settings activity on the JVM: render, measure
- * and bind every row type, collapse/expand sections (the screen opens fully
- * collapsed), search, and open the color picker sheet. Any binding crash (wrong view id, missing resource,
- * theme problem) fails here before it can fail on a device.
+ * Drives the Gboard-style settings activity on the JVM: the grouped category
+ * home, every page (rendering, measuring and binding each row type), back
+ * navigation, search and the color picker sheet. Any binding crash (wrong view
+ * id, missing resource, theme problem) fails here before it can fail on a device.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -30,109 +33,162 @@ class SettingsActivitySmokeTest {
 
     private fun measureAndLayout(rv: RecyclerView) {
         val w = View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY)
-        // Tall enough that every row of the expanded catalog is created and bound.
+        // Tall enough that every row of a page is created and bound.
         val h = View.MeasureSpec.makeMeasureSpec(30000, View.MeasureSpec.EXACTLY)
         rv.measure(w, h)
         rv.layout(0, 0, 1080, 30000)
     }
 
-    /** The screen opens as a short index: one header per section, nothing expanded. */
-    private fun collapsedCount(): Int = SettingsCatalog.sections.size
+    /** Home rows: one per category plus a gap between the card groups. */
+    private fun homeCount(): Int =
+        SettingsCatalog.pages.size + SettingsCatalog.homeGroups.size - 1
 
-    private fun expandedCount(): Int = SettingsCatalog.sections.sumOf { 1 + it.items.size }
+    private fun pageCount(page: SettingsCatalog.Page): Int =
+        (if (page.largeTitle) 1 else 0) +
+            page.sections.sumOf { (if (it.titleRes != 0) 1 else 0) + it.items.size }
 
-    private fun expandAll(activity: SettingsActivity) =
-        SettingsCatalog.sections.forEach { activity.adapter.expand(it.id) }
+    private fun positionOf(activity: SettingsActivity, predicate: (SettingsItem) -> Boolean): Int =
+        (0 until activity.adapter.itemCount).first {
+            activity.adapter.itemAt(it)?.let(predicate) == true
+        }
 
     @Test
-    fun opensFullyCollapsed_withOneHeaderPerSection() {
+    fun opensOnTheHome_withEveryCategoryInGboardOrder() {
         val activity = buildActivity()
         val adapter = activity.adapter
-        assertEquals(collapsedCount(), adapter.itemCount)
-        assertEquals(SettingsCatalog.SECTION_LANGUAGES, adapter.sectionAt(0)!!.id)
-        assertTrue(SettingsCatalog.sections.all { adapter.isSectionCollapsed(it.id) })
-        assertTrue(adapter.itemAt(1) == null) // next row is another header, not a child
+        assertTrue(adapter.isHome)
+        assertEquals(homeCount(), adapter.itemCount)
+        assertEquals(SettingsCatalog.PAGE_LANGUAGES, adapter.pageAt(0)!!.id)
+        assertEquals(SettingsCatalog.PAGE_PREFERENCES, adapter.pageAt(1)!!.id)
+        assertEquals(SettingsCatalog.PAGE_THEME, adapter.pageAt(2)!!.id)
+        assertTrue(adapter.pageAt(3) == null) // the gap between the first two card groups
+        assertEquals(SettingsCatalog.PAGE_CORRECTIONS, adapter.pageAt(4)!!.id)
+        // Home: search visible, back button hidden.
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.noir_search_input).visibility)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.noir_back).visibility)
         activity.finish()
     }
 
     @Test
-    fun expandingEverything_rendersFullCatalog() {
+    fun homeBindsEveryCategoryRow_withoutCrashing() {
         val activity = buildActivity()
-        expandAll(activity)
-        assertEquals(expandedCount(), activity.adapter.itemCount)
-        assertTrue(activity.adapter.itemAt(1) != null)
-        activity.finish()
-    }
-
-    @Test
-    fun measureLayout_bindsEveryRowType_withoutCrashing() {
-        val activity = buildActivity()
-        expandAll(activity)
         val rv = activity.findViewById<RecyclerView>(R.id.noir_list)
         measureAndLayout(rv)
-        // Every toggle, slider, choice, color, action and info row is bound above.
         assertTrue(rv.childCount > 0)
         activity.finish()
     }
 
     @Test
-    fun longChoice_rendersAsValueRow_notSegments() {
+    fun openingAPage_showsItsRows_andTheBackButton() {
         val activity = buildActivity()
-        activity.adapter.expand(SettingsCatalog.SECTION_APPEARANCE)
+        val page = SettingsCatalog.page(SettingsCatalog.PAGE_PREFERENCES)!!
+        activity.openPage(page.id)
+        val adapter = activity.adapter
+        assertFalse(adapter.isHome)
+        assertEquals(page.id, adapter.currentPageId)
+        assertEquals(pageCount(page), adapter.itemCount)
+        assertTrue(adapter.isTitleAt(0)) // Preferences opens with the large title
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.noir_back).visibility)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.noir_search_input).visibility)
+        activity.finish()
+    }
+
+    @Test
+    fun everyPage_bindsEveryRowType_withoutCrashing() {
+        val activity = buildActivity()
+        val rv = activity.findViewById<RecyclerView>(R.id.noir_list)
+        for (page in SettingsCatalog.pages) {
+            activity.openPage(page.id)
+            assertEquals("rows on page ${page.id}", pageCount(page), activity.adapter.itemCount)
+            measureAndLayout(rv)
+            assertTrue("page ${page.id} rendered nothing", rv.childCount > 0)
+            activity.goHome()
+        }
+        activity.finish()
+    }
+
+    @Test
+    fun backButton_returnsToTheHome() {
+        val activity = buildActivity()
+        activity.openPage(SettingsCatalog.PAGE_THEME)
+        activity.findViewById<View>(R.id.noir_back).performClick()
+        assertTrue(activity.adapter.isHome)
+        assertEquals(homeCount(), activity.adapter.itemCount)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.noir_back).visibility)
+        activity.finish()
+    }
+
+    @Test
+    fun systemBack_leavesAPage_beforeLeavingSettings() {
+        val activity = buildActivity()
+        activity.openPage(SettingsCatalog.PAGE_GLIDE)
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertTrue(activity.adapter.isHome)
+        assertFalse(activity.isFinishing)
+        activity.finish()
+    }
+
+    @Test
+    fun longChoice_rendersAsValueRow() {
+        val activity = buildActivity()
+        activity.openPage(SettingsCatalog.PAGE_THEME)
         val rv = activity.findViewById<RecyclerView>(R.id.noir_list)
         measureAndLayout(rv)
-        // The screen opens as a collapsed index with LANGUAGES first, so the
-        // theme row is NOT at a fixed adapter position. Locate the appearance
-        // header dynamically; expand() inserts its first child (the theme
-        // choice, six options) right after that header.
-        val headerPos = (0 until activity.adapter.itemCount)
-            .firstOrNull { activity.adapter.sectionAt(it)?.id == SettingsCatalog.SECTION_APPEARANCE }
-            ?: error("APPEARANCE header row missing from adapter")
-        val holder = rv.findViewHolderForAdapterPosition(headerPos + 1)
+        val pos = positionOf(activity) { it is SettingsItem.Choice && it.key == "theme" }
+        val holder = rv.findViewHolderForAdapterPosition(pos)
         assertNotNull(holder)
-        val row = holder!!.itemView
-        assertEquals(View.VISIBLE, row.findViewById<View>(R.id.noir_choice_value).visibility)
-        assertEquals(View.GONE, row.findViewById<View>(R.id.noir_group).visibility)
+        val value = holder!!.itemView.findViewById<TextView>(R.id.noir_choice_value)
+        assertEquals(View.VISIBLE, value.visibility)
+        assertTrue(value.text.isNotEmpty())
         activity.finish()
     }
 
     @Test
-    fun collapseExpand_changesChildVisibility() {
+    fun switches_useTheGboardCheckAndXStyle() {
         val activity = buildActivity()
-        val adapter = activity.adapter
-        val before = adapter.itemCount
-        val children = SettingsCatalog
-            .section(SettingsCatalog.SECTION_APPEARANCE)!!.items.size
-
-        adapter.expand(SettingsCatalog.SECTION_APPEARANCE)
-        assertFalse(adapter.isSectionCollapsed(SettingsCatalog.SECTION_APPEARANCE))
-        assertEquals(before + children, adapter.itemCount)
-
-        adapter.collapse(SettingsCatalog.SECTION_APPEARANCE)
-        assertTrue(adapter.isSectionCollapsed(SettingsCatalog.SECTION_APPEARANCE))
-        assertEquals(before, adapter.itemCount)
+        activity.openPage(SettingsCatalog.PAGE_GLIDE)
+        val rv = activity.findViewById<RecyclerView>(R.id.noir_list)
+        measureAndLayout(rv)
+        val pos = positionOf(activity) { it is SettingsItem.Toggle && it.key == "glide_typing" }
+        val row = rv.findViewHolderForAdapterPosition(pos)!!.itemView
+        val sw = row.findViewById<MaterialSwitch>(R.id.noir_switch)
+        // The Gboard look is a Material 3 switch WITH thumb icons (check on / X off).
+        assertNotNull("switch has no thumb icon", sw.thumbIconDrawable)
+        // Tapping the row flips the switch.
+        val before = sw.isChecked
+        row.performClick()
+        assertEquals(!before, sw.isChecked)
         activity.finish()
     }
 
     @Test
-    fun expandedSections_roundTripThroughSavedState() {
+    fun voiceTyping_hasAHeroMasterSwitch() {
         val activity = buildActivity()
-        val adapter = activity.adapter
-        adapter.expand(SettingsCatalog.SECTION_TYPING)
-        adapter.expand(SettingsCatalog.SECTION_BACKUP)
-        val saved = adapter.expandedIds()
-        assertEquals(setOf(SettingsCatalog.SECTION_TYPING, SettingsCatalog.SECTION_BACKUP), saved.toSet())
-
-        adapter.setExpanded(intArrayOf())
-        assertEquals(collapsedCount(), adapter.itemCount)
-        adapter.setExpanded(saved)
-        assertFalse(adapter.isSectionCollapsed(SettingsCatalog.SECTION_TYPING))
-        assertTrue(adapter.isSectionCollapsed(SettingsCatalog.SECTION_APPEARANCE))
+        activity.openPage(SettingsCatalog.PAGE_VOICE)
+        val rv = activity.findViewById<RecyclerView>(R.id.noir_list)
+        measureAndLayout(rv)
+        val pos = positionOf(activity) { it is SettingsItem.Toggle && it.hero }
+        assertNotNull(rv.findViewHolderForAdapterPosition(pos))
+        assertEquals(SettingsAdapter.TYPE_HERO, activity.adapter.getItemViewType(pos))
         activity.finish()
     }
 
     @Test
-    fun search_filtersAndRestores() {
+    fun openPage_survivesRecreation() {
+        val controller = Robolectric.buildActivity(SettingsActivity::class.java)
+            .create().start().resume().visible()
+        controller.get().openPage(SettingsCatalog.PAGE_PRIVACY)
+        val state = Bundle()
+        controller.saveInstanceState(state)
+
+        val restored = Robolectric.buildActivity(SettingsActivity::class.java).create(state)
+        assertEquals(SettingsCatalog.PAGE_PRIVACY, restored.get().adapter.currentPageId)
+        restored.get().finish()
+        controller.get().finish()
+    }
+
+    @Test
+    fun search_filtersAndRestoresTheHome() {
         val activity = buildActivity()
         val adapter = activity.adapter
 
@@ -145,7 +201,7 @@ class SettingsActivitySmokeTest {
         assertEquals(1, adapter.itemCount) // the "no results" info row
 
         adapter.applySearch("")
-        assertEquals(collapsedCount(), adapter.itemCount) // back to the collapsed index
+        assertEquals(homeCount(), adapter.itemCount) // back to the category home
         activity.finish()
     }
 
@@ -158,7 +214,7 @@ class SettingsActivitySmokeTest {
         val adapter = activity.adapter
         assertTrue(adapter.itemAt(0) is SettingsItem.Toggle)
         input.setText("")
-        assertEquals(collapsedCount(), adapter.itemCount)
+        assertEquals(homeCount(), adapter.itemCount)
         activity.finish()
     }
 
