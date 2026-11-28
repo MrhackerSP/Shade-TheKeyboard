@@ -510,6 +510,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         rankingScorer = null
         try { emojiPredictor.close() } catch (e: Exception) { Log.w("ShadeService", "Failed to close emoji predictor", e) }
         stopVoice()
+        voice?.release() // immediate teardown: no recognizer work after the service dies
         voice = null
         serviceJob.cancel()
 
@@ -3580,7 +3581,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     private fun voiceHudShowError(message: String) {
         val hud = voiceHud ?: return
         hud.removeCallbacks(voiceHudErrorHider)
-        hud.text = getString(R.string.voice_hud_error, message)
+        hud.text = runCatching { getString(R.string.voice_hud_error, message) }
+            .getOrDefault(message)
         hud.visibility = View.VISIBLE
         hud.postDelayed(voiceHudErrorHider, 2500)
     }
