@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Settings-home category row: outline icon, title and an optional one-line summary. -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools" tools:ignore="Overdraw"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="Overdraw"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginHorizontal="16dp"
@@ -19,7 +22,7 @@
         android:layout_height="24dp"
         android:layout_marginEnd="20dp"
         android:importantForAccessibility="no"
-        android:tint="@color/noir_text" />
+        app:tint="@color/noir_text" />
 
     <LinearLayout
         android:layout_width="0dp"
