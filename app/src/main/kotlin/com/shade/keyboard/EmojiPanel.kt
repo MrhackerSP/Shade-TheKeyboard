@@ -186,6 +186,7 @@ class EmojiPanel(
                 TYPE_HEADER -> {
                     val tv = TextView(context).apply {
                         textSize = 13f
+                        typeface = ShadeFonts.family(context)
                         setTextColor(theme.hint)
                         setPadding(dp(16f), dp(12f), dp(16f), dp(4f))
                     }
@@ -195,6 +196,7 @@ class EmojiPanel(
                     val tv = TextView(context).apply {
                         gravity = Gravity.CENTER
                         textSize = 24f
+                        typeface = ShadeFonts.emoji(context)
                         setPadding(0, dp(6f), 0, dp(6f))
                     }
                     EmojiVH(tv)
@@ -261,6 +263,7 @@ class EmojiPanel(
         searchField.maxLines = 1
         searchField.isSingleLine = true
         searchField.textSize = 14f
+        searchField.typeface = ShadeFonts.family(context)
         searchField.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
         searchField.compoundDrawablePadding = dp(8f)
         searchField.setPadding(dp(10f), dp(8f), dp(10f), dp(8f))
@@ -286,6 +289,7 @@ class EmojiPanel(
 
         searchClear.text = "✕"
         searchClear.textSize = 16f
+        searchClear.typeface = ShadeFonts.family(context)
         searchClear.gravity = Gravity.CENTER
         searchClear.setPadding(dp(10f), 0, dp(10f), 0)
         searchClear.visibility = GONE
@@ -327,6 +331,7 @@ class EmojiPanel(
         abc.text = context.getString(R.string.abc)
         abc.gravity = Gravity.CENTER
         abc.textSize = 14f
+        abc.typeface = ShadeFonts.family(context)
         abc.setOnClickListener { onBack() }
         bar.addView(abc, LayoutParams(dp(56f), LayoutParams.MATCH_PARENT))
 
@@ -334,6 +339,7 @@ class EmojiPanel(
         val recentTab = TextView(context).apply {
             text = recentIcon
             textSize = 17f
+            typeface = ShadeFonts.family(context)
             gravity = Gravity.CENTER
             setOnClickListener { scrollToCategory(0) }
         }
@@ -345,6 +351,7 @@ class EmojiPanel(
             val t = TextView(context).apply {
                 text = cat.icon
                 textSize = 17f
+                typeface = ShadeFonts.family(context)
                 gravity = Gravity.CENTER
                 setOnClickListener { scrollToCategory(i + 1) }
             }
@@ -462,6 +469,7 @@ class EmojiPanel(
                 text = emoji
                 textSize = 26f
                 gravity = Gravity.CENTER
+                typeface = ShadeFonts.emoji(context)
                 setPadding(dp(12f), 0, dp(12f), 0)
                 setOnClickListener {
                     recordRecent(emoji)
@@ -624,6 +632,7 @@ class EmojiPanel(
                 text = variant
                 textSize = 24f
                 gravity = Gravity.CENTER
+                typeface = ShadeFonts.emoji(context)
                 setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
                 setOnClickListener {
                     recordRecent(variant)

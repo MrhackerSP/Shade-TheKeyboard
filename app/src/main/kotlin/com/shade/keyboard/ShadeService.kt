@@ -605,6 +605,7 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 gravity = Gravity.CENTER
                 maxLines = 1
                 textSize = 19f
+                typeface = ShadeFonts.family(this@ShadeService)
                 tag = i
                 setPadding(dp(6f).toInt(), 0, dp(6f).toInt(), 0)
                 TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(this, 12, 19, 1, TypedValue.COMPLEX_UNIT_SP)

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Google Sans with Noto Color Emoji as per-glyph fallback.
+  Used everywhere Shade mixes words and emoji (suggestion slots, emoji-panel
+  chrome, search field): letters come from Google Sans, emoji from Noto Color
+  Emoji, anything neither covers falls through to the system fonts.
+-->
+<font-family xmlns:android="http://schemas.android.com/apk/res/android">
+    <font
+        android:font="@font/google_sans"
+        android:fontStyle="normal"
+        android:fontWeight="400" />
+    <font
+        android:font="@font/noto_color_emoji"
+        android:fontWeight="400" />
+</font-family>

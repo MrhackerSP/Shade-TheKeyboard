@@ -199,6 +199,7 @@ class KeyboardView(context: Context) : View(context) {
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
         isSubpixelText = true
+        typeface = ShadeFonts.sans(context)
     }
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -226,7 +227,10 @@ class KeyboardView(context: Context) : View(context) {
     private var previewAnimator: ValueAnimator? = null
     private val previewBg = Paint(Paint.ANTI_ALIAS_FLAG)
     private val previewHue = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val previewText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val previewText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        typeface = ShadeFonts.sans(context)
+    }
     private val previewShadow = Paint(Paint.ANTI_ALIAS_FLAG)
     // Shared popup layer: every key preview and accent grid (all rows) is drawn here, above the whole
     // keyboard window. The in-view drawing below is only a fallback if the layer can't attach.
