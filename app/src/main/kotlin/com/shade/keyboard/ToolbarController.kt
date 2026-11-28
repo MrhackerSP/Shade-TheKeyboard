@@ -173,6 +173,21 @@ internal class ToolbarController(private val svc: ShadeService) {
             strip.visibility = View.GONE
             return
         }
+
+        if (voiceMode) {
+            // Voice capture strip: "Listening…" replaces the suggestions and the
+            // toolbar toggle becomes a back arrow (exit = arrow, mic, or any key).
+            slotFrame.visibility = View.GONE
+            toolScroll.visibility = View.GONE
+            autofillScroll.visibility = View.GONE
+            voiceStripLabel.setTextColor(kbTheme.text)
+            voiceStripLabel.visibility = View.VISIBLE
+            toggle.text = "←"
+            toggle.visibility = View.VISIBLE
+            strip.visibility = View.VISIBLE
+            return
+        }
+
         val suggestionsActive = suggestionsOn && suggestionsAllowed
         val showTools = toolbarOpen || (suggestionsActive == false)
 

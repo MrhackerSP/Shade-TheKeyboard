@@ -172,6 +172,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     // counterpart of the left toggle. Always the mic (never swapped for other
     // tools); shown or hidden by the "strip_voice_button" setting (default on).
     internal lateinit var stripVoiceBtn: ImageView
+    // "Listening…" label that replaces the suggestions while the recognizer is
+    // active (see voiceMode / refreshStrip).
+    internal lateinit var voiceStripLabel: TextView
+    // Voice capture mode: the strip shows "Listening…" and the left toggle
+    // becomes a back arrow. Exiting: the back arrow, tapping the mic again, or
+    // any key press.
+    internal var voiceMode = false
+        private set
     // floating drag handle above the keyboard. Dragging vertically
     // resizes the keyboard (adjusts key_height live). Long-pressing then
     // dragging moves the keyboard up from the bottom (floating offset).
@@ -438,10 +446,15 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         voice = VoiceInputController(this, prefs,
             onPartialText = { partial -> voiceHudShowPartial(partial) },
             onFinalText = { text ->
-                hideVoiceHud()
+                exitVoiceMode()
                 commitVoiceText(text)
             },
-            onVoiceError = { message -> voiceHudShowError(message) })
+            onVoiceError = { message ->
+                voiceHudShowError(message)
+                // The session is over (retries exhausted) — restore the strip but
+                // keep the error chip so the reason stays readable for a moment.
+                exitVoiceMode(keepHud = true)
+            })
         clips = ClipboardStore(this)
         cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         try { cm.addPrimaryClipChangedListener(clipListener) } catch (e: Exception) { Log.w("ShadeService", "Failed to register clipboard listener", e) }
@@ -564,9 +577,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             gravity = Gravity.CENTER
             textSize = 22f
             setOnClickListener {
-                toolbarOpen = if (toolbarOpen) false else true
-                toolbarC.animateToggle()
-                toolbarC.refreshStrip()
+                if (voiceMode) {
+                    // The toggle is a back arrow during voice capture: exit.
+                    exitVoiceMode()
+                } else {
+                    toolbarOpen = if (toolbarOpen) false else true
+                    toolbarC.animateToggle()
+                    toolbarC.refreshStrip()
+                }
             }
         }
 
@@ -649,10 +667,21 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
             visibility = View.GONE
             addView(autofillRow, FrameLayout.LayoutParams(WRAP, MATCH))
         }
+        // Voice capture: replaces the whole suggestion strip content while the
+        // recognizer is active; the left toggle turns into a back arrow.
+        voiceStripLabel = TextView(this).apply {
+            gravity = Gravity.CENTER
+            maxLines = 1
+            textSize = 19f
+            text = getString(R.string.voice_hud_listening)
+            setTextColor(kbTheme.text)
+            visibility = View.GONE
+        }
         val frame = FrameLayout(this).apply {
             addView(slotFrame, FrameLayout.LayoutParams(MATCH, MATCH))
             addView(toolScroll, FrameLayout.LayoutParams(MATCH, MATCH))
             addView(autofillScroll, FrameLayout.LayoutParams(MATCH, MATCH))
+            addView(voiceStripLabel, FrameLayout.LayoutParams(MATCH, MATCH))
         }
         strip = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1403,8 +1432,14 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
                 val v = voice
                 if (v == null) {
                     Toast.makeText(this, R.string.voice_input_unavailable, Toast.LENGTH_SHORT).show()
+                } else if (voiceMode) {
+                    // Tapping the mic again stops listening.
+                    exitVoiceMode()
                 } else {
-                    voiceHudShowListening()
+                    // The strip itself now signals capture ("Listening…" + back
+                    // arrow), so the floating chip stays reserved for partial
+                    // transcripts and errors.
+                    enterVoiceMode()
                     v.start()
                 }
             }
@@ -2440,6 +2475,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
         if (resizeModeActive) {
             setResizeMode(false)
         }
+        // Any key press also leaves voice capture mode; the key still does its job.
+        if (voiceMode) exitVoiceMode()
         if (gifActive) {
             // In grid mode no keyboard is on screen — swallow stray keys (e.g. hardware).
             if (!gifOwnsKeys()) return
@@ -2612,6 +2649,8 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onText(text: String) {
+        // Any key press also leaves voice capture mode; the key still does its job.
+        if (voiceMode) exitVoiceMode()
         if (gifActive) {
             gifController.type(text)
             if (shiftState == 1) { shiftState = 0; autoShifted = false; kb.shiftState = 0 }
@@ -3638,8 +3677,30 @@ class ShadeService : InputMethodService(), KeyboardView.Listener {
     }
 
     private fun stopVoice() {
+        voiceMode = false
         hideVoiceHud()
         try { voice?.cancel() } catch (e: Exception) { Log.w("ShadeService", "Failed to cancel voice input", e) }
+        toolbarC.refreshStrip()
+        toolbarC.updateAutofillStrip()
+    }
+
+    /** Voice capture on: strip swaps to "Listening…" and a back arrow (see refreshStrip). */
+    private fun enterVoiceMode() {
+        voiceMode = true
+        toolbarC.refreshStrip()
+    }
+
+    /**
+     * Voice capture off: cancel the recognizer and restore the strip.
+     * [keepHud] leaves the error chip visible so the reason stays readable.
+     */
+    private fun exitVoiceMode(keepHud: Boolean = false) {
+        if (!voiceMode) return
+        voiceMode = false
+        if (!keepHud) hideVoiceHud()
+        try { voice?.cancel() } catch (e: Exception) { Log.w("ShadeService", "Failed to cancel voice input", e) }
+        toolbarC.refreshStrip()
+        toolbarC.updateAutofillStrip()
     }
 
     private fun commitSlideWord(decoded: String) {
