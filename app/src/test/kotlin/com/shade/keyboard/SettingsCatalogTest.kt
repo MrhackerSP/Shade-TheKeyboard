@@ -25,36 +25,34 @@ class SettingsCatalogTest {
     @Test
     fun sections_haveUniqueIds_inDisplayOrder() {
         val ids = SettingsCatalog.sections.map { it.id }
-        assertEquals(ids.size, ids.toSet().size)
+        assertEquals("duplicate section id", ids.size, ids.toSet().size)
+
+        // Every declared section constant appears exactly once.
         assertEquals(
-            listOf(
-                SettingsCatalog.SECTION_LANGUAGES,
-                SettingsCatalog.SECTION_KEYS,
-                SettingsCatalog.SECTION_LAYOUT,
-                SettingsCatalog.SECTION_SHORTCUTS,
-                SettingsCatalog.SECTION_KEY_TAP,
-                SettingsCatalog.SECTION_APPEARANCE,
-                SettingsCatalog.SECTION_COLORS,
-                SettingsCatalog.SECTION_BACKGROUND,
-                SettingsCatalog.SECTION_CORRECTIONS,
-                SettingsCatalog.SECTION_SUGGESTIONS,
-                SettingsCatalog.SECTION_GESTURES,
-                SettingsCatalog.SECTION_VOICE_MAIN,
-                SettingsCatalog.SECTION_VOICE,
-                SettingsCatalog.SECTION_EMOJI,
-                SettingsCatalog.SECTION_GIF,
-                SettingsCatalog.SECTION_CLIPBOARD,
-                SettingsCatalog.SECTION_DICTIONARY,
-                SettingsCatalog.SECTION_PRIVACY,
-                SettingsCatalog.SECTION_SHARING,
-                SettingsCatalog.SECTION_ABOUT,
-                SettingsCatalog.SECTION_UPDATES,
-                SettingsCatalog.SECTION_FEATURES,
-                SettingsCatalog.SECTION_ENGINE,
-                SettingsCatalog.SECTION_BACKUP
+            setOf(
+                SettingsCatalog.SECTION_LANGUAGES, SettingsCatalog.SECTION_KEYS,
+                SettingsCatalog.SECTION_LAYOUT, SettingsCatalog.SECTION_SHORTCUTS,
+                SettingsCatalog.SECTION_KEY_TAP, SettingsCatalog.SECTION_APPEARANCE,
+                SettingsCatalog.SECTION_COLORS, SettingsCatalog.SECTION_BACKGROUND,
+                SettingsCatalog.SECTION_CORRECTIONS, SettingsCatalog.SECTION_SUGGESTIONS,
+                SettingsCatalog.SECTION_GESTURES, SettingsCatalog.SECTION_VOICE_MAIN,
+                SettingsCatalog.SECTION_VOICE, SettingsCatalog.SECTION_EMOJI,
+                SettingsCatalog.SECTION_GIF, SettingsCatalog.SECTION_CLIPBOARD,
+                SettingsCatalog.SECTION_DICTIONARY, SettingsCatalog.SECTION_PRIVACY,
+                SettingsCatalog.SECTION_SHARING, SettingsCatalog.SECTION_ABOUT,
+                SettingsCatalog.SECTION_FEATURES, SettingsCatalog.SECTION_ENGINE,
+                SettingsCatalog.SECTION_BACKUP, SettingsCatalog.SECTION_UPDATES
             ),
-            ids
+            ids.toSet()
         )
+
+        // Display order follows the HOME SCREEN's page groups, not the numeric id
+        // value: Advanced owns 21..23, Updates owns 20, yet Updates is the last page.
+        // homeGroups itself is hard-pinned by home_listsEveryPageExactlyOnce_inGboardGroups,
+        // so this also catches `pages` drifting out of sync with the home screen.
+        val expectedOrder = SettingsCatalog.homeGroups.flatten()
+            .flatMap { pageId -> SettingsCatalog.page(pageId)!!.sections.map { it.id } }
+        assertEquals(expectedOrder, ids)
     }
 
     @Test
